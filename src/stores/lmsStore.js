@@ -103,8 +103,6 @@ const initialCourses = [
             order: 2,
             content: {
               videoUrl: SAMPLE_VIDEO_URL,
-              videoId: 'bunny-strength-deadlift-01',
-              bunnyVideoId: 'bunny-strength-deadlift-01',
               duration: '3:45'
             }
           }
@@ -150,8 +148,6 @@ const initialCourses = [
             order: 2,
             content: {
               videoUrl: SAMPLE_VIDEO_URL_2,
-              videoId: 'bunny-squat-depth-02',
-              bunnyVideoId: 'bunny-squat-depth-02',
               duration: '4:12'
             }
           }
@@ -178,8 +174,6 @@ const initialCourses = [
             order: 2,
             content: {
               videoUrl: SAMPLE_VIDEO_URL,
-              videoId: 'bunny-press-form-03',
-              bunnyVideoId: 'bunny-press-form-03',
               duration: '5:00'
             }
           }
@@ -206,8 +200,6 @@ const initialCourses = [
             order: 2,
             content: {
               videoUrl: SAMPLE_VIDEO_URL_2,
-              videoId: 'bunny-deadlift-sumo-04',
-              bunnyVideoId: 'bunny-deadlift-sumo-04',
               duration: '4:45'
             }
           }
@@ -234,8 +226,6 @@ const initialCourses = [
             order: 2,
             content: {
               videoUrl: SAMPLE_VIDEO_URL,
-              videoId: 'bunny-volume-track-05',
-              bunnyVideoId: 'bunny-volume-track-05',
               duration: '3:30'
             }
           }
@@ -262,8 +252,6 @@ const initialCourses = [
             order: 2,
             content: {
               videoUrl: SAMPLE_VIDEO_URL_2,
-              videoId: 'bunny-max-attempt-06',
-              bunnyVideoId: 'bunny-max-attempt-06',
               duration: '6:15'
             }
           }
@@ -324,8 +312,6 @@ const initialCourses = [
             order: 2,
             content: {
               videoUrl: SAMPLE_VIDEO_URL,
-              videoId: 'bunny-cardio-warmup-01',
-              bunnyVideoId: 'bunny-cardio-warmup-01',
               duration: '4:10'
             }
           }
@@ -352,8 +338,6 @@ const initialCourses = [
             order: 2,
             content: {
               videoUrl: SAMPLE_VIDEO_URL_2,
-              videoId: 'bunny-tabata-workout-02',
-              bunnyVideoId: 'bunny-tabata-workout-02',
               duration: '5:30'
             }
           }
@@ -380,8 +364,6 @@ const initialCourses = [
             order: 2,
             content: {
               videoUrl: SAMPLE_VIDEO_URL,
-              videoId: 'bunny-vo2-pacing-03',
-              bunnyVideoId: 'bunny-vo2-pacing-03',
               duration: '4:50'
             }
           }
@@ -408,8 +390,6 @@ const initialCourses = [
             order: 2,
             content: {
               videoUrl: SAMPLE_VIDEO_URL_2,
-              videoId: 'bunny-plyo-jumps-04',
-              bunnyVideoId: 'bunny-plyo-jumps-04',
               duration: '3:55'
             }
           }
@@ -436,8 +416,6 @@ const initialCourses = [
             order: 2,
             content: {
               videoUrl: SAMPLE_VIDEO_URL,
-              videoId: 'bunny-metcon-circuit-05',
-              bunnyVideoId: 'bunny-metcon-circuit-05',
               duration: '5:15'
             }
           }
@@ -464,8 +442,6 @@ const initialCourses = [
             order: 2,
             content: {
               videoUrl: SAMPLE_VIDEO_URL_2,
-              videoId: 'bunny-final-metcon-06',
-              bunnyVideoId: 'bunny-final-metcon-06',
               duration: '7:00'
             }
           }

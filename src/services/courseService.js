@@ -35,7 +35,7 @@ const DEFAULT_COURSES_SEED = [
             title: 'Barbell Deadlift Setup (Bunny Stream HD)',
             type: 'video',
             order: 2,
-            content: { videoUrl: SAMPLE_VIDEO_URL, videoId: 'bunny-strength-deadlift-01', bunnyVideoId: 'bunny-strength-deadlift-01', duration: '3:45' }
+            content: { videoUrl: SAMPLE_VIDEO_URL, duration: '3:45' }
           }
         ]
       },
@@ -56,7 +56,7 @@ const DEFAULT_COURSES_SEED = [
             title: 'Squat Depth Breakdown (Bunny Stream HD)',
             type: 'video',
             order: 2,
-            content: { videoUrl: SAMPLE_VIDEO_URL_2, videoId: 'bunny-squat-depth-02', bunnyVideoId: 'bunny-squat-depth-02', duration: '4:12' }
+            content: { videoUrl: SAMPLE_VIDEO_URL_2, duration: '4:12' }
           }
         ]
       }
@@ -111,7 +111,7 @@ const DEFAULT_COURSES_SEED = [
             title: 'Cardio Warmup Circuits (Bunny Stream HD)',
             type: 'video',
             order: 2,
-            content: { videoUrl: SAMPLE_VIDEO_URL, videoId: 'bunny-cardio-warmup-01', bunnyVideoId: 'bunny-cardio-warmup-01', duration: '4:10' }
+            content: { videoUrl: SAMPLE_VIDEO_URL, duration: '4:10' }
           }
         ]
       }
