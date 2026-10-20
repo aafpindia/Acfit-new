@@ -1,94 +1,255 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { Play, Pause, Maximize, Volume2, VolumeX } from 'lucide-react';
 import Hls from 'hls.js';
 import { Card } from '../../../components/ui/card';
-import { getHlsUrl, getDirectPlayUrl, getBunnyVideoId, isValidBunnyVideoId } from '../../../services/bunnyService';
+import {
+  getHlsUrl,
+  getDirectPlayUrl,
+  getBunnyVideoId,
+  isValidBunnyVideoId,
+} from '../../../services/bunnyService';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+const ytRegex = /^.*(youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+
+function getYouTubeEmbedUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  const m = url.match(ytRegex);
+  return m && m[2].length === 11
+    ? `https://www.youtube.com/embed/${m[2]}?autoplay=0&rel=0`
+    : null;
+}
+
+function resolvePlayableUrl(rawUrl, rawBunnyId) {
+  if (rawUrl) {
+    const t = rawUrl.trim();
+    if (t.includes('youtube.com') || t.includes('youtu.be')) return null;
+
+    // Convert Bunny embed iframes → direct HLS
+    if (t.includes('iframe.mediadelivery.net/embed/')) {
+      const parts = t.split('/');
+      const possibleGuid = parts[parts.length - 1]?.split('?')[0];
+      if (isValidBunnyVideoId(possibleGuid)) return getHlsUrl(possibleGuid);
+      return null;
+    }
+
+    if (
+      t.startsWith('http://') ||
+      t.startsWith('https://') ||
+      t.startsWith('blob:')
+    ) {
+      return t;
+    }
+  }
+
+  if (rawBunnyId) return getHlsUrl(rawBunnyId);
+  return 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+}
+
+function formatTime(s) {
+  if (!s || isNaN(s)) return '0:00';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec < 10 ? '0' : ''}${sec}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto-complete side-effect (fires onComplete after 25s as a fallback)
+// ─────────────────────────────────────────────────────────────────────────────
+function BunnyAutoComplete({ onComplete }) {
+  useEffect(() => {
+    if (!onComplete) return;
+    const t = setTimeout(onComplete, 25000);
+    return () => clearTimeout(t);
+  }, [onComplete]);
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VideoPlayer
+// ─────────────────────────────────────────────────────────────────────────────
 export const VideoPlayer = ({ content = {}, onComplete }) => {
   const videoRef = useRef(null);
-  const hlsInstanceRef = useRef(null);
+  const hlsRef = useRef(null);
+  const completedRef = useRef(false);
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [playbackRate, setPlaybackRate] = useState(1);
   const [progressPercent, setProgressPercent] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState(1);
 
-  // Standardize media content payload (support both object and string input)
-  const mediaObj = typeof content === 'string' ? { videoUrl: content } : (content || {});
+  // ── Normalise content ──
+  const mediaObj = useMemo(
+    () => (typeof content === 'string' ? { videoUrl: content } : content || {}),
+    [content]
+  );
 
-  // Extract raw video URL and Bunny Video ID
-  const rawVideoUrl = mediaObj.videoUrl || mediaObj.url || mediaObj.fileUrl || mediaObj.src || '';
-  const candidateBunnyId = getBunnyVideoId(mediaObj) || mediaObj.bunnyVideoId || mediaObj.bunny_video_id || mediaObj.guid;
-  const rawBunnyId = isValidBunnyVideoId(candidateBunnyId) ? candidateBunnyId : null;
+  const rawVideoUrl = useMemo(
+    () =>
+      mediaObj.videoUrl ||
+      mediaObj.url ||
+      mediaObj.fileUrl ||
+      mediaObj.src ||
+      '',
+    [mediaObj]
+  );
 
-  // Determine if URL is YouTube
-  const getYouTubeEmbedUrl = (url) => {
-    if (!url || typeof url !== 'string') return null;
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-    const match = url.match(regExp);
-    return (match && match[2].length === 11) ? `https://www.youtube.com/embed/${match[2]}?autoplay=0&rel=0` : null;
-  };
-  const youtubeEmbedUrl = getYouTubeEmbedUrl(rawVideoUrl);
+  const rawBunnyId = useMemo(() => {
+    const candidate =
+      getBunnyVideoId(mediaObj) ||
+      mediaObj.bunnyVideoId ||
+      mediaObj.bunny_video_id ||
+      mediaObj.guid;
+    return isValidBunnyVideoId(candidate) ? candidate : null;
+  }, [mediaObj]);
 
-  // Determine HTML5 Playable Video URL (Always Direct Player)
-  const resolvePlayableUrl = (url) => {
-    if (!url || typeof url !== 'string') return null;
-    const trimmed = url.trim();
-    if (trimmed.includes('youtube.com') || trimmed.includes('youtu.be')) {
-      return null;
-    }
-    // If it's a Bunny embed URL, convert to direct HLS if valid GUID
-    if (trimmed.includes('iframe.mediadelivery.net/embed/')) {
-      const parts = trimmed.split('/');
-      const possibleGuid = parts[parts.length - 1]?.split('?')[0];
-      if (isValidBunnyVideoId(possibleGuid)) {
-        return getHlsUrl(possibleGuid);
-      }
-      return null;
-    }
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('blob:')) {
-      return trimmed;
-    }
-    return null;
-  };
+  const youtubeEmbedUrl = useMemo(
+    () => getYouTubeEmbedUrl(rawVideoUrl),
+    [rawVideoUrl]
+  );
 
-  const playableVideoUrl = 
-    resolvePlayableUrl(rawVideoUrl) || 
-    (rawBunnyId ? getHlsUrl(rawBunnyId) : null) ||
-    (rawBunnyId ? getDirectPlayUrl(rawBunnyId) : null) ||
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+  const playableVideoUrl = useMemo(
+    () => (youtubeEmbedUrl ? null : resolvePlayableUrl(rawVideoUrl, rawBunnyId)),
+    [youtubeEmbedUrl, rawVideoUrl, rawBunnyId]
+  );
 
+  const isHlsUrl = useMemo(
+    () => Boolean(playableVideoUrl?.includes('.m3u8')),
+    [playableVideoUrl]
+  );
+
+  // ── Attach HLS / native src ──
   useEffect(() => {
+    completedRef.current = false;
     setIsPlaying(false);
     setCurrentTime(0);
     setProgressPercent(0);
 
-    // Setup HLS for ultra-fast adaptive streaming if playing an .m3u8 playlist directly
-    if (videoRef.current && playableVideoUrl && playableVideoUrl.includes('.m3u8')) {
+    const video = videoRef.current;
+    if (!video || !playableVideoUrl) return;
+
+    // Destroy previous HLS instance
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    if (isHlsUrl) {
       if (Hls.isSupported()) {
+        // Do NOT set video.src here — HLS.js will manage the source
+        video.removeAttribute('src');
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
           backBufferLength: 90,
           maxBufferLength: 30,
-          maxMaxBufferLength: 60,
+          maxMaxBufferLength: 600,
+          startLevel: -1,           // auto quality selection
+          abrEwmaDefaultEstimate: 5000000, // assume 5 Mbps initially → fast start
         });
         hls.loadSource(playableVideoUrl);
-        hls.attachMedia(videoRef.current);
-        hlsInstanceRef.current = hls;
+        hls.attachMedia(video);
+        hlsRef.current = hls;
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari native HLS
+        video.src = playableVideoUrl;
+        video.load();
+      }
+    } else {
+      // Plain MP4 / direct URL — set src directly
+      video.src = playableVideoUrl;
+      video.load();
+    }
 
-        return () => {
-          hls.destroy();
-          hlsInstanceRef.current = null;
-        };
-      } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
-        videoRef.current.src = playableVideoUrl;
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playableVideoUrl]);
+
+  // ── Controls ──
+  const handlePlayPause = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused || video.ended) {
+      video.play().catch((e) => console.warn('Play interrupted:', e));
+    } else {
+      video.pause();
+    }
+  }, []);
+
+  const handleToggleMute = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = !video.muted;
+    setIsMuted(video.muted);
+  }, []);
+
+  const handleTimeUpdate = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const cur = video.currentTime;
+    const dur = video.duration || 0;
+    setCurrentTime(cur);
+    setDuration(dur);
+    if (dur > 0) {
+      setProgressPercent((cur / dur) * 100);
+      if (!completedRef.current && cur / dur >= 0.92 && onComplete) {
+        completedRef.current = true;
+        onComplete();
       }
     }
-  }, [content, playableVideoUrl]);
+  }, [onComplete]);
 
-  // ── 1. YouTube Embed Mode ──
+  const handleLoadedMetadata = useCallback(() => {
+    const video = videoRef.current;
+    if (video) setDuration(video.duration);
+  }, []);
+
+  const handlePlay = useCallback(() => setIsPlaying(true), []);
+  const handlePause = useCallback(() => setIsPlaying(false), []);
+  const handleEnded = useCallback(() => {
+    setIsPlaying(false);
+    if (!completedRef.current && onComplete) {
+      completedRef.current = true;
+      onComplete();
+    }
+  }, [onComplete]);
+
+  const handleSeek = useCallback(
+    (e) => {
+      const video = videoRef.current;
+      if (!video || !duration) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const t = ((e.clientX - rect.left) / rect.width) * duration;
+      video.currentTime = t;
+    },
+    [duration]
+  );
+
+  const handleRateChange = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const rates = [1, 1.25, 1.5, 2];
+    const next = rates[(rates.indexOf(playbackRate) + 1) % rates.length];
+    video.playbackRate = next;
+    setPlaybackRate(next);
+  }, [playbackRate]);
+
+  const handleFullscreen = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    (video.requestFullscreen || video.webkitRequestFullscreen || (() => {})).call(video);
+  }, []);
+
+  // ── YouTube embed ──
   if (youtubeEmbedUrl) {
     return (
       <Card className="border-border overflow-hidden bg-slate-950 relative select-none shadow-2xl rounded-2xl">
@@ -105,95 +266,24 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
     );
   }
 
-  // ── 2. Always Direct HTML5 / HLS Player (No Overlay Badges / No Wordings) ──
-  const handlePlayPause = () => {
-    if (!videoRef.current) return;
-    if (isPlaying) {
-      videoRef.current.pause();
-      setIsPlaying(false);
-    } else {
-      videoRef.current.play().catch((e) => console.log('Video play interrupted:', e));
-      setIsPlaying(true);
-    }
-  };
-
-  const handleToggleMute = () => {
-    if (!videoRef.current) return;
-    videoRef.current.muted = !isMuted;
-    setIsMuted(!isMuted);
-  };
-
-  const handleTimeUpdate = () => {
-    if (!videoRef.current) return;
-    const current = videoRef.current.currentTime;
-    const dur = videoRef.current.duration || 0;
-    setCurrentTime(current);
-    setDuration(dur);
-    if (dur > 0) {
-      setProgressPercent((current / dur) * 100);
-      if (current / dur >= 0.92 && onComplete) {
-        onComplete();
-      }
-    }
-  };
-
-  const handleLoadedMetadata = () => {
-    if (videoRef.current) {
-      setDuration(videoRef.current.duration);
-    }
-  };
-
-  const handleSeek = (e) => {
-    if (!videoRef.current || duration === 0) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const newTime = (clickX / rect.width) * duration;
-    videoRef.current.currentTime = newTime;
-    setCurrentTime(newTime);
-    setProgressPercent((newTime / duration) * 100);
-  };
-
-  const handleRateChange = () => {
-    if (!videoRef.current) return;
-    let nextRate = 1;
-    if (playbackRate === 1) nextRate = 1.25;
-    else if (playbackRate === 1.25) nextRate = 1.5;
-    else if (playbackRate === 1.5) nextRate = 2;
-    else nextRate = 1;
-    
-    videoRef.current.playbackRate = nextRate;
-    setPlaybackRate(nextRate);
-  };
-
-  const handleFullscreen = () => {
-    if (videoRef.current) {
-      if (videoRef.current.requestFullscreen) {
-        videoRef.current.requestFullscreen();
-      }
-    }
-  };
-
-  const formatTime = (timeInSeconds) => {
-    if (isNaN(timeInSeconds)) return '0:00';
-    const minutes = Math.floor(timeInSeconds / 60);
-    const seconds = Math.floor(timeInSeconds % 60);
-    return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
-  };
-
+  // ── Direct HTML5 / HLS Player ──
   return (
     <Card className="border-border overflow-hidden bg-slate-950 relative group select-none shadow-2xl rounded-2xl">
+      {/* Video element — no src attribute when HLS.js is in charge */}
       <video
         ref={videoRef}
-        src={playableVideoUrl}
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
+        onPlay={handlePlay}
+        onPause={handlePause}
+        onEnded={handleEnded}
         onClick={handlePlayPause}
-        className="w-full aspect-video object-contain bg-slate-950 cursor-pointer"
-        preload="metadata"
-        crossOrigin="anonymous"
+        className="w-full aspect-video object-contain bg-slate-950 cursor-pointer block"
+        preload="auto"
+        playsInline
       />
 
-      {/* Play Overlay Button if Not Playing */}
+      {/* Play overlay — only when paused */}
       {!isPlaying && (
         <div
           onClick={handlePlayPause}
@@ -205,10 +295,10 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
         </div>
       )}
 
-      {/* Video Overlay Controllers */}
+      {/* Controls bar */}
       <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 via-black/50 to-transparent flex flex-col gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-20">
-        
-        {/* Progress seek bar */}
+
+        {/* Seek bar */}
         <div
           onClick={handleSeek}
           className="h-1.5 w-full bg-white/20 hover:h-2.5 rounded-full cursor-pointer relative transition-all"
@@ -221,22 +311,26 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
           </div>
         </div>
 
-        {/* Media Buttons */}
+        {/* Buttons row */}
         <div className="flex items-center justify-between text-white text-xs font-mono">
           <div className="flex items-center gap-1.5 sm:gap-3">
             <button
               onClick={handlePlayPause}
               aria-label={isPlaying ? 'Pause' : 'Play'}
-              className="touch-target-min hover:text-primary transition-colors cursor-pointer text-white flex items-center justify-center p-2 rounded-lg"
+              className="hover:text-primary transition-colors cursor-pointer flex items-center justify-center p-2 rounded-lg"
             >
-              {isPlaying ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 fill-current" />}
+              {isPlaying
+                ? <Pause className="h-5 w-5 fill-current" />
+                : <Play className="h-5 w-5 fill-current" />}
             </button>
             <button
               onClick={handleToggleMute}
               aria-label={isMuted ? 'Unmute' : 'Mute'}
-              className="touch-target-min hover:text-primary transition-colors cursor-pointer text-white flex items-center justify-center p-2 rounded-lg"
+              className="hover:text-primary transition-colors cursor-pointer flex items-center justify-center p-2 rounded-lg"
             >
-              {isMuted ? <VolumeX className="h-4.5 w-4.5" /> : <Volume2 className="h-4.5 w-4.5" />}
+              {isMuted
+                ? <VolumeX className="h-4 w-4" />
+                : <Volume2 className="h-4 w-4" />}
             </button>
             <span className="font-semibold select-none text-slate-300 text-[11px] sm:text-xs">
               {formatTime(currentTime)} / {formatTime(duration)}
@@ -246,17 +340,17 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
           <div className="flex items-center gap-1.5 sm:gap-3">
             <button
               onClick={handleRateChange}
-              aria-label="Change playback speed"
-              className="touch-target-min px-2 py-1 rounded-md border border-white/20 hover:border-white font-bold cursor-pointer text-[11px] flex items-center justify-center"
+              aria-label="Playback speed"
+              className="px-2 py-1 rounded-md border border-white/20 hover:border-white font-bold cursor-pointer text-[11px]"
             >
               {playbackRate}x
             </button>
             <button
               onClick={handleFullscreen}
               aria-label="Fullscreen"
-              className="touch-target-min hover:text-primary transition-colors cursor-pointer text-white flex items-center justify-center p-2 rounded-lg"
+              className="hover:text-primary transition-colors cursor-pointer flex items-center justify-center p-2 rounded-lg"
             >
-              <Maximize className="h-4.5 w-4.5" />
+              <Maximize className="h-4 w-4" />
             </button>
           </div>
         </div>
@@ -265,18 +359,7 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
 
       <BunnyAutoComplete onComplete={onComplete} />
     </Card>
-};
-
-const BunnyAutoComplete = ({ onComplete }) => {
-  useEffect(() => {
-    if (!onComplete) return;
-    const timer = setTimeout(() => {
-      onComplete();
-    }, 25000);
-    return () => clearTimeout(timer);
-  }, [onComplete]);
-
-  return null;
+  );
 };
 
 export default VideoPlayer;
