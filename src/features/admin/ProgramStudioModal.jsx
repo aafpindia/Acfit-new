@@ -526,11 +526,38 @@ export const ProgramStudioModal = ({
       })
     }));
   };
+  const handleOptionTextChange = handleOptionChange;
 
   const handleCorrectIndexChange = (qIdx, oIdx) => {
     setContentFormData((prev) => ({
       ...prev,
       questions: (prev.questions || []).map((q, idx) => (idx === qIdx ? { ...q, correctIndex: oIdx } : q))
+    }));
+  };
+
+  const handleMarkCorrectAnswer = (qIdx, optIdx, format) => {
+    setContentFormData((prev) => ({
+      ...prev,
+      questions: (prev.questions || []).map((q, idx) => {
+        if (idx !== qIdx) return q;
+        if (format === 'multiple-choice') {
+          const currentList = Array.isArray(q.correctIndex)
+            ? q.correctIndex
+            : (q.correctIndex !== undefined ? [q.correctIndex] : []);
+          const nextList = currentList.includes(optIdx)
+            ? currentList.filter((i) => i !== optIdx)
+            : [...currentList, optIdx];
+          return { ...q, correctIndex: nextList };
+        }
+        return { ...q, correctIndex: optIdx };
+      })
+    }));
+  };
+
+  const handleQuestionFormatChange = (qIdx, format) => {
+    setContentFormData((prev) => ({
+      ...prev,
+      questions: (prev.questions || []).map((q, idx) => (idx === qIdx ? { ...q, format } : q))
     }));
   };
 
@@ -551,6 +578,7 @@ export const ProgramStudioModal = ({
       ]
     }));
   };
+  const handleAddQuizQuestion = handleAddQuestion;
 
   const handleDeleteQuestion = (qIdx) => {
     setContentFormData((prev) => ({
@@ -558,6 +586,7 @@ export const ProgramStudioModal = ({
       questions: (prev.questions || []).filter((_, idx) => idx !== qIdx)
     }));
   };
+  const handleRemoveQuizQuestion = handleDeleteQuestion;
 
   const handleAddOption = (qIdx) => {
     setContentFormData((prev) => ({

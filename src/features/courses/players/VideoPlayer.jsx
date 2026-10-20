@@ -3,7 +3,7 @@ import { Play, Pause, Maximize, Volume2, VolumeX, Video, Zap } from 'lucide-reac
 import Hls from 'hls.js';
 import { Card } from '../../../components/ui/card';
 import { Badge } from '../../../components/ui/badge';
-import { getEmbedUrl, getHlsUrl, hasBunnyVideo, getBunnyVideoId } from '../../../services/bunnyService';
+import { getEmbedUrl, getHlsUrl, getDirectPlayUrl, hasBunnyVideo, getBunnyVideoId, isValidBunnyVideoId } from '../../../services/bunnyService';
 
 export const VideoPlayer = ({ content = {}, onComplete }) => {
   const videoRef = useRef(null);
@@ -15,13 +15,15 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [progressPercent, setProgressPercent] = useState(0);
   const [isIframeLoaded, setIsIframeLoaded] = useState(false);
+  const [iframeFailed, setIframeFailed] = useState(false);
 
   // Standardize media content payload (support both object and string input)
   const mediaObj = typeof content === 'string' ? { videoUrl: content } : (content || {});
 
   // Extract raw video URL and Bunny Video ID
   const rawVideoUrl = mediaObj.videoUrl || mediaObj.url || mediaObj.fileUrl || mediaObj.src || '';
-  const rawBunnyId = getBunnyVideoId(mediaObj) || mediaObj.bunnyVideoId || mediaObj.videoId || mediaObj.bunny_video_id || mediaObj.guid;
+  const candidateBunnyId = getBunnyVideoId(mediaObj) || mediaObj.bunnyVideoId || mediaObj.bunny_video_id || mediaObj.guid;
+  const rawBunnyId = isValidBunnyVideoId(candidateBunnyId) ? candidateBunnyId : null;
 
   // Determine if URL is a direct Bunny Stream iframe embed URL
   const isDirectBunnyIframeUrl = typeof rawVideoUrl === 'string' && rawVideoUrl.includes('iframe.mediadelivery.net');
@@ -35,15 +37,12 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
   };
   const youtubeEmbedUrl = getYouTubeEmbedUrl(rawVideoUrl);
 
-  // Determine Bunny Stream embed URL
+  // Determine Bunny Stream embed URL (only for valid UUIDs or direct embed URLs)
   let bunnyEmbedUrl = null;
   if (isDirectBunnyIframeUrl) {
     bunnyEmbedUrl = rawVideoUrl;
-  } else if (rawBunnyId || hasBunnyVideo(mediaObj)) {
-    const targetId = rawBunnyId || getBunnyVideoId(mediaObj);
-    if (targetId) {
-      bunnyEmbedUrl = getEmbedUrl(targetId, mediaObj.libraryId);
-    }
+  } else if (rawBunnyId) {
+    bunnyEmbedUrl = getEmbedUrl(rawBunnyId, mediaObj.libraryId);
   }
 
   // Determine HTML5 Playable Video URL (MP4 or HLS m3u8)
@@ -61,13 +60,15 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
 
   const playableVideoUrl = 
     resolvePlayableUrl(rawVideoUrl) || 
-    'https://vjs.zencdn.net/v/oceans.mp4';
+    (rawBunnyId ? getDirectPlayUrl(rawBunnyId) : null) ||
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
 
   useEffect(() => {
     setIsPlaying(false);
     setCurrentTime(0);
     setProgressPercent(0);
     setIsIframeLoaded(false);
+    setIframeFailed(false);
 
     // Setup HLS for ultra-fast adaptive streaming if playing an .m3u8 playlist directly
     if (videoRef.current && playableVideoUrl && playableVideoUrl.includes('.m3u8')) {
@@ -111,7 +112,7 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
   }
 
   // ── 2. Bunny Stream Iframe Embed Mode (High Speed Global Edge CDN) ──
-  if (bunnyEmbedUrl) {
+  if (bunnyEmbedUrl && !iframeFailed) {
     return (
       <Card className="border-border overflow-hidden bg-slate-950 relative select-none shadow-2xl rounded-2xl">
         {/* Stream Provider Header Badge */}
@@ -122,11 +123,18 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
           </Badge>
         </div>
 
-        {/* Loading Spinner */}
+        {/* Loading Spinner with switch fallback */}
         {!isIframeLoaded && (
-          <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center gap-3 z-10 text-white">
+          <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center gap-3 z-10 text-white p-4 text-center">
             <div className="w-10 h-10 border-3 border-primary border-t-transparent rounded-full animate-spin" />
             <span className="text-xs font-semibold text-slate-400">Connecting to BunnyStream CDN Edge...</span>
+            <button
+              type="button"
+              onClick={() => setIframeFailed(true)}
+              className="text-[11px] text-blue-400 hover:text-blue-300 hover:underline mt-1 cursor-pointer transition-colors"
+            >
+              Taking too long? Switch to Direct Player
+            </button>
           </div>
         )}
 
@@ -135,6 +143,7 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
             src={bunnyEmbedUrl}
             loading="eager"
             onLoad={() => setIsIframeLoaded(true)}
+            onError={() => setIframeFailed(true)}
             className="w-full h-full border-0 absolute inset-0"
             allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture; fullscreen"
             title={mediaObj.title || 'Bunny Stream Video'}

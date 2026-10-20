@@ -28,12 +28,35 @@ const BUNNY_CDN_HOSTNAME = import.meta.env.VITE_BUNNY_CDN_HOSTNAME || 'vz-49078c
 export const isBunnyConfigured = Boolean(BUNNY_LIBRARY_ID && BUNNY_API_KEY);
 
 /**
+ * Validate whether a string is a legitimate Bunny Stream video UUID.
+ * Bunny Stream uses standard 36-character UUIDs (v4):
+ * e.g. "6c986dc5-d2ca-4977-9ff4-814d45be702e"
+ */
+export const isValidBunnyVideoId = (id) => {
+  if (!id || typeof id !== 'string') return false;
+  const trimmed = id.trim();
+  // Standard UUID format (8-4-4-4-12 hex chars)
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(trimmed);
+};
+
+/**
  * Generate the iframe embed URL for a Bunny Stream video.
+ * Returns null if the videoId is not a valid Bunny video UUID or embed URL.
  */
 export const getEmbedUrl = (videoId, libraryId) => {
+  if (!videoId || typeof videoId !== 'string') return null;
+  const trimmed = videoId.trim();
+  // If already an embed URL, return it directly
+  if (trimmed.includes('iframe.mediadelivery.net')) {
+    return trimmed;
+  }
+  // Guard against non-UUID mock strings (which cause HTTP 400 and rum.js DNS failures)
+  if (!isValidBunnyVideoId(trimmed)) {
+    return null;
+  }
   const libId = libraryId || BUNNY_LIBRARY_ID || '784894';
-  if (!videoId) return null;
-  return `https://iframe.mediadelivery.net/embed/${libId}/${videoId}?autoplay=false&loop=false&muted=false&preload=true&responsive=true`;
+  return `https://iframe.mediadelivery.net/embed/${libId}/${trimmed}?autoplay=false&loop=false&muted=false&preload=true&responsive=true`;
 };
 
 /**
@@ -41,38 +64,49 @@ export const getEmbedUrl = (videoId, libraryId) => {
  * Uses the actual CDN hostname for premium delivery speed.
  */
 export const getHlsUrl = (videoId, _libraryId) => {
-  if (!videoId) return null;
-  return `https://${BUNNY_CDN_HOSTNAME}/${videoId}/playlist.m3u8`;
+  if (!videoId || typeof videoId !== 'string') return null;
+  const trimmed = videoId.trim();
+  if (!isValidBunnyVideoId(trimmed)) return null;
+  return `https://${BUNNY_CDN_HOSTNAME}/${trimmed}/playlist.m3u8`;
 };
 
 /**
  * Generate a thumbnail URL for a Bunny Stream video.
  */
 export const getThumbnailUrl = (videoId, _libraryId) => {
-  if (!videoId) return null;
-  return `https://${BUNNY_CDN_HOSTNAME}/${videoId}/thumbnail.jpg`;
+  if (!videoId || typeof videoId !== 'string') return null;
+  const trimmed = videoId.trim();
+  if (!isValidBunnyVideoId(trimmed)) return null;
+  return `https://${BUNNY_CDN_HOSTNAME}/${trimmed}/thumbnail.jpg`;
 };
 
 /**
  * Generate a direct MP4 fallback URL for a Bunny Stream video (720p).
  */
 export const getDirectPlayUrl = (videoId, resolution = 720) => {
-  if (!videoId) return null;
-  return `https://${BUNNY_CDN_HOSTNAME}/${videoId}/play_${resolution}p.mp4`;
+  if (!videoId || typeof videoId !== 'string') return null;
+  const trimmed = videoId.trim();
+  if (!isValidBunnyVideoId(trimmed)) return null;
+  return `https://${BUNNY_CDN_HOSTNAME}/${trimmed}/play_${resolution}p.mp4`;
 };
 
 /**
- * Check if a lesson content object has a Bunny Stream video ID or video content.
+ * Check if a lesson content object has a genuine Bunny Stream video ID.
  */
 export const hasBunnyVideo = (content) => {
-  return Boolean(content?.bunnyVideoId || content?.videoId || content?.bunny_video_id);
+  const id = getBunnyVideoId(content);
+  return Boolean(id && isValidBunnyVideoId(id));
 };
 
 /**
- * Get the Bunny video ID from lesson content.
+ * Get the Bunny video ID from lesson content if it is a valid UUID.
  */
 export const getBunnyVideoId = (content) => {
-  return content?.bunnyVideoId || content?.videoId || content?.bunny_video_id || null;
+  if (!content) return null;
+  const candidate = content?.bunnyVideoId || content?.bunny_video_id || content?.guid || null;
+  if (candidate && isValidBunnyVideoId(candidate)) return candidate;
+  if (content?.videoId && isValidBunnyVideoId(content.videoId)) return content.videoId;
+  return null;
 };
 
 /**
