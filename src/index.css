@@ -1,0 +1,293 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap");
+@import "tailwindcss";
+
+@theme {
+  /* ─── Zoho-Style SaaS Clean Theme Palette ──────────────── */
+  --color-background:      #F7F8FA;   /* clean workspace light gray */
+  --color-surface:         #FFFFFF;   /* pure white workspace card surface */
+  --color-surface-hover:   #F9FAFB;   /* clean subtle hover */
+  --color-card:            #FFFFFF;   /* card surface */
+  --color-card-hover:      #F9FAFB;   /* subtle card hover */
+  --color-surface-alt:     #F3F4F6;   /* inset surface */
+
+  /* ── Restrained Brand Accent: Blue (3% Rule) ────── */
+  --color-primary:         #2563EB;   /* clean brand blue */
+  --color-primary-hover:   #1D4ED8;   /* deep brand blue */
+  --color-primary-light:   #EFF6FF;   /* soft blue tint for active items */
+  --color-primary-glow:    rgba(37, 99, 235, 0.12);
+
+  /* ── Secondary & Accent Tokens ────── */
+  --color-accent:          #2563EB;   /* restrained blue */
+  --color-accent-hover:    #1D4ED8;
+  --color-accent-glow:     rgba(37, 99, 235, 0.15);
+
+  --color-secondary:       #8A8F98;   /* neutral secondary */
+  --color-secondary-hover: #5F6368;
+  --color-secondary-glow:  rgba(138, 143, 152, 0.15);
+
+  /* ── Curated Artifact Accents ────────── */
+  --color-cyan:            #0284C7;
+  --color-amber:           #D99116;
+  --color-emerald:         #2E9B68;
+  --color-purple:          #2563EB;
+
+  /* Status colors */
+  --color-success:         #2E9B68;   /* Zoho green */
+  --color-success-light:   #EAF7F0;
+  --color-success-dim:     rgba(46, 155, 104, 0.12);
+
+  --color-warning:         #D99116;   /* Zoho amber */
+  --color-warning-light:   #FFF7E6;
+  --color-warning-dim:     rgba(217, 145, 22, 0.12);
+
+  --color-error:           #D64545;   /* Zoho red */
+  --color-error-light:     #FDECEC;
+  --color-error-dim:       rgba(214, 69, 69, 0.12);
+
+  /* Chart palette */
+  --color-chart-blue:      #2563EB;   /* primary blue */
+  --color-chart-teal:      #2E9B68;
+  --color-chart-purple:    #8A8F98;
+  --color-chart-amber:     #D99116;
+  --color-chart-coral:     #D64545;
+
+  /* Typography */
+  --color-text-main:       #202124;   /* clean workspace dark text */
+  --color-text-secondary:  #5F6368;   /* neutral secondary text */
+  --color-text-muted:      #8A8F98;   /* muted text */
+
+  /* Borders */
+  --color-border:          #E4E7EB;   /* thin neutral border */
+  --color-border-light:    #ECEEF1;   /* light subtle border */
+  --color-border-subtle:   #ECEEF1;
+
+  /* Fonts - Unified Inter Font Family */
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-serif: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "Inter", system-ui, -apple-system, sans-serif;
+
+  /* Restrained SaaS Shadows */
+  --shadow-tactile:        0 1px 3px 0 rgba(0, 0, 0, 0.05);
+  --shadow-tactile-sm:     0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow-tactile-lg:     0 4px 12px 0 rgba(0, 0, 0, 0.08);
+  --shadow-tactile-soft:   0 2px 6px 0 rgba(0, 0, 0, 0.04);
+  --shadow-tactile-hover:  0 2px 8px 0 rgba(0, 0, 0, 0.06);
+  --shadow-premium:        0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 4px 12px -2px rgba(0, 0, 0, 0.05);
+
+  /* Animations */
+  --animate-accordion-down: accordion-down 0.2s cubic-bezier(0.87, 0, 0.13, 1);
+  --animate-accordion-up:   accordion-up   0.2s cubic-bezier(0.87, 0, 0.13, 1);
+  --animate-ripple:         ripple 0.6s cubic-bezier(0, 0, 0.2, 1);
+  --animate-fade-in-up:     fade-in-up 0.3s ease-out forwards;
+  --animate-bar-rise:       bar-rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  --animate-draw-line:      draw-line 1.2s ease-out forwards;
+  --animate-spin-in:        spin-in 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+
+  @keyframes accordion-down {
+    from { height: 0; }
+    to   { height: var(--radix-accordion-content-height); }
+  }
+  @keyframes accordion-up {
+    from { height: var(--radix-accordion-content-height); }
+    to   { height: 0; }
+  }
+  @keyframes ripple {
+    to { transform: scale(4); opacity: 0; }
+  }
+  @keyframes fade-in-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes bar-rise {
+    from { transform: scaleY(0); }
+    to   { transform: scaleY(1); }
+  }
+  @keyframes draw-line {
+    from { stroke-dashoffset: 1000; }
+    to   { stroke-dashoffset: 0; }
+  }
+  @keyframes spin-in {
+    from { transform: rotate(-90deg); opacity: 0; }
+    to   { transform: rotate(0deg);   opacity: 1; }
+  }
+}
+
+/* ─── Global Clean SaaS Workspace Canvas ───────────────────── */
+@layer base {
+  html, body {
+    background-color: var(--color-background);
+    background-image: none;
+    color: var(--color-text-main);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+  }
+
+  /* Force clean surfaces */
+  .bg-white {
+    background-color: #FFFFFF !important;
+  }
+  .bg-gray-50 {
+    background-color: #F7F8FA !important;
+  }
+
+  /* Form controls */
+  input:not(.bg-transparent), textarea:not(.bg-transparent), select:not(.bg-transparent) {
+    background-color: #FFFFFF;
+    color: var(--color-text-main);
+    border-color: var(--color-border);
+    font-family: var(--font-sans);
+    border-radius: 6px;
+  }
+  .topbar-search-input {
+    background-color: transparent !important;
+    color: #FFFFFF !important;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+  }
+  input::placeholder, textarea::placeholder {
+    color: var(--color-text-muted);
+    opacity: 0.85;
+  }
+
+  /* Scrollbars */
+  ::-webkit-scrollbar       { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: #D8DCE2;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: #8A8F98; }
+}
+
+/* ─── Clean Workspace Utilities ──────────────────────────────── */
+.graph-paper-bg,
+.graph-paper-dense,
+.sketchy-lines-bg,
+.graph-paper-dark-subtle {
+  background-color: #F7F8FA !important;
+  background-image: none !important;
+}
+
+/* ─── Clean SaaS Workspace Cards & Action Buttons ────────────── */
+.tactile-card {
+  background: #FFFFFF;
+  border: 1px solid #E4E7EB;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.tactile-card:hover {
+  border-color: #D8DCE2;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.tactile-card-static {
+  background: #FFFFFF;
+  border: 1px solid #E4E7EB;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+.tactile-btn-primary {
+  background: #2563EB;
+  color: #FFFFFF;
+  border: 1px solid #2563EB;
+  border-radius: 6px;
+  font-weight: 600;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.tactile-btn-primary:hover {
+  background: #1D4ED8;
+  border-color: #1D4ED8;
+}
+.tactile-btn-primary:active {
+  background: #1E40AF;
+}
+
+.tactile-btn-accent {
+  background: #EFF6FF;
+  color: #2563EB;
+  border: 1px solid #E4E7EB;
+  border-radius: 6px;
+  font-weight: 600;
+  transition: background-color 0.15s ease;
+}
+.tactile-btn-accent:hover {
+  background: #DBEAFE;
+  color: #1D4ED8;
+}
+
+/* ─── Typography & Status Badges ────────────────────────────── */
+.font-mono-tech {
+  font-family: var(--font-mono);
+}
+
+.corner-crosshair::before,
+.corner-crosshair::after {
+  display: none;
+}
+
+/* ─── Glass panels ───────────────────────────────────────────── */
+.glass-panel {
+  background: #FFFFFF;
+  border: 1px solid #E4E7EB;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+/* ─── Progress & Utility bindings ────────────────────────────── */
+.progress-track {
+  background: #ECEEF1;
+  border-radius: 9999px;
+  overflow: hidden;
+  height: 6px;
+}
+.progress-fill {
+  background: #2563EB;
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.5s ease-out;
+}
+
+.border-border { border-color: var(--color-border) !important; }
+.text-text-main { color: var(--color-text-main) !important; }
+.text-text-secondary { color: var(--color-text-secondary) !important; }
+.bg-card { background-color: var(--color-card) !important; }
+.bg-surface { background-color: var(--color-surface) !important; }
+
+/* ─── Mobile-First Fluid Typography ─────────────────────────── */
+.text-fluid-h1 {
+  font-size: clamp(1.4rem, 3vw + 1rem, 2.25rem);
+  line-height: 1.2;
+}
+
+.text-fluid-h2 {
+  font-size: clamp(1.2rem, 2vw + 0.8rem, 1.75rem);
+  line-height: 1.3;
+}
+
+.text-fluid-body {
+  font-size: clamp(0.875rem, 1vw + 0.75rem, 1rem);
+  line-height: 1.5;
+}
+
+.break-words-safe {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  hyphens: auto;
+}
+
+.touch-target-min {
+  min-height: 40px;
+  min-width: 40px;
+}
+
+.touch-scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+}

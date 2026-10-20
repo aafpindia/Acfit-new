@@ -1,0 +1,117 @@
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { motion } from 'framer-motion';
+import { useAuth } from '../../hooks/useAuth';
+import { useToast } from '../../hooks/useToast';
+import { Mail, CheckCircle, ArrowLeft } from 'lucide-react';
+import { Input } from '../../components/ui/input';
+import { Button } from '../../components/ui/button';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../../components/ui/card';
+
+const schema = z.object({
+  email: z.string().email('Please enter a valid email address')
+});
+
+export const ForgotPassword = () => {
+  const { resetPasswordForEmail } = useAuth();
+  const { success, error } = useToast();
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+
+  const { register, handleSubmit, formState: { errors } } = useForm({
+    resolver: zodResolver(schema)
+  });
+
+  const onSubmit = async (values) => {
+    setIsLoading(true);
+    const res = await resetPasswordForEmail(values.email);
+    setIsLoading(false);
+
+    if (res.success) {
+      success('Password reset link sent!');
+      setIsSuccess(true);
+    } else {
+      error(res.error || 'Failed to request reset. Check your email spelling.');
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background px-4 relative overflow-hidden font-sans">
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-primary/5 rounded-full blur-[100px] pointer-events-none -z-10" />
+
+      <motion.div
+        initial={{ opacity: 0, y: 15 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className="w-full max-w-md"
+      >
+        <div className="flex justify-center mb-6">
+          <Link to="/" className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center text-white font-bold text-xl">
+              A
+            </div>
+            <span className="font-extrabold text-xl tracking-tight text-text-main">ACFIT Academy</span>
+          </Link>
+        </div>
+
+        <Card className="border-border">
+          <CardHeader className="text-center">
+            <CardTitle className="text-2xl font-bold">Reset Password</CardTitle>
+            <CardDescription>We will send you a secure link to reset credentials</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isSuccess ? (
+              <div className="space-y-4 text-center">
+                <div className="inline-flex p-3 rounded-full bg-success/10 border border-success/20 text-success mb-2 justify-center mx-auto">
+                  <CheckCircle className="h-6 w-6" />
+                </div>
+                <p className="text-sm text-text-secondary leading-relaxed">
+                  Reset link sent! Please check your email inbox to update your password credentials.
+                </p>
+                <Button
+                  variant="outline"
+                  className="w-full mt-4 gap-2"
+                  asChild
+                >
+                  <Link to="/login">
+                    <ArrowLeft className="h-4 w-4" />
+                    <span>Back to Login</span>
+                  </Link>
+                </Button>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+                <Input
+                  label="Email Address"
+                  placeholder="you@example.com"
+                  leftIcon={<Mail className="h-4.5 w-4.5" />}
+                  error={errors.email?.message}
+                  {...register('email')}
+                />
+
+                <Button
+                  type="submit"
+                  className="w-full mt-2"
+                  isLoading={isLoading}
+                >
+                  Send Reset Link
+                </Button>
+
+                <div className="text-center text-xs text-text-secondary mt-4">
+                  <Link to="/login" className="inline-flex items-center gap-1.5 font-semibold text-primary hover:underline">
+                    <ArrowLeft className="h-3.5 w-3.5" /> Back to Login
+                  </Link>
+                </div>
+              </form>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
+    </div>
+  );
+};
+
+export default ForgotPassword;
