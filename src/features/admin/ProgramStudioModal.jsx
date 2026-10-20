@@ -455,7 +455,7 @@ export const ProgramStudioModal = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setBunnyProgress({ step: 1, message: 'Uploading video to BunnyStream CDN...', pct: 20 });
+    setBunnyProgress({ step: 1, message: 'Preparing video upload...', pct: 5 });
     try {
       const res = await processBunnyVideoWorkflow(file, contentFormData.title || 'Lesson Video', (p) => setBunnyProgress(p));
       if (res.success && res.data) {
@@ -467,13 +467,13 @@ export const ProgramStudioModal = ({
         }));
         success('Video uploaded to BunnyStream! Live player stream ready.');
       } else {
-        error('BunnyStream upload failed.');
+        error(res?.error || 'BunnyStream upload failed. Please try again.');
       }
     } catch (err) {
       console.error(err);
-      error('Video upload error.');
+      error(err?.message || 'Video upload error.');
     } finally {
-      setBunnyProgress(null);
+      setTimeout(() => setBunnyProgress(null), 1500);
     }
   };
 
@@ -1759,7 +1759,7 @@ export const ProgramStudioModal = ({
                     <label className="font-semibold text-[#202124] flex items-center justify-between">
                       <span>🎥 Upload Video to BunnyStream CDN</span>
                       {bunnyProgress && (
-                        <span className="text-[10px] text-[#2563EB] font-mono animate-pulse">
+                        <span className="text-[10px] text-[#2563EB] font-mono font-bold animate-pulse">
                           {bunnyProgress.message} ({bunnyProgress.pct}%)
                         </span>
                       )}
@@ -1767,9 +1767,24 @@ export const ProgramStudioModal = ({
                     <input
                       type="file"
                       accept="video/*"
+                      disabled={Boolean(bunnyProgress)}
                       onChange={handleVideoFileUpload}
-                      className="block w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[#EFF6FF] file:text-[#2563EB] hover:file:bg-[#E5DFFF] cursor-pointer"
+                      className="block w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[#EFF6FF] file:text-[#2563EB] hover:file:bg-[#E5DFFF] cursor-pointer disabled:opacity-50"
                     />
+                    {bunnyProgress && (
+                      <div className="w-full space-y-1 pt-1">
+                        <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+                          <div
+                            className="h-full bg-gradient-to-r from-blue-600 via-indigo-600 to-emerald-500 transition-all duration-300 rounded-full"
+                            style={{ width: `${bunnyProgress.pct}%` }}
+                          />
+                        </div>
+                        <div className="flex justify-between text-[10px] text-slate-500 font-medium">
+                          <span>TUS Resumable Chunks (High Speed)</span>
+                          <span className="font-bold text-blue-600">{bunnyProgress.pct}%</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-1">

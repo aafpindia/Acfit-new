@@ -16,7 +16,7 @@ import {
 import { Button } from './button';
 import { Input } from './input';
 import { Badge } from './badge';
-import { createBunnyVideo, uploadVideoFile, getEmbedUrl } from '../../services/bunnyService';
+import { processBunnyVideoWorkflow, getEmbedUrl } from '../../services/bunnyService';
 
 /**
  * Pro-Level Video Upload & Media Dropzone Component
@@ -33,6 +33,7 @@ export const VideoUploadDropzone = ({
   const [dragActive, setDragActive] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStatusText, setUploadStatusText] = useState('');
   const [customUrlInput, setCustomUrlInput] = useState(value.videoUrl || '');
   const [bunnyIdInput, setBunnyIdInput] = useState(value.bunnyVideoId || value.videoId || '');
   const [previewError, setPreviewError] = useState(false);
@@ -73,53 +74,46 @@ export const VideoUploadDropzone = ({
     }
 
     setIsUploading(true);
-    setUploadProgress(10);
-
-    // Simulate smooth progress meter
-    const interval = setInterval(() => {
-      setUploadProgress((prev) => {
-        if (prev >= 85) {
-          clearInterval(interval);
-          return 85;
-        }
-        return prev + 15;
-      });
-    }, 200);
+    setUploadProgress(5);
+    setUploadStatusText('Preparing video for upload...');
 
     try {
-      // Create object URL for instant live preview
-      const localPreviewUrl = URL.createObjectURL(file);
+      const res = await processBunnyVideoWorkflow(
+        file,
+        file.name,
+        (progress) => {
+          setUploadProgress(progress.pct || 0);
+          if (progress.message) {
+            setUploadStatusText(progress.message);
+          }
+        }
+      );
 
-      // Attempt Bunny CDN Upload if configured, otherwise fallback to local blob / CDN URL
-      let uploadedVideoId = null;
-      let finalVideoUrl = localPreviewUrl;
+      if (res.success && res.data) {
+        const finalEmbedUrl = res.data.embedUrl || getEmbedUrl(res.data.videoId);
+        const mediaPayload = {
+          videoUrl: finalEmbedUrl,
+          videoId: res.data.videoId,
+          bunnyVideoId: res.data.videoId,
+          hlsUrl: res.data.hlsUrl,
+          thumbnailUrl: res.data.thumbnailUrl,
+          fileName: file.name,
+          fileSize: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
+          type: 'video'
+        };
 
-      const bunnyRes = await createBunnyVideo(file.name);
-      if (bunnyRes.success && bunnyRes.data?.videoId) {
-        uploadedVideoId = bunnyRes.data.videoId;
-        await uploadVideoFile(uploadedVideoId, file);
+        if (onChange) onChange(mediaPayload);
+        if (onUploadSuccess) onUploadSuccess(mediaPayload);
       }
-
-      setUploadProgress(100);
-      clearInterval(interval);
-
-      const mediaPayload = {
-        videoUrl: finalVideoUrl,
-        videoId: uploadedVideoId,
-        bunnyVideoId: uploadedVideoId,
-        fileName: file.name,
-        fileSize: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
-        duration: '1:45',
-        type: 'video'
-      };
-
-      if (onChange) onChange(mediaPayload);
-      if (onUploadSuccess) onUploadSuccess(mediaPayload);
     } catch (err) {
       console.error('Video upload failed:', err);
+      alert('Video upload failed: ' + (err.message || 'Please check your connection and try again.'));
     } finally {
       setIsUploading(false);
-      setTimeout(() => setUploadProgress(0), 1000);
+      setTimeout(() => {
+        setUploadProgress(0);
+        setUploadStatusText('');
+      }, 1500);
     }
   };
 
@@ -243,8 +237,8 @@ export const VideoUploadDropzone = ({
           {isUploading && (
             <div className="w-full space-y-1.5 pt-2">
               <div className="flex justify-between text-[11px] font-bold text-primary">
-                <span className="flex items-center gap-1.5">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading Video...
+                <span className="flex items-center gap-1.5 truncate max-w-[80%]">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" /> {uploadStatusText || 'Uploading Video...'}
                 </span>
                 <span>{uploadProgress}%</span>
               </div>

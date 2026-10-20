@@ -1,11 +1,13 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Play, Pause, Maximize, Volume2, VolumeX, Video } from 'lucide-react';
+import { Play, Pause, Maximize, Volume2, VolumeX, Video, Zap } from 'lucide-react';
+import Hls from 'hls.js';
 import { Card } from '../../../components/ui/card';
 import { Badge } from '../../../components/ui/badge';
-import { getEmbedUrl, hasBunnyVideo, getBunnyVideoId } from '../../../services/bunnyService';
+import { getEmbedUrl, getHlsUrl, hasBunnyVideo, getBunnyVideoId } from '../../../services/bunnyService';
 
 export const VideoPlayer = ({ content = {}, onComplete }) => {
   const videoRef = useRef(null);
+  const hlsInstanceRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -44,7 +46,7 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
     }
   }
 
-  // Determine HTML5 Playable Video URL
+  // Determine HTML5 Playable Video URL (MP4 or HLS m3u8)
   const resolvePlayableUrl = (url) => {
     if (!url || typeof url !== 'string') return null;
     const trimmed = url.trim();
@@ -66,7 +68,30 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
     setCurrentTime(0);
     setProgressPercent(0);
     setIsIframeLoaded(false);
-  }, [content]);
+
+    // Setup HLS for ultra-fast adaptive streaming if playing an .m3u8 playlist directly
+    if (videoRef.current && playableVideoUrl && playableVideoUrl.includes('.m3u8')) {
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 90,
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
+        });
+        hls.loadSource(playableVideoUrl);
+        hls.attachMedia(videoRef.current);
+        hlsInstanceRef.current = hls;
+
+        return () => {
+          hls.destroy();
+          hlsInstanceRef.current = null;
+        };
+      } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
+        videoRef.current.src = playableVideoUrl;
+      }
+    }
+  }, [content, playableVideoUrl]);
 
   // ── 1. YouTube Embed Mode ──
   if (youtubeEmbedUrl) {
@@ -85,22 +110,30 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
     );
   }
 
-  // ── 2. Bunny Stream Iframe Embed Mode ──
+  // ── 2. Bunny Stream Iframe Embed Mode (High Speed Global Edge CDN) ──
   if (bunnyEmbedUrl) {
     return (
       <Card className="border-border overflow-hidden bg-slate-950 relative select-none shadow-2xl rounded-2xl">
+        {/* Stream Provider Header Badge */}
+        <div className="absolute top-3 left-3 z-20 flex items-center gap-2 pointer-events-none opacity-80 hover:opacity-100 transition-opacity">
+          <Badge className="bg-slate-900/90 backdrop-blur-md border border-white/10 text-white text-[10px] font-bold px-2.5 py-1 flex items-center gap-1.5 shadow-md">
+            <Zap className="h-3 w-3 text-amber-400 fill-amber-400" />
+            <span>Bunny CDN Premium • High Speed</span>
+          </Badge>
+        </div>
+
         {/* Loading Spinner */}
         {!isIframeLoaded && (
           <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center gap-3 z-10 text-white">
             <div className="w-10 h-10 border-3 border-primary border-t-transparent rounded-full animate-spin" />
-            <span className="text-xs font-semibold text-slate-400">Loading Bunny Stream Player...</span>
+            <span className="text-xs font-semibold text-slate-400">Connecting to BunnyStream CDN Edge...</span>
           </div>
         )}
 
         <div className="aspect-video w-full relative">
           <iframe
             src={bunnyEmbedUrl}
-            loading="lazy"
+            loading="eager"
             onLoad={() => setIsIframeLoaded(true)}
             className="w-full h-full border-0 absolute inset-0"
             allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture; fullscreen"
