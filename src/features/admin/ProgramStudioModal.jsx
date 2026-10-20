@@ -55,7 +55,8 @@ import {
   DropdownMenuTrigger
 } from '../../components/ui/dropdown';
 import { StudentCoursePlayerPreviewModal } from './StudentCoursePlayerPreviewModal';
-import { processBunnyVideoWorkflow, getEmbedUrl } from '../../services/bunnyService';
+import { VideoPlayer } from '../courses/players/VideoPlayer';
+import { processBunnyVideoWorkflow, getHlsUrl } from '../../services/bunnyService';
 
 const DEFAULT_COVER_PRESETS = [];
 
@@ -329,7 +330,7 @@ export const ProgramStudioModal = ({
       id: `les-${Date.now()}`,
       title: `${contentTypeObj.title} Lesson ${lesNum}`,
       type: contentTypeId,
-      duration: '10 Mins',
+      duration: '',
       commentsCount: 0,
       items: [
         {
@@ -455,17 +456,49 @@ export const ProgramStudioModal = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Show instant local blob preview
+    const blobUrl = URL.createObjectURL(file);
+    setContentFormData((prev) => ({ ...prev, _blobPreview: blobUrl }));
+
+    // Dynamically calculate and store true video duration
+    const tempVideo = document.createElement('video');
+    tempVideo.preload = 'metadata';
+    tempVideo.src = blobUrl;
+    tempVideo.onloadedmetadata = () => {
+      const sec = Math.round(tempVideo.duration);
+      if (sec > 0) {
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        const durStr = `${m}:${s < 10 ? '0' : ''}${s}`;
+        setContentFormData((prev) => ({ ...prev, duration: durStr }));
+        if (activeLesson) {
+          setFormData((prev) => ({
+            ...prev,
+            modules: prev.modules.map((mod) => ({
+              ...mod,
+              lessons: mod.lessons.map((les) =>
+                les.id === activeLesson.id ? { ...les, duration: durStr } : les
+              )
+            }))
+          }));
+        }
+      }
+    };
+
     setBunnyProgress({ step: 1, message: 'Preparing video upload...', pct: 5 });
     try {
-      const res = await processBunnyVideoWorkflow(file, contentFormData.title || 'Lesson Video', (p) => setBunnyProgress(p));
+      const res = await processBunnyVideoWorkflow(file, contentFormData.title || file.name, (p) => setBunnyProgress(p));
       if (res.success && res.data) {
-        const embed = res.data.embedUrl || getEmbedUrl(res.data.videoId);
+        // Store HLS stream URL for production
+        const hlsUrl = res.data.hlsUrl || getHlsUrl(res.data.videoId) || '';
         setContentFormData((prev) => ({
           ...prev,
           bunnyVideoId: res.data.videoId,
-          videoUrl: embed
+          videoUrl: hlsUrl,
+          hlsUrl,
+          // Keep _blobPreview active for immediate zero-lag playback in studio
         }));
-        success('Video uploaded to BunnyStream! Live player stream ready.');
+        success('Video uploaded! Stream ready.');
       } else {
         error(res?.error || 'BunnyStream upload failed. Please try again.');
       }
@@ -1461,7 +1494,9 @@ export const ProgramStudioModal = ({
                           </div>
                         )}
 
-                        <span className="text-xs text-[#8A8F98] font-normal shrink-0">{moduleItem.duration || '10 Mins'}</span>
+                        {moduleItem.duration && (
+                          <span className="text-xs text-[#8A8F98] font-normal shrink-0">{moduleItem.duration}</span>
+                        )}
                       </div>
 
                       {/* Right Module Actions: + Add Lesson Dropdown with Specific Icons */}
@@ -1539,7 +1574,9 @@ export const ProgramStudioModal = ({
                                 >
                                   {lesson.title}
                                 </span>
-                                <span className="text-[11px] text-[#8A8F98] shrink-0">{lesson.duration || '10 Mins'}</span>
+                                {lesson.duration && (
+                                  <span className="text-[11px] text-[#8A8F98] shrink-0">{lesson.duration}</span>
+                                )}
                                 <span className="text-[11px] text-[#8A8F98] flex items-center gap-1 shrink-0">
                                   <MessageSquare className="h-3 w-3 text-slate-300" />
                                   <span>0</span>
@@ -1826,18 +1863,16 @@ export const ProgramStudioModal = ({
                     />
                   </div>
 
-                  {contentFormData.videoUrl && (
-                    <div className="space-y-1">
-                      <label className="font-semibold text-[#2E9B68] text-[11px] flex items-center gap-1">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        <span>Live Stream Player Preview</span>
-                      </label>
-                      <div className="aspect-video bg-black rounded-lg overflow-hidden border border-[#E4E7EB]">
-                        <iframe
-                          src={contentFormData.videoUrl}
-                          className="w-full h-full border-0"
-                          allow="autoplay; fullscreen; picture-in-picture"
-                          allowFullScreen
+                  {(contentFormData._blobPreview || contentFormData.videoUrl) && (
+                    <div className="pt-2">
+                      <div className="rounded-xl overflow-hidden bg-black border border-[#E4E7EB]">
+                        <VideoPlayer
+                          content={{
+                            videoUrl: contentFormData._blobPreview || contentFormData.videoUrl,
+                            _blobPreview: contentFormData._blobPreview,
+                            bunnyVideoId: contentFormData.bunnyVideoId,
+                            title: contentFormData.title || 'Lesson Video'
+                          }}
                         />
                       </div>
                     </div>

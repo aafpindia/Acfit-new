@@ -219,7 +219,7 @@ export const uploadVideoFileTus = (videoId, file, onProgress) => {
         retryDelays: [0, 1000, 3000, 5000, 10000, 15000],
 
         // Chunk size: 5MB chunks for optimal speed/reliability balance
-        chunkSize: 5 * 1024 * 1024,
+        chunkSize: 5 * 1024 * 1024, // 5 MB chunks for fast upload
 
         // Bunny Stream authentication headers
         headers: {

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { getEmbedUrl } from '../../services/bunnyService';
+import { VideoPlayer } from '../courses/players/VideoPlayer';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import {
@@ -77,35 +77,11 @@ export const StudentCoursePlayerPreviewModal = ({ isOpen, onClose, courseData })
                         </Badge>
                       </div>
 
-                      {item.type === 'video' && (() => {
-                        const embedUrl = item.bunnyVideoId ? getEmbedUrl(item.bunnyVideoId) : null;
-                        const isEmbed = Boolean(embedUrl || (item.videoUrl && (item.videoUrl.includes('youtube.com') || item.videoUrl.includes('youtu.be') || item.videoUrl.includes('iframe.mediadelivery.net'))));
-                        const displayUrl = embedUrl || item.videoUrl;
-
-                        return (
-                          <div className="relative aspect-video rounded-xl overflow-hidden bg-black border border-[#E4E7EB] flex items-center justify-center">
-                            {isEmbed ? (
-                              <iframe
-                                src={displayUrl}
-                                className="w-full h-full border-0"
-                                allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture;"
-                                allowFullScreen
-                              />
-                            ) : displayUrl ? (
-                              <video
-                                src={displayUrl}
-                                controls
-                                className="w-full h-full object-contain"
-                              />
-                            ) : (
-                              <div className="text-center text-slate-400 p-6">
-                                <Video className="h-10 w-10 mx-auto mb-2 text-slate-600" />
-                                <p className="text-xs">No video URL available for preview.</p>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
+                      {item.type === 'video' && (
+                        <div className="relative rounded-xl overflow-hidden bg-black border border-[#E4E7EB]">
+                          <VideoPlayer content={item} />
+                        </div>
+                      )}
 
                       {item.type === 'ppt' && (
                         <div className="p-6 bg-slate-50 border border-[#E4E7EB] rounded-xl space-y-3">

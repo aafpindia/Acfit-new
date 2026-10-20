@@ -837,10 +837,12 @@ export const CoursePlayer = () => {
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  <div className="px-3 py-1.5 bg-slate-100 rounded-xl font-mono text-xs font-bold text-slate-700 border border-slate-200 flex items-center gap-1.5">
-                    <Clock className="h-3.5 w-3.5 text-slate-500" />
-                    <span>{currentLesson.duration || '12 mins'}</span>
-                  </div>
+                  {currentLesson.duration && (
+                    <div className="px-3 py-1.5 bg-slate-100 rounded-xl font-mono text-xs font-bold text-slate-700 border border-slate-200 flex items-center gap-1.5">
+                      <Clock className="h-3.5 w-3.5 text-slate-500" />
+                      <span>{currentLesson.duration}</span>
+                    </div>
+                  )}
 
                   <button
                     type="button"
@@ -870,10 +872,10 @@ export const CoursePlayer = () => {
               {/* Dynamic Content Player View Frame (Full Screen Capable) */}
               <div className={`transition-all duration-300 ${
                 isFullscreenMode
-                  ? 'flex-1 w-full bg-slate-950 p-0 relative overflow-y-auto flex flex-col justify-center'
-                  : 'tactile-card rounded-3xl bg-[#2563EB] border-2 border-slate-800 shadow-2xl p-2 sm:p-4 relative overflow-hidden'
+                  ? 'flex-1 w-full bg-black p-0 relative overflow-y-auto flex flex-col justify-center'
+                  : 'rounded-2xl bg-black border border-slate-800/80 shadow-2xl overflow-hidden relative'
               }`}>
-                <div className={isFullscreenMode ? 'w-full h-full min-h-0 bg-slate-950 flex flex-col justify-center' : 'bg-slate-950 rounded-2xl overflow-hidden'}>
+                <div className={isFullscreenMode ? 'w-full h-full min-h-0 bg-black flex flex-col justify-center' : 'bg-black rounded-2xl overflow-hidden'}>
                   {currentLesson.type === 'quiz' || currentLesson.assessment || currentLesson.items?.[0]?.type === 'quiz' ? (
                     <AssessmentPlayer
                       moduleId={activeItem.moduleId}

@@ -45,7 +45,7 @@ function resolvePlayableUrl(rawUrl, rawBunnyId) {
   }
 
   if (rawBunnyId) return getHlsUrl(rawBunnyId);
-  return 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+  return null; // no URL — player will show empty state
 }
 
 function formatTime(s) {
@@ -56,24 +56,13 @@ function formatTime(s) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Auto-complete side-effect (fires onComplete after 25s as a fallback)
-// ─────────────────────────────────────────────────────────────────────────────
-function BunnyAutoComplete({ onComplete }) {
-  useEffect(() => {
-    if (!onComplete) return;
-    const t = setTimeout(onComplete, 25000);
-    return () => clearTimeout(t);
-  }, [onComplete]);
-  return null;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // VideoPlayer
 // ─────────────────────────────────────────────────────────────────────────────
 export const VideoPlayer = ({ content = {}, onComplete }) => {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const completedRef = useRef(false);
+  const currentUrlRef = useRef(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -90,6 +79,7 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
 
   const rawVideoUrl = useMemo(
     () =>
+      mediaObj._blobPreview ||
       mediaObj.videoUrl ||
       mediaObj.url ||
       mediaObj.fileUrl ||
@@ -124,13 +114,17 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
 
   // ── Attach HLS / native src ──
   useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !playableVideoUrl) return;
+
+    // Prevent re-initialising identical source to prevent player blinking / stutter
+    if (currentUrlRef.current === playableVideoUrl) return;
+    currentUrlRef.current = playableVideoUrl;
+
     completedRef.current = false;
     setIsPlaying(false);
     setCurrentTime(0);
     setProgressPercent(0);
-
-    const video = videoRef.current;
-    if (!video || !playableVideoUrl) return;
 
     // Destroy previous HLS instance
     if (hlsRef.current) {
@@ -140,7 +134,6 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
 
     if (isHlsUrl) {
       if (Hls.isSupported()) {
-        // Do NOT set video.src here — HLS.js will manage the source
         video.removeAttribute('src');
         const hls = new Hls({
           enableWorker: true,
@@ -148,11 +141,35 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
           backBufferLength: 90,
           maxBufferLength: 30,
           maxMaxBufferLength: 600,
-          startLevel: -1,           // auto quality selection
-          abrEwmaDefaultEstimate: 5000000, // assume 5 Mbps initially → fast start
+          startLevel: -1, // auto quality selection
+          abrEwmaDefaultEstimate: 5000000,
         });
+
         hls.loadSource(playableVideoUrl);
         hls.attachMedia(video);
+
+        // Resilient error recovery (e.g. while Bunny is encoding or network hiccup)
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                console.warn('HLS Network error, attempting recovery...', data.details);
+                setTimeout(() => {
+                  if (hlsRef.current) hlsRef.current.startLoad();
+                }, 2000);
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                console.warn('HLS Media error, attempting recovery...', data.details);
+                hls.recoverMediaError();
+                break;
+              default:
+                console.error('Fatal unrecoverable HLS error:', data);
+                hls.destroy();
+                break;
+            }
+          }
+        });
+
         hlsRef.current = hls;
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         // Safari native HLS
@@ -160,7 +177,7 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
         video.load();
       }
     } else {
-      // Plain MP4 / direct URL — set src directly
+      // Direct MP4 / Blob URL
       video.src = playableVideoUrl;
       video.load();
     }
@@ -171,8 +188,7 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
         hlsRef.current = null;
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playableVideoUrl]);
+  }, [playableVideoUrl, isHlsUrl]);
 
   // ── Controls ──
   const handlePlayPause = useCallback(() => {
@@ -201,16 +217,14 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
     setDuration(dur);
     if (dur > 0) {
       setProgressPercent((cur / dur) * 100);
-      if (!completedRef.current && cur / dur >= 0.92 && onComplete) {
-        completedRef.current = true;
-        onComplete();
-      }
     }
-  }, [onComplete]);
+  }, []);
 
   const handleLoadedMetadata = useCallback(() => {
     const video = videoRef.current;
-    if (video) setDuration(video.duration);
+    if (video && video.duration && !isNaN(video.duration)) {
+      setDuration(video.duration);
+    }
   }, []);
 
   const handlePlay = useCallback(() => setIsPlaying(true), []);
@@ -261,13 +275,27 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
             title={mediaObj.title || 'Workout Video'}
           />
         </div>
-        <BunnyAutoComplete onComplete={onComplete} />
+      </Card>
+    );
+  }
+
+  // ── No video URL available — empty state ──
+  if (!playableVideoUrl) {
+    return (
+      <Card className="border-border overflow-hidden bg-slate-950 relative select-none shadow-2xl rounded-2xl">
+        <div className="aspect-video w-full flex flex-col items-center justify-center gap-3 text-white/40">
+          <svg className="h-12 w-12" fill="none" stroke="currentColor" strokeWidth={1.2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.723v6.554a1 1 0 01-1.447.894L15 14M4 8a2 2 0 012-2h9a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V8z" />
+          </svg>
+          <p className="text-sm font-medium">No video attached to this lesson</p>
+        </div>
       </Card>
     );
   }
 
   // ── Direct HTML5 / HLS Player ──
   return (
+
     <Card className="border-border overflow-hidden bg-slate-950 relative group select-none shadow-2xl rounded-2xl">
       {/* Video element — no src attribute when HLS.js is in charge */}
       <video
@@ -356,8 +384,6 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
         </div>
 
       </div>
-
-      <BunnyAutoComplete onComplete={onComplete} />
     </Card>
   );
 };
