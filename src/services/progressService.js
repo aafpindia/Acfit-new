@@ -3,38 +3,49 @@ import { supabase, isSupabaseConfigured, handleSupabaseError, handleSuccess, get
 /**
  * Mark a lesson as complete for the current user.
  */
-export const markLessonComplete = async (courseId, lessonId) => {
+export const markLessonComplete = async (courseId, lessonId, explicitUserId = null) => {
   if (!isSupabaseConfigured) return { success: true, data: null };
 
-  const userId = await getCurrentUserId();
-  if (!userId || !isValidUuid(userId) || !isValidUuid(courseId) || !isValidUuid(lessonId)) {
+  const userId = explicitUserId || await getCurrentUserId();
+  if (!userId) {
     return { success: true, data: null };
   }
 
-  const { data, error } = await supabase
-    .from('progress')
-    .upsert({
-      user_id: userId,
-      course_id: courseId,
-      lesson_id: lessonId,
-      completed: true,
-      completed_at: new Date().toISOString(),
-    }, { onConflict: 'user_id,lesson_id' })
-    .select()
-    .single();
+  if (isValidUuid(userId) && isValidUuid(courseId) && isValidUuid(lessonId)) {
+    try {
+      const { data, error } = await supabase
+        .from('progress')
+        .upsert({
+          user_id: userId,
+          course_id: courseId,
+          lesson_id: lessonId,
+          completed: true,
+          completed_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,lesson_id' })
+        .select()
+        .single();
 
-  if (error) return handleSupabaseError(error, 'markLessonComplete');
-  return handleSuccess(data);
+      if (error) {
+        console.warn('[progressService] Supabase markLessonComplete warning:', error.message);
+        return handleSupabaseError(error, 'markLessonComplete');
+      }
+      return handleSuccess(data);
+    } catch (err) {
+      console.warn('[progressService] Supabase markLessonComplete exception:', err.message);
+    }
+  }
+
+  return { success: true, data: null };
 };
 
 /**
  * Fetch progress for a specific course for the current user.
  * Returns a map of { lessonId: true } for completed lessons.
  */
-export const fetchCourseProgress = async (courseId) => {
+export const fetchCourseProgress = async (courseId, explicitUserId = null) => {
   if (!isSupabaseConfigured) return { success: true, data: null };
 
-  const userId = await getCurrentUserId();
+  const userId = explicitUserId || await getCurrentUserId();
   if (!userId || !isValidUuid(userId) || !isValidUuid(courseId)) {
     return { success: true, data: {} };
   }
@@ -56,8 +67,8 @@ export const fetchCourseProgress = async (courseId) => {
 };
 
 /**
- * Fetch ALL progress for all users across all courses.
- * Returns a nested map: { [courseId]: { [lessonId]: true }, [userId]: { [courseId]: { [lessonId]: true } } }
+ * Fetch ALL progress for users strictly partitioned by user_id and course_id.
+ * Returns a nested map: { [userId]: { [courseId]: { [lessonId]: true } } }
  */
 export const fetchAllProgress = async () => {
   if (!isSupabaseConfigured) return { success: true, data: {} };
@@ -75,17 +86,10 @@ export const fetchAllProgress = async () => {
     const cid = p.course_id;
     const lid = p.lesson_id;
 
-    if (cid && lid) {
-      // 1. Aggregated course level map
-      if (!progressMap[cid]) progressMap[cid] = {};
-      progressMap[cid][lid] = true;
-
-      // 2. User-specific course progress map
-      if (uid) {
-        if (!progressMap[uid]) progressMap[uid] = {};
-        if (!progressMap[uid][cid]) progressMap[uid][cid] = {};
-        progressMap[uid][cid][lid] = true;
-      }
+    if (uid && cid && lid) {
+      if (!progressMap[uid]) progressMap[uid] = {};
+      if (!progressMap[uid][cid]) progressMap[uid][cid] = {};
+      progressMap[uid][cid][lid] = true;
     }
   });
 

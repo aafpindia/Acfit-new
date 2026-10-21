@@ -608,7 +608,7 @@ export const useLmsStore = create(
 
         if (isSupabaseConfigured) {
           try {
-            await markLessonCompleteDb(courseId, lessonId);
+            await markLessonCompleteDb(courseId, lessonId, userId);
             await get().syncFromSupabase({ id: userId });
           } catch (e) {
             console.warn('[lmsStore] DB markLessonComplete failed, local state used:', e.message);
@@ -935,12 +935,6 @@ export const useLmsStore = create(
       },
 
       updateCourse: async (courseId, courseData) => {
-        if (isSupabaseConfigured) {
-          await updateCourseDb(courseId, courseData);
-          await get().syncFromSupabase();
-          return;
-        }
-
         set((state) => ({
           courses: state.courses.map((c) => {
             if (c.id !== courseId) return c;
@@ -948,11 +942,21 @@ export const useLmsStore = create(
             return {
               ...c,
               ...courseData,
+              notes: courseData.notes !== undefined ? courseData.notes : c.notes,
               finalExam: updatedExam,
               finalAssessment: updatedExam
             };
           })
         }));
+
+        if (isSupabaseConfigured) {
+          try {
+            await updateCourseDb(courseId, courseData);
+            await get().syncFromSupabase();
+          } catch (e) {
+            console.warn('[lmsStore] DB updateCourse failed, local state preserved:', e.message);
+          }
+        }
       },
 
       deleteCourse: async (courseId) => {
@@ -1429,7 +1433,33 @@ export const useLmsStore = create(
         try {
           const coursesRes = await fetchCourses();
           if (coursesRes.success && Array.isArray(coursesRes.data)) {
-            set({ courses: coursesRes.data });
+            set((state) => {
+              const currentCourses = state.courses || [];
+              const mergedCourses = coursesRes.data.map((fetched) => {
+                const existing = currentCourses.find((c) => c.id === fetched.id);
+                return {
+                  ...fetched,
+                  notes: (fetched.notes && fetched.notes.length > 0) ? fetched.notes : (existing?.notes || []),
+                  modules: (fetched.modules || []).map((m, mIdx) => {
+                    const existingMod = existing?.modules?.[mIdx] || existing?.modules?.find(em => em.id === m.id);
+                    return {
+                      ...m,
+                      lessons: (m.lessons || []).map((l, lIdx) => {
+                        const existingLes = existingMod?.lessons?.[lIdx] || existingMod?.lessons?.find(el => el.id === l.id);
+                        return {
+                          ...l,
+                          fileUrl: l.fileUrl || existingLes?.fileUrl || '',
+                          notes: l.notes || existingLes?.notes || '',
+                          body: l.body || existingLes?.body || '',
+                          slides: (l.slides && l.slides.length > 0) ? l.slides : (existingLes?.slides || [])
+                        };
+                      })
+                    };
+                  })
+                };
+              });
+              return { courses: mergedCourses };
+            });
           }
 
           const annRes = await fetchAnnouncements();
@@ -1467,9 +1497,17 @@ export const useLmsStore = create(
 
           const progressRes = await fetchAllProgress();
           if (progressRes.success && progressRes.data) {
-            set((state) => ({
-              progress: { ...state.progress, ...progressRes.data }
-            }));
+            set((state) => {
+              const currentProgress = state.progress || {};
+              const mergedProgress = { ...currentProgress };
+              Object.keys(progressRes.data).forEach((uid) => {
+                mergedProgress[uid] = {
+                  ...(mergedProgress[uid] || {}),
+                  ...progressRes.data[uid]
+                };
+              });
+              return { progress: mergedProgress };
+            });
           }
 
           const attemptsRes = await fetchAllAttempts();

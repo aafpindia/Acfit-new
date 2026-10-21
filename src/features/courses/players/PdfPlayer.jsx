@@ -123,13 +123,19 @@ export const PdfPlayer = ({ content = {} }) => {
       </div>
 
       {/* PDF Viewport */}
-      {rawFileUrl && (rawFileUrl.startsWith('http') || rawFileUrl.startsWith('data:application/pdf') || rawFileUrl.startsWith('blob:')) ? (
-        <div className="rounded-xl overflow-hidden border border-slate-300 bg-white h-[500px]">
-          <iframe
-            src={rawFileUrl}
-            className="w-full h-full border-0"
-            title={content.title || 'PDF Document'}
-          />
+      {rawFileUrl ? (
+        <div className="rounded-xl overflow-hidden border border-slate-300 bg-white h-[650px] shadow-sm">
+          <object
+            data={rawFileUrl}
+            type="application/pdf"
+            className="w-full h-full min-h-[650px]"
+          >
+            <iframe
+              src={rawFileUrl}
+              className="w-full h-full min-h-[650px] border-0"
+              title={content.title || 'PDF Document'}
+            />
+          </object>
         </div>
       ) : (
         <div className="overflow-auto max-h-[500px] flex items-center justify-center p-4 bg-slate-200/60 rounded-xl border border-slate-300">

@@ -11,18 +11,36 @@ export const PptPlayer = ({ content = {} }) => {
   const mediaObj = typeof content === 'string' ? { slides: [content] } : (content || {});
 
   const fileUrl = mediaObj.fileUrl || mediaObj.url || mediaObj.pptUrl || '';
-  const isIframeable = fileUrl && (
-    fileUrl.includes('docs.google.com') ||
-    fileUrl.includes('slideshare.net') ||
-    fileUrl.includes('onedrive.live.com') ||
-    fileUrl.endsWith('.pdf') ||
-    fileUrl.includes('.pdf?')
+
+  const isGoogleSlides = fileUrl && fileUrl.includes('docs.google.com/presentation');
+  const googleSlidesEmbed = isGoogleSlides
+    ? (fileUrl.includes('/embed') ? fileUrl : fileUrl.replace(/\/(edit|pub|preview).*$/, '/embed?start=false&loop=false&delayms=3000'))
+    : null;
+
+  const isPdf = fileUrl && (
+    fileUrl.startsWith('data:application/pdf') ||
+    fileUrl.toLowerCase().endsWith('.pdf') ||
+    fileUrl.toLowerCase().includes('.pdf?') ||
+    fileUrl.toLowerCase().includes('/pdf')
   );
 
-  const isWebPpt = fileUrl && (fileUrl.endsWith('.ppt') || fileUrl.endsWith('.pptx')) && fileUrl.startsWith('http');
+  const isWebPpt = fileUrl && (fileUrl.toLowerCase().endsWith('.ppt') || fileUrl.toLowerCase().endsWith('.pptx')) && fileUrl.startsWith('http');
   const officeViewerUrl = isWebPpt
     ? `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`
     : null;
+
+  const isIframeable = Boolean(
+    googleSlidesEmbed ||
+    officeViewerUrl ||
+    isPdf ||
+    (fileUrl && (
+      fileUrl.includes('slideshare.net') ||
+      fileUrl.includes('onedrive.live.com') ||
+      fileUrl.includes('sharepoint.com')
+    ))
+  );
+
+  const iframeSrc = googleSlidesEmbed || officeViewerUrl || fileUrl;
 
   const slides = (Array.isArray(mediaObj.slides) && mediaObj.slides.length > 0)
     ? mediaObj.slides
@@ -57,18 +75,18 @@ export const PptPlayer = ({ content = {} }) => {
       <CardContent className="p-4 sm:p-5 space-y-4 font-sans">
         
         {/* If an iframe embed (Google Slides, Web PPT or PDF) is available */}
-        {(isIframeable || officeViewerUrl) ? (
-          <div className="relative aspect-[16/10] bg-slate-900 rounded-xl border border-border overflow-hidden shadow-md">
+        {isIframeable ? (
+          <div className="relative aspect-[16/10] min-h-[480px] bg-slate-900 rounded-xl border border-border overflow-hidden shadow-md">
             <iframe
-              src={officeViewerUrl || fileUrl}
+              src={iframeSrc}
               title={mediaObj.title || 'Presentation Viewer'}
-              className="w-full h-full border-0"
+              className="w-full h-full min-h-[480px] border-0"
               allowFullScreen
             />
           </div>
         ) : (
           /* Slide Viewport */
-          <div className="slide-image-container relative aspect-[16/10] bg-gradient-to-br from-[#1E3A8A] via-[#1E65B8] to-[#0B2535] rounded-xl border border-border overflow-hidden flex items-center justify-center text-white shadow-inner">
+          <div className="slide-image-container relative aspect-[16/10] min-h-[420px] bg-gradient-to-br from-[#1E3A8A] via-[#1E65B8] to-[#0B2535] rounded-xl border border-border overflow-hidden flex items-center justify-center text-white shadow-inner">
             <AnimatePresence initial={false} custom={direction} mode="wait">
               {!hasImageError && isDirectImage ? (
                 <motion.img
@@ -87,7 +105,7 @@ export const PptPlayer = ({ content = {} }) => {
               ) : (
                 <motion.div
                   key={`canvas-${currentSlide}`}
-                  className="w-full h-full p-8 flex flex-col items-center justify-center text-center space-y-3 bg-gradient-to-br from-[#1E3A8A] to-[#0B2535] absolute inset-0"
+                  className="w-full h-full p-8 flex flex-col items-center justify-center text-center space-y-4 bg-gradient-to-br from-[#0F2042] via-[#1E3A8A] to-[#0F172A] absolute inset-0"
                   custom={direction}
                   variants={slideVariants}
                   initial="enter"
@@ -98,17 +116,30 @@ export const PptPlayer = ({ content = {} }) => {
                   <div className="w-16 h-16 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center shadow-lg">
                     <Presentation className="h-8 w-8 text-blue-200" />
                   </div>
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-blue-300 bg-white/10 px-3 py-0.5 rounded-full">
-                      Slide Presentation {currentSlide + 1} of {slides.length}
+                  <div className="space-y-1.5 max-w-md">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-blue-300 bg-white/10 px-3 py-1 rounded-full border border-white/15">
+                      📊 SLIDE PRESENTATION DECK READY
                     </span>
-                    <h3 className="text-lg font-black text-white tracking-tight">
+                    <h3 className="text-xl font-black text-white tracking-tight">
                       {mediaObj.title || `Presentation Slide ${currentSlide + 1}`}
                     </h3>
-                    <p className="text-xs text-blue-100/80 max-w-sm mx-auto">
-                      {mediaObj.instructions || 'Interactive presentation slide & document resource.'}
+                    <p className="text-xs text-blue-100/80 leading-relaxed">
+                      {mediaObj.instructions || mediaObj.notes || 'Official course slide presentation deck and curriculum study manual.'}
                     </p>
                   </div>
+
+                  {fileUrl && (
+                    <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+                      <a
+                        href={fileUrl}
+                        download={mediaObj.fileName || `${mediaObj.title || 'course-presentation'}.pptx`}
+                        className="h-10 px-5 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold text-xs flex items-center gap-2 shadow-md transition-all cursor-pointer"
+                      >
+                        <Download className="h-4 w-4" />
+                        <span>Download & Open in PowerPoint (.pptx)</span>
+                      </a>
+                    </div>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>

@@ -72,6 +72,7 @@ const DEFAULT_CATEGORIES = [
 const LESSON_CONTENT_TYPES = [
   { id: 'video', title: 'Video', desc: 'Video lecture & BunnyStream upload', icon: Video, color: 'text-orange-500 bg-orange-50' },
   { id: 'ppt', title: 'PPT', desc: 'Presentation & slide upload', icon: Presentation, color: 'text-blue-600 bg-blue-50' },
+  { id: 'pdf', title: 'PDF', desc: 'PDF manual & document upload', icon: FileText, color: 'text-rose-600 bg-rose-50' },
   { id: 'text', title: 'Text', desc: 'Written text & file import', icon: Type, color: 'text-amber-500 bg-amber-50' },
   { id: 'quiz', title: 'Quiz', desc: 'Interactive assessment & questions', icon: HelpCircle, color: 'text-cyan-500 bg-cyan-50' }
 ];
@@ -511,13 +512,22 @@ export const ProgramStudioModal = ({
   const handlePptFileUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const objectUrl = URL.createObjectURL(file);
-    setContentFormData((prev) => ({
-      ...prev,
-      fileUrl: objectUrl,
-      title: prev.title || file.name.replace(/\.[^/.]+$/, '')
-    }));
-    success(`Presentation file "${file.name}" attached!`);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result;
+      setContentFormData((prev) => ({
+        ...prev,
+        fileUrl: dataUrl,
+        fileName: file.name,
+        title: prev.title || file.name.replace(/\.[^/.]+$/, '')
+      }));
+      success(`Presentation / Document file "${file.name}" attached!`);
+    };
+    reader.onerror = () => {
+      error('Could not read presentation file.');
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleTextFileUpload = (e) => {
@@ -1922,6 +1932,9 @@ export const ProgramStudioModal = ({
                       onChange={handlePptFileUpload}
                       className="block w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[#EFF6FF] file:text-[#2563EB] hover:file:bg-[#E5DFFF] cursor-pointer"
                     />
+                    <span className="text-[11px] text-slate-400">
+                      Upload PowerPoint decks or presentation slides. Files are securely packaged for student viewing.
+                    </span>
                   </div>
 
                   <div className="space-y-1">
@@ -1936,16 +1949,54 @@ export const ProgramStudioModal = ({
 
                   {contentFormData.fileUrl && (
                     <div className="space-y-1">
-                      <label className="font-semibold text-[#202124] text-[11px]">PPT Presentation Preview</label>
-                      <div className="h-44 bg-slate-50 rounded-lg border border-[#E4E7EB] overflow-hidden flex items-center justify-center">
-                        {contentFormData.fileUrl.startsWith('http') ? (
-                          <iframe src={contentFormData.fileUrl} className="w-full h-full border-0" />
+                      <label className="font-semibold text-[#202124] text-[11px]">PPT Presentation Live Preview</label>
+                      <div className="h-52 bg-slate-900 rounded-xl border border-[#E4E7EB] overflow-hidden flex items-center justify-center text-white">
+                        {contentFormData.fileUrl.startsWith('http') || contentFormData.fileUrl.startsWith('data:application/pdf') ? (
+                          <iframe src={contentFormData.fileUrl} className="w-full h-full border-0" title="Presentation Preview" />
                         ) : (
-                          <div className="text-center p-4 text-xs text-slate-500">
-                            <Presentation className="h-8 w-8 text-[#2563EB] mx-auto mb-1" />
-                            <span>PPT File Attached: {contentFormData.fileUrl}</span>
+                          <div className="text-center p-4 text-xs space-y-2">
+                            <Presentation className="h-10 w-10 text-blue-400 mx-auto" />
+                            <span className="font-bold block text-white">Presentation File Attached:</span>
+                            <span className="text-slate-300 font-mono text-[11px] block">{contentFormData.fileName || 'Presentation Slide Deck (.pptx)'}</span>
                           </div>
                         )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 📑 PDF DOCUMENT EDITOR */}
+              {editingContentItem.type === 'pdf' && (
+                <div className="space-y-4 border-t border-[#E4E7EB] pt-3">
+                  <div className="space-y-1.5">
+                    <label className="font-semibold text-[#202124]">📑 Upload PDF Document (.pdf)</label>
+                    <input
+                      type="file"
+                      accept=".pdf"
+                      onChange={handlePptFileUpload}
+                      className="block w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[#EFF6FF] file:text-[#2563EB] hover:file:bg-[#E5DFFF] cursor-pointer"
+                    />
+                    <span className="text-[11px] text-slate-400">
+                      Upload course reading documents, handouts, or reference guidelines.
+                    </span>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-semibold text-[#202124]">PDF Document Embed / Hosted URL</label>
+                    <Input
+                      placeholder="https://.../document.pdf or attached PDF URL"
+                      value={contentFormData.fileUrl}
+                      onChange={(e) => setContentFormData({ ...contentFormData, fileUrl: e.target.value })}
+                      className="h-9 text-xs border-[#E4E7EB]"
+                    />
+                  </div>
+
+                  {contentFormData.fileUrl && (
+                    <div className="space-y-1">
+                      <label className="font-semibold text-[#202124] text-[11px]">PDF Document Live Preview</label>
+                      <div className="h-56 bg-slate-100 rounded-xl border border-[#E4E7EB] overflow-hidden">
+                        <iframe src={contentFormData.fileUrl} className="w-full h-full border-0" title="PDF Document Preview" />
                       </div>
                     </div>
                   )}
