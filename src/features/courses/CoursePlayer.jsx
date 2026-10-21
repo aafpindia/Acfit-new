@@ -460,21 +460,33 @@ export const CoursePlayer = () => {
 
     if (normType === 'ppt') {
       const pptContent = {
-        slides: itemContent?.slides || [itemContent?.fileUrl || fullItem?.fileUrl || (typeof itemContent === 'string' ? itemContent : '')].filter(Boolean),
-        fileUrl: itemContent?.fileUrl || fullItem?.fileUrl || '',
         title: lessonTitle,
+        fileUrl: itemContent?.fileUrl || fullItem?.fileUrl || '',
+        body: itemContent?.body || fullItem?.body || '',
+        notes: itemContent?.notes || fullItem?.notes || '',
+        instructions: itemContent?.instructions || fullItem?.instructions || '',
+        slides: itemContent?.slides || fullItem?.slides || [],
+        duration: fullItem?.duration || '',
+        moduleTitle: currentModule?.title || '',
+        ...(typeof fullItem === 'object' ? fullItem : {}),
         ...(typeof itemContent === 'object' ? itemContent : {})
       };
-      return <PptPlayer content={pptContent} />;
+      return <PptPlayer content={pptContent} onComplete={onComplete} />;
     }
 
     if (normType === 'pdf' || normType === 'document') {
       const pdfContent = {
-        fileUrl: itemContent?.fileUrl || fullItem?.fileUrl || (typeof itemContent === 'string' ? itemContent : ''),
         title: lessonTitle,
+        fileUrl: itemContent?.fileUrl || fullItem?.fileUrl || (typeof itemContent === 'string' ? itemContent : ''),
+        body: itemContent?.body || fullItem?.body || '',
+        notes: itemContent?.notes || fullItem?.notes || '',
+        instructions: itemContent?.instructions || fullItem?.instructions || '',
+        duration: fullItem?.duration || '',
+        moduleTitle: currentModule?.title || '',
+        ...(typeof fullItem === 'object' ? fullItem : {}),
         ...(typeof itemContent === 'object' ? itemContent : {})
       };
-      return <PdfPlayer content={pdfContent} />;
+      return <PdfPlayer content={pdfContent} onComplete={onComplete} />;
     }
 
     if (normType === 'live-class') {
