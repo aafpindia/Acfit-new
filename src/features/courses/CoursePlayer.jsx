@@ -945,10 +945,10 @@ export const CoursePlayer = () => {
               </div>
 
               {/* 📝 LESSON NOTES & INSTRUCTOR RESOURCES PANEL */}
-              {!isFullscreenMode && (
+              {!isFullscreenMode && (Boolean(currentLesson?.notes || currentLesson?.items?.[0]?.notes || (typeof currentLesson?.content === 'object' && currentLesson?.content?.notes)) || (Array.isArray(course.notes) && course.notes.length > 0)) && (
                 <div className="space-y-4 pt-2">
                   {/* Current Lesson Notes */}
-                  {Boolean(currentLesson?.notes || currentLesson?.items?.[0]?.notes || (typeof currentLesson?.content === 'object' && currentLesson?.content?.notes)) ? (
+                  {Boolean(currentLesson?.notes || currentLesson?.items?.[0]?.notes || (typeof currentLesson?.content === 'object' && currentLesson?.content?.notes)) && (
                     <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-2xs space-y-3">
                       <div className="flex items-center justify-between pb-3 border-b border-slate-100 flex-wrap gap-2">
                         <div className="flex items-center gap-2.5">
@@ -989,32 +989,9 @@ export const CoursePlayer = () => {
                         </div>
                       </div>
 
-                      <div className="text-xs sm:text-sm text-slate-700 leading-relaxed font-sans whitespace-pre-wrap bg-slate-50/70 p-4 rounded-xl border border-slate-200/60">
+                      <div className="text-xs sm:text-sm text-slate-700 leading-relaxed font-sans whitespace-pre-wrap bg-slate-50/70 p-4 rounded-xl border border-slate-200/60 break-words">
                         {currentLesson?.notes || currentLesson?.items?.[0]?.notes || (typeof currentLesson?.content === 'object' ? currentLesson?.content?.notes : '')}
                       </div>
-                    </div>
-                  ) : (
-                    <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-2xs flex items-center justify-between gap-4 flex-wrap">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center shrink-0">
-                          <FileText className="h-4.5 w-4.5" />
-                        </div>
-                        <div>
-                          <h4 className="font-bold text-xs text-slate-800">Lesson Notes & Instructor Guidelines</h4>
-                          <span className="text-[11px] text-slate-500">Live notes and reference study assets from admin studio.</span>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          await syncFromSupabase(user);
-                          success('Synced latest course data from admin backend!');
-                        }}
-                        className="text-xs font-bold text-[#2563EB] bg-[#EFF6FF] hover:bg-blue-100 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
-                      >
-                        <RefreshCw className="h-3.5 w-3.5" />
-                        <span>Sync Notes from Admin</span>
-                      </button>
                     </div>
                   )}
 
