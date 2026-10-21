@@ -54,10 +54,10 @@ export const useEnroll = () => {
       storeEnroll(courseId, userId, paymentData);
 
       if (isSupabaseConfigured) {
-        // Try DB enrollment — don't throw on failure, just log
-        const enrollResult = await enrollUser(courseId);
+        // Try DB enrollment with explicit userId — don't throw on failure, just log
+        const enrollResult = await enrollUser(courseId, userId);
         if (!enrollResult.success) {
-          console.warn('[useEnroll] DB enrollment failed, using local store:', enrollResult.error);
+          console.warn('[useEnroll] DB enrollment notice, local store active:', enrollResult.error);
         }
 
         // Try recording payment — don't throw on failure
@@ -69,7 +69,7 @@ export const useEnroll = () => {
           }
         }
 
-        return enrollResult.data;
+        return enrollResult?.data;
       }
 
       return null;

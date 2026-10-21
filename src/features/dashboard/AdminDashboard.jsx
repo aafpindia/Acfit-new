@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useLmsStore } from '../../stores/lmsStore';
 import { supabase, isSupabaseConfigured } from '../../config/supabase';
 import { getUserCourseProgress } from '../../services/progressService';
+import { fetchUsers } from '../../services/userService';
 import {
   Users,
   BookOpen,
@@ -61,6 +62,7 @@ export const AdminDashboard = () => {
   const [dateFilter, setDateFilter] = useState('30days'); // '7days' | '30days' | '90days' | 'all'
   const [revenueView, setRevenueView] = useState('revenue'); // 'revenue' | 'transactions'
   const [totalMembers, setTotalMembers] = useState(0);
+  const [dashboardUsers, setDashboardUsers] = useState([]);
 
   // Sync Supabase & WebSocket events
   useEffect(() => {
@@ -80,35 +82,19 @@ export const AdminDashboard = () => {
       const deletedUserIds = new Set(JSON.parse(localStorage.getItem('_lms_deleted_user_ids') || '[]'));
       const uniqueLiveIds = new Set();
       const uniqueLiveEmails = new Set();
+      let liveUsersList = [];
 
-      if (isSupabaseConfigured) {
-        try {
-          const { data } = await supabase.from('profiles').select('id, email, status');
-          if (data && active) {
-            data.forEach((p) => {
-              if (p.id && !deletedUserIds.has(p.id) && p.status !== 'deleted') {
-                uniqueLiveIds.add(p.id);
-                if (p.email) uniqueLiveEmails.add(p.email.toLowerCase().trim());
-              }
-            });
-          }
-        } catch (_) {}
-      }
-
-      // Add real registered accounts from auth state (excluding dummy/deleted)
       try {
-        const regUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
-        regUsers.forEach((reg) => {
-          const em = (reg.email || '').toLowerCase().trim();
-          if (em && em !== 'admin@lms.com' && em !== 'student@lms.com') {
-            if (!deletedUserIds.has(reg.id) && reg.status !== 'deleted') {
-              if (!uniqueLiveEmails.has(em)) {
-                uniqueLiveEmails.add(em);
-                uniqueLiveIds.add(reg.id || em);
-              }
+        const fetched = await fetchUsers();
+        if (Array.isArray(fetched) && fetched.length > 0) {
+          liveUsersList = fetched;
+          fetched.forEach((u) => {
+            if (u.id && !deletedUserIds.has(u.id) && u.status !== 'deleted') {
+              uniqueLiveIds.add(u.id);
+              if (u.email) uniqueLiveEmails.add(u.email.toLowerCase().trim());
             }
-          }
-        });
+          });
+        }
       } catch (_) {}
 
       // Count genuine enrollments matching non-deleted user IDs
@@ -119,16 +105,32 @@ export const AdminDashboard = () => {
         }
       });
 
+      // Count genuine payments matching non-deleted user IDs
+      (payments || []).forEach((p) => {
+        const uid = p.userId || p.user_id;
+        if (uid && !deletedUserIds.has(uid)) {
+          uniqueLiveIds.add(uid);
+        }
+      });
+
       if (active) {
+        setDashboardUsers(liveUsersList);
         setTotalMembers(uniqueLiveIds.size);
       }
     };
 
     computeTotalMembers();
+
+    const handleUpdate = () => { computeTotalMembers(); };
+    window.addEventListener('lms_users_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+
     return () => {
       active = false;
+      window.removeEventListener('lms_users_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
     };
-  }, [enrollments]);
+  }, [enrollments, payments, courses]);
 
   // ─── 1. CORE 4 KPI CALCULATIONS ─────────────────────────────────────────
   const successfulPayments = useMemo(() => {
@@ -306,6 +308,8 @@ export const AdminDashboard = () => {
   // ─── 6. RECENT ACTIVITY FEED ───────────────────────────────────────────
   const recentActivities = useMemo(() => {
     const liveLogs = [];
+
+    // Recent payments & course enrollments
     successfulPayments.forEach((p) => {
       const dateStr = p.date || p.paidAt || p.createdAt || p.created_at;
       const timeAgo = dateStr ? new Date(dateStr).toLocaleDateString() : 'Recent';
@@ -317,6 +321,21 @@ export const AdminDashboard = () => {
         timestamp: dateStr ? new Date(dateStr).getTime() : 0
       });
     });
+
+    // Recent member registrations
+    (dashboardUsers || []).forEach((u) => {
+      const dateStr = u.createdAt || u.created_at;
+      const timeAgo = dateStr ? new Date(dateStr).toLocaleDateString() : 'Recent';
+      liveLogs.push({
+        id: `u-${u.id}`,
+        text: `New member registered: ${u.fullName || u.email}`,
+        sub: `${(u.role || 'user').toUpperCase()} Account · ${timeAgo}`,
+        type: 'user',
+        timestamp: dateStr ? new Date(dateStr).getTime() : 0
+      });
+    });
+
+    // Recent certificates
     certificates.forEach((c) => {
       const dateStr = c.issueDate || c.issuedAt || c.created_at;
       const timeAgo = dateStr ? new Date(dateStr).toLocaleDateString() : 'Recent';
@@ -330,8 +349,8 @@ export const AdminDashboard = () => {
     });
 
     liveLogs.sort((a, b) => b.timestamp - a.timestamp);
-    return liveLogs.slice(0, 5);
-  }, [successfulPayments, certificates]);
+    return liveLogs.slice(0, 7);
+  }, [successfulPayments, certificates, dashboardUsers]);
 
 
   // Export Dashboard CSV
@@ -723,7 +742,7 @@ export const AdminDashboard = () => {
                 ) : (
                   recentActivities.map((act) => (
                     <div key={act.id} className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition-colors">
-                      <div className="w-2.5 h-2.5 rounded-full bg-[#2563EB] mt-1.5 shrink-0" />
+                      <div className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${act.type === 'payment' ? 'bg-emerald-500' : act.type === 'cert' ? 'bg-amber-500' : 'bg-[#2563EB]'}`} />
                       <div className="min-w-0 flex-1 space-y-0.5">
                         <span className="font-bold text-[#202124] block truncate">{act.text}</span>
                         <span className="text-[11px] text-[#5F6368] block">{act.sub}</span>

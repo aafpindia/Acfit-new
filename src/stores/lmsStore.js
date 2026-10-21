@@ -20,7 +20,8 @@ import {
 import {
   enrollUser as enrollUserDb,
   fetchUserEnrollments,
-  fetchAllEnrollments
+  fetchAllEnrollments,
+  saveLocalEnrollment
 } from '../services/enrollmentService';
 import {
   markLessonComplete as markLessonCompleteDb,
@@ -49,7 +50,8 @@ import {
 import {
   fetchAllPayments,
   fetchUserPayments,
-  createPayment as createPaymentDb
+  createPayment as createPaymentDb,
+  saveLocalPayment
 } from '../services/paymentService';
 import {
   fetchSettings,
@@ -63,6 +65,7 @@ import {
   getLocalTestimonials,
   DEFAULT_TESTIMONIALS
 } from '../services/testimonialService';
+import { fetchUsers as fetchUsersDb } from '../services/userService';
 
 const SAMPLE_VIDEO_URL = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
 const SAMPLE_VIDEO_URL_2 = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4';
@@ -507,19 +510,41 @@ export const useLmsStore = create(
         });
       },
 
+      users: [],
+      setUsers: (users) => set({ users: Array.isArray(users) ? users : [] }),
+      addUser: (user) => set((state) => {
+        if (!user) return state;
+        const existing = state.users || [];
+        const cleanEmail = (user.email || '').toLowerCase().trim();
+        const filtered = existing.filter(u => u.id !== user.id && (u.email || '').toLowerCase().trim() !== cleanEmail);
+        return { users: [user, ...filtered] };
+      }),
+
       // Course Enrollment
       enrollInCourse: async (courseId, userId, paymentData) => {
+        const matchesCourse = (eCourse) => {
+          const str1 = String(eCourse || '').toLowerCase();
+          const str2 = String(courseId || '').toLowerCase();
+          if (str1 === str2) return true;
+          if ((str1 === 'course-cardio-hiit' && str2 === '20202020-2020-2020-2020-202020202020') ||
+              (str2 === 'course-cardio-hiit' && str1 === '20202020-2020-2020-2020-202020202020')) {
+            return true;
+          }
+          return false;
+        };
+
+        const now = new Date().toISOString();
+        const payId = paymentData?.razorpayPaymentId || paymentData?.id || `PAY-${Date.now()}`;
+
         // Update local Zustand state immediately
         set((state) => {
-          const isEnrolled = state.enrollments.some(
-            (e) => e.courseId === courseId && e.userId === userId
+          const isEnrolled = (state.enrollments || []).some(
+            (e) => matchesCourse(e.courseId || e.course_id) && (String(e.userId || e.user_id) === String(userId))
           );
-          const targetCourse = state.courses.find(c => c.id === courseId);
+          const targetCourse = state.courses.find(c => matchesCourse(c.id));
           const userEmail = paymentData?.studentEmail || (userId === 'admin-id' ? 'admin@gmail.com' : 'athlete@acfitacademy.app');
           const userName = paymentData?.studentName || (userId === 'admin-id' ? 'System Administrator' : 'Student Athlete');
-          const payId = paymentData?.razorpayPaymentId || `PAY-${Date.now()}`;
 
-          const now = new Date().toISOString();
           const newPayment = {
             id: payId,
             userId: userId,
@@ -534,20 +559,35 @@ export const useLmsStore = create(
             status: paymentData?.status || 'successful',
             method: paymentData?.method || (targetCourse?.price > 0 ? 'Razorpay' : 'Free Enrollment'),
             razorpayOrderId: paymentData?.razorpayOrderId || null,
-            razorpayPaymentId: paymentData?.razorpayPaymentId || null,
+            razorpayPaymentId: paymentData?.razorpayPaymentId || payId,
             date: now,
             paidAt: now,
             createdAt: now,
             created_at: now
           };
 
+          const newEnrollment = {
+            id: `enr-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            userId,
+            user_id: userId,
+            courseId,
+            course_id: courseId,
+            studentEmail: userEmail,
+            enrolledAt: now,
+            enrolled_at: now
+          };
+
+          // Save to persistent localStorage backups immediately
+          saveLocalEnrollment(newEnrollment);
+          saveLocalPayment(newPayment);
+
           const updatedEnrollments = isEnrolled
             ? state.enrollments
-            : [...state.enrollments, { userId, courseId, enrolledAt: now }];
+            : [...state.enrollments, newEnrollment];
 
           const existingPayments = state.payments || [];
           const existsIdx = existingPayments.findIndex(
-            (p) => p.id === payId || (p.courseId === courseId && (p.userId === userId || p.user_id === userId))
+            (p) => p.id === payId || (matchesCourse(p.courseId || p.course_id) && (String(p.userId || p.user_id) === String(userId)))
           );
 
           let updatedPayments;
@@ -555,7 +595,7 @@ export const useLmsStore = create(
             updatedPayments = [...existingPayments];
             updatedPayments[existsIdx] = { ...updatedPayments[existsIdx], ...newPayment };
           } else {
-            updatedPayments = [...existingPayments, newPayment];
+            updatedPayments = [newPayment, ...existingPayments];
           }
 
           return {
@@ -564,20 +604,19 @@ export const useLmsStore = create(
           };
         });
 
-        // Then try DB operations as best-effort (don't throw on failure)
-        if (isSupabaseConfigured) {
-          try {
-            await enrollUserDb(courseId);
-          } catch (e) {
-            console.warn('[lmsStore] DB enrollment failed, local state used:', e.message);
+        // Trigger persistent helpers and DB operations safely (best-effort)
+        try {
+          await enrollUserDb(courseId, userId);
+        } catch (e) {
+          console.warn('[lmsStore] DB enrollment failed, local state used:', e.message);
+        }
+
+        try {
+          if (paymentData) {
+            await createPaymentDb(paymentData);
           }
-          try {
-            if (paymentData) {
-              await createPaymentDb(paymentData);
-            }
-          } catch (e) {
-            console.warn('[lmsStore] Payment record failed:', e.message);
-          }
+        } catch (e) {
+          console.warn('[lmsStore] Payment record failed:', e.message);
         }
       },
 
@@ -1496,10 +1535,35 @@ export const useLmsStore = create(
           const deletedUserIds = new Set(JSON.parse(localStorage.getItem('_lms_deleted_user_ids') || '[]'));
           const isAdmin = !user || (user.role && user.role.toString().toLowerCase() === 'admin');
 
-          const enrollRes = isAdmin ? await fetchAllEnrollments() : await fetchUserEnrollments();
+          // Sync Users list for real-time reflection across dashboards
+          try {
+            const allUsers = await fetchUsersDb();
+            if (Array.isArray(allUsers) && allUsers.length > 0) {
+              set({ users: allUsers });
+            }
+          } catch (_) {}
+
+          // Safely fetch and merge enrollments (preserving active local enrollments)
+          const enrollRes = isAdmin ? await fetchAllEnrollments() : await fetchUserEnrollments(user?.id);
           if (enrollRes.success && Array.isArray(enrollRes.data)) {
-            const cleanEnrollments = enrollRes.data.filter((e) => !deletedUserIds.has(e.userId || e.user_id));
-            set({ enrollments: cleanEnrollments });
+            set((state) => {
+              const currentEnrollments = state.enrollments || [];
+              const dbFiltered = enrollRes.data.filter((e) => !deletedUserIds.has(e.userId || e.user_id));
+              const merged = [...dbFiltered];
+
+              currentEnrollments.forEach((local) => {
+                const lCourse = String(local.courseId || local.course_id || '');
+                const lUser = String(local.userId || local.user_id || '');
+                const exists = merged.some(
+                  (m) => String(m.courseId || m.course_id) === lCourse && String(m.userId || m.user_id) === lUser
+                );
+                if (!exists && !deletedUserIds.has(lUser)) {
+                  merged.push(local);
+                }
+              });
+
+              return { enrollments: merged };
+            });
           }
 
           const progressRes = await fetchAllProgress();
@@ -1531,15 +1595,33 @@ export const useLmsStore = create(
             set({ certificates: cleanCerts });
           }
 
-          const paymentsRes = isAdmin ? await fetchAllPayments() : await fetchUserPayments();
+          // Safely fetch and merge payments (preserving active local receipts)
+          const paymentsRes = isAdmin ? await fetchAllPayments() : await fetchUserPayments(user?.email);
           if (paymentsRes.success && Array.isArray(paymentsRes.data)) {
-            const cleanPayments = paymentsRes.data.filter((p) => {
-              if (!p || !p.id) return false;
-              if (p.id === 'PAY-1001' || p.studentEmail === 'student@lms.com' || p.studentEmail === 'admin@lms.com') return false;
-              if (deletedUserIds.has(p.userId || p.user_id)) return false;
-              return true;
+            set((state) => {
+              const currentPayments = state.payments || [];
+              const dbFiltered = paymentsRes.data.filter((p) => {
+                if (!p || !p.id) return false;
+                if (p.id === 'PAY-1001' || p.studentEmail === 'student@lms.com' || p.studentEmail === 'admin@lms.com') return false;
+                if (deletedUserIds.has(p.userId || p.user_id)) return false;
+                return true;
+              });
+
+              const merged = [...dbFiltered];
+              currentPayments.forEach((local) => {
+                const lId = local.id || local.razorpayPaymentId || local.razorpay_payment_id;
+                const exists = merged.some(
+                  (m) => (lId && (m.id === lId || m.razorpayPaymentId === lId || m.razorpay_payment_id === lId)) ||
+                         (String(m.courseId || m.course_id) === String(local.courseId || local.course_id) &&
+                          String(m.userId || m.user_id) === String(local.userId || local.user_id))
+                );
+                if (!exists && !deletedUserIds.has(local.userId || local.user_id)) {
+                  merged.push(local);
+                }
+              });
+
+              return { payments: merged };
             });
-            set({ payments: cleanPayments });
           }
         } catch (err) {
           console.error('Error syncing Supabase data to Zustand:', err);

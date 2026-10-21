@@ -182,11 +182,21 @@ export const Users = () => {
     } catch (_) {}
 
     setUsersList(baseUsers);
+    if (useLmsStore.getState().setUsers) {
+      useLmsStore.getState().setUsers(baseUsers);
+    }
     setIsLoadingUsers(false);
   };
 
   useEffect(() => {
     loadUsers();
+    const handleUpdate = () => { loadUsers(); };
+    window.addEventListener('lms_users_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('lms_users_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
   }, []);
 
   // Auto Select first user
@@ -229,43 +239,78 @@ export const Users = () => {
     }
 
     setIsSubmittingNewUser(true);
-    const newId = `usr-${Date.now()}`;
-    const newUserRecord = {
-      id: newId,
-      fullName: newUserData.fullName.trim(),
-      email: newUserData.email.trim().toLowerCase(),
-      role: newUserData.role,
-      status: 'active',
-      department: 'Member',
-      createdAt: new Date().toISOString(),
-      avatarUrl: `https://api.dicebear.com/7.x/avataaars/svg?seed=${newUserData.email}`
-    };
+    let newId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `usr-${Date.now()}`;
+
+    const cleanEmail = newUserData.email.trim().toLowerCase();
+    const cleanName = newUserData.fullName.trim();
+    const cleanRole = (newUserData.role || 'user').toLowerCase();
+    const userPassword = newUserData.password?.trim() || 'password';
 
     if (isSupabaseConfigured) {
       try {
-        await supabase.from('profiles').insert([
+        const { data: authData } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password: userPassword,
+          options: {
+            data: {
+              full_name: cleanName,
+              role: cleanRole
+            }
+          }
+        });
+        if (authData?.user?.id) {
+          newId = authData.user.id;
+        }
+      } catch (authErr) {
+        console.warn('Supabase auth signup attempt:', authErr);
+      }
+
+      try {
+        await supabase.from('profiles').upsert([
           {
             id: newId,
-            full_name: newUserRecord.fullName,
-            email: newUserRecord.email,
-            role: newUserRecord.role,
+            full_name: cleanName,
+            email: cleanEmail,
+            role: cleanRole,
             status: 'active'
           }
-        ]);
+        ], { onConflict: 'id' });
       } catch (err) {
         console.warn('Supabase insert notice:', err);
       }
     }
 
+    const newUserRecord = {
+      id: newId,
+      fullName: cleanName,
+      name: cleanName,
+      email: cleanEmail,
+      role: cleanRole,
+      status: 'active',
+      department: 'Member',
+      password: userPassword,
+      passwordHash: userPassword,
+      createdAt: new Date().toISOString(),
+      avatarUrl: `https://api.dicebear.com/7.x/avataaars/svg?seed=${cleanEmail}`
+    };
+
     try {
       const registeredUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
-      localStorage.setItem('_lms_registered_users', JSON.stringify([newUserRecord, ...registeredUsers]));
+      const filtered = registeredUsers.filter(u => u.email.toLowerCase() !== cleanEmail && u.id !== newId);
+      localStorage.setItem('_lms_registered_users', JSON.stringify([newUserRecord, ...filtered]));
     } catch (_) {}
+
+    if (useLmsStore.getState().addUser) {
+      useLmsStore.getState().addUser(newUserRecord);
+    }
+    try { window.dispatchEvent(new Event('lms_users_updated')); } catch (_) {}
 
     setIsSubmittingNewUser(false);
     setIsAddUserModalOpen(false);
     setNewUserData({ fullName: '', email: '', role: 'user', password: 'password' });
-    loadUsers();
+    await loadUsers();
     setSelectedUser(newUserRecord);
     success(`New user "${newUserRecord.fullName}" created successfully!`);
   };

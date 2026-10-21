@@ -1,5 +1,46 @@
 import { supabase, isSupabaseConfigured, handleSupabaseError, handleSuccess, getCurrentUserId, isValidUuid } from './supabaseService';
 
+export const ENROLLMENTS_KEY = '_lms_enrollments';
+
+/**
+ * Helper to fetch persistent locally stored enrollments
+ */
+export const getLocalEnrollments = () => {
+  try {
+    const raw = localStorage.getItem(ENROLLMENTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (_) {
+    return [];
+  }
+};
+
+/**
+ * Helper to save an enrollment record persistently in localStorage
+ */
+export const saveLocalEnrollment = (enrollment) => {
+  if (!enrollment) return;
+  try {
+    const list = getLocalEnrollments();
+    const cId = String(enrollment.courseId || enrollment.course_id || '');
+    const uId = String(enrollment.userId || enrollment.user_id || '');
+    const exists = list.some(
+      (e) => String(e.courseId || e.course_id) === cId && String(e.userId || e.user_id) === uId
+    );
+    if (!exists) {
+      list.unshift({
+        id: enrollment.id || `enr-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        userId: uId,
+        user_id: uId,
+        courseId: cId,
+        course_id: cId,
+        enrolledAt: enrollment.enrolledAt || enrollment.enrolled_at || new Date().toISOString(),
+        enrolled_at: enrollment.enrolled_at || enrollment.enrolledAt || new Date().toISOString()
+      });
+      localStorage.setItem(ENROLLMENTS_KEY, JSON.stringify(list));
+    }
+  } catch (_) {}
+};
+
 /**
  * Enroll the current user in a course.
  * Uses upsert to handle duplicate enrollments gracefully.
@@ -8,13 +49,21 @@ export const enrollUser = async (courseId, explicitUserId = null) => {
   const userId = explicitUserId || (await getCurrentUserId());
   if (!userId) return { success: false, error: 'Not authenticated.' };
 
+  const now = new Date().toISOString();
   const fallbackEnrollment = {
+    id: `enr-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    userId: userId,
     user_id: userId,
+    courseId: courseId,
     course_id: courseId,
-    enrolled_at: new Date().toISOString()
+    enrolledAt: now,
+    enrolled_at: now
   };
 
-  if (isSupabaseConfigured && isValidUuid(userId)) {
+  // Always save locally first so user never loses access
+  saveLocalEnrollment(fallbackEnrollment);
+
+  if (isSupabaseConfigured && isValidUuid(userId) && isValidUuid(courseId)) {
     try {
       const { data, error } = await supabase
         .from('enrollments')
@@ -45,7 +94,18 @@ export const enrollUser = async (courseId, explicitUserId = null) => {
         }
       } catch (_) {}
 
-      return handleSuccess(data || fallbackEnrollment);
+      const saved = data ? {
+        id: data.id,
+        userId: data.user_id,
+        user_id: data.user_id,
+        courseId: data.course_id,
+        course_id: data.course_id,
+        enrolledAt: data.enrolled_at,
+        enrolled_at: data.enrolled_at
+      } : fallbackEnrollment;
+
+      saveLocalEnrollment(saved);
+      return handleSuccess(saved);
     } catch (e) {
       console.warn('[enrollmentService] enrollUser caught error, using fallback:', e);
       return { success: true, data: fallbackEnrollment };
@@ -58,76 +118,140 @@ export const enrollUser = async (courseId, explicitUserId = null) => {
 /**
  * Fetch all enrollments for the current user.
  */
-export const fetchUserEnrollments = async () => {
-  if (!isSupabaseConfigured) return { success: true, data: null };
+export const fetchUserEnrollments = async (explicitUserId = null) => {
+  const userId = explicitUserId || (await getCurrentUserId());
+  const localList = userId
+    ? getLocalEnrollments().filter((e) => String(e.userId || e.user_id) === String(userId))
+    : getLocalEnrollments();
 
-  const userId = await getCurrentUserId();
-  if (!userId || !isValidUuid(userId)) return { success: true, data: [] };
-
-  const { data, error } = await supabase
-    .from('enrollments')
-    .select('*')
-    .eq('user_id', userId)
-    .order('enrolled_at', { ascending: false });
-
-  if (error) {
-    if (error.status === 409 || error.status === 403) {
-      console.warn('[enrollmentService] RLS blocked read, returning empty:', error.message);
-      return { success: true, data: [] };
-    }
-    return handleSupabaseError(error, 'fetchUserEnrollments');
+  if (!isSupabaseConfigured || !userId || !isValidUuid(userId)) {
+    return handleSuccess(localList);
   }
-  
-  return handleSuccess(data.map(e => ({
-    id: e.id,
-    userId: e.user_id,
-    courseId: e.course_id,
-    enrolledAt: e.enrolled_at,
-  })));
+
+  try {
+    const { data, error } = await supabase
+      .from('enrollments')
+      .select('*')
+      .eq('user_id', userId)
+      .order('enrolled_at', { ascending: false });
+
+    if (error) {
+      if (error.status === 409 || error.status === 403) {
+        console.warn('[enrollmentService] RLS blocked read, returning local cache:', error.message);
+      }
+      return handleSuccess(localList);
+    }
+
+    const dbMapped = (data || []).map(e => ({
+      id: e.id,
+      userId: e.user_id,
+      user_id: e.user_id,
+      courseId: e.course_id,
+      course_id: e.course_id,
+      enrolledAt: e.enrolled_at,
+      enrolled_at: e.enrolled_at,
+    }));
+
+    // Merge DB records with local records so none are ever lost
+    const merged = [...dbMapped];
+    localList.forEach((loc) => {
+      const alreadyIn = merged.some(
+        (m) => String(m.courseId || m.course_id) === String(loc.courseId || loc.course_id)
+      );
+      if (!alreadyIn) merged.push(loc);
+    });
+
+    return handleSuccess(merged);
+  } catch (_) {
+    return handleSuccess(localList);
+  }
 };
 
 /**
  * Fetch ALL enrollments (admin view).
  */
 export const fetchAllEnrollments = async () => {
-  if (!isSupabaseConfigured) return { success: true, data: null };
+  const localList = getLocalEnrollments();
 
-  const { data, error } = await supabase
-    .from('enrollments')
-    .select('*')
-    .order('enrolled_at', { ascending: false });
-
-  if (error) {
-    if (error.status === 409 || error.status === 403) {
-      console.warn('[enrollmentService] RLS blocked admin read, returning empty:', error.message);
-      return { success: true, data: [] };
-    }
-    return handleSupabaseError(error, 'fetchAllEnrollments');
+  if (!isSupabaseConfigured) {
+    return handleSuccess(localList);
   }
 
-  return handleSuccess(data.map(e => ({
-    id: e.id,
-    userId: e.user_id,
-    courseId: e.course_id,
-    enrolledAt: e.enrolled_at,
-  })));
+  try {
+    const { data, error } = await supabase
+      .from('enrollments')
+      .select('*')
+      .order('enrolled_at', { ascending: false });
+
+    if (error) {
+      if (error.status === 409 || error.status === 403) {
+        console.warn('[enrollmentService] RLS blocked admin read, using local cache:', error.message);
+      }
+      return handleSuccess(localList);
+    }
+
+    const dbMapped = (data || []).map(e => ({
+      id: e.id,
+      userId: e.user_id,
+      user_id: e.user_id,
+      courseId: e.course_id,
+      course_id: e.course_id,
+      enrolledAt: e.enrolled_at,
+      enrolled_at: e.enrolled_at,
+    }));
+
+    const merged = [...dbMapped];
+    localList.forEach((loc) => {
+      const alreadyIn = merged.some(
+        (m) => String(m.courseId || m.course_id) === String(loc.courseId || loc.course_id) &&
+               String(m.userId || m.user_id) === String(loc.userId || loc.user_id)
+      );
+      if (!alreadyIn) merged.push(loc);
+    });
+
+    return handleSuccess(merged);
+  } catch (_) {
+    return handleSuccess(localList);
+  }
 };
 
 /**
  * Check if the current user is enrolled in a course.
  */
-export const checkEnrollment = async (courseId) => {
-  if (!isSupabaseConfigured) return false;
+export const checkEnrollment = async (courseId, explicitUserId = null) => {
+  const userId = explicitUserId || (await getCurrentUserId());
+  if (!userId) return false;
 
-  const userId = await getCurrentUserId();
-  if (!userId || !isValidUuid(userId)) return false;
+  const matchesCourse = (c) => {
+    const str1 = String(c || '').toLowerCase();
+    const str2 = String(courseId || '').toLowerCase();
+    if (str1 === str2) return true;
+    if ((str1 === 'course-cardio-hiit' && str2 === '20202020-2020-2020-2020-202020202020') ||
+        (str2 === 'course-cardio-hiit' && str1 === '20202020-2020-2020-2020-202020202020')) {
+      return true;
+    }
+    return false;
+  };
 
-  const { data } = await supabase
-    .from('enrollments')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('course_id', courseId)
-    .maybeSingle();
+  const localList = getLocalEnrollments();
+  const foundLocal = localList.some(
+    (e) => matchesCourse(e.courseId || e.course_id) && String(e.userId || e.user_id) === String(userId)
+  );
+  if (foundLocal) return true;
 
-  return !!data;
+  if (isSupabaseConfigured && isValidUuid(userId) && isValidUuid(courseId)) {
+    try {
+      const { data } = await supabase
+        .from('enrollments')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('course_id', courseId)
+        .maybeSingle();
+
+      return !!data;
+    } catch (_) {}
+  }
+
+  return false;
 };
+

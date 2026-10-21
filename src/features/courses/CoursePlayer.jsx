@@ -56,7 +56,7 @@ export const CoursePlayer = () => {
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
   const { success, error } = useToast();
-  const { courses, enrollments, progress, attempts, certificates, markLessonComplete, syncFromSupabase } = useLmsStore();
+  const { courses, enrollments, payments = [], progress, attempts, certificates, markLessonComplete, syncFromSupabase } = useLmsStore();
 
   // On mobile screens (< 1024px), sidebar defaults to closed so player content is immediately visible
   const [sidebarOpen, setSidebarOpen] = useState(() => {
@@ -78,7 +78,9 @@ export const CoursePlayer = () => {
     }
   };
 
-  const course = courses.find((c) => c.id === courseId);
+  const course = courses.find((c) => c.id === courseId ||
+    (courseId === 'course-cardio-hiit' && c.id === '20202020-2020-2020-2020-202020202020') ||
+    (courseId === '20202020-2020-2020-2020-202020202020' && c.id === 'course-cardio-hiit'));
 
   const [isAuthorized, setIsAuthorized] = useState(true);
   const [authChecking, setAuthChecking] = useState(true);
@@ -125,7 +127,40 @@ export const CoursePlayer = () => {
         return;
       }
 
-      const isStoreEnrolled = enrollments.some(e => e.courseId === courseId && e.userId === user.id);
+      const matchesCourse = (c) => {
+        const str1 = String(c || '').toLowerCase();
+        const str2 = String(courseId || '').toLowerCase();
+        if (str1 === str2) return true;
+        if ((str1 === 'course-cardio-hiit' && str2 === '20202020-2020-2020-2020-202020202020') ||
+            (str2 === 'course-cardio-hiit' && str1 === '20202020-2020-2020-2020-202020202020')) {
+          return true;
+        }
+        return false;
+      };
+
+      const matchesUser = (item) => {
+        if (!item) return false;
+        const uId = String(item.userId || item.user_id || '');
+        if (uId && uId === String(user.id)) return true;
+        if (user.email && item.studentEmail && item.studentEmail.toLowerCase() === user.email.toLowerCase()) {
+          return true;
+        }
+        return false;
+      };
+
+      // 1. Free Course check: if price is 0, permit learning
+      if (course && (parseFloat(course.price) === 0 || !course.price)) {
+        if (active) {
+          setIsAuthorized(true);
+          setAuthChecking(false);
+        }
+        return;
+      }
+
+      // 2. Zustand store enrollments check
+      const isStoreEnrolled = (enrollments || []).some(
+        e => matchesCourse(e.courseId || e.course_id) && matchesUser(e)
+      );
       if (isStoreEnrolled) {
         if (active) {
           setIsAuthorized(true);
@@ -134,13 +169,54 @@ export const CoursePlayer = () => {
         return;
       }
 
+      // 3. Zustand store payments check (if paid for this course, access is granted)
+      const isStorePaid = (payments || []).some(
+        p => matchesCourse(p.courseId || p.course_id) &&
+             matchesUser(p) &&
+             ['successful', 'paid', 'completed'].includes((p.status || '').toLowerCase())
+      );
+      if (isStorePaid) {
+        if (active) {
+          setIsAuthorized(true);
+          setAuthChecking(false);
+        }
+        return;
+      }
+
+      // 4. LocalStorage persistent fallback check
       let isLocalEnrolled = false;
       try {
-        const raw = localStorage.getItem('lms-store-storage');
-        if (raw) {
-          const parsed = JSON.parse(raw);
+        const rawEnrollments = localStorage.getItem('_lms_enrollments');
+        if (rawEnrollments) {
+          const parsed = JSON.parse(rawEnrollments);
+          if (Array.isArray(parsed) && parsed.some(e => matchesCourse(e.courseId || e.course_id) && matchesUser(e))) {
+            isLocalEnrolled = true;
+          }
+        }
+      } catch (_) {}
+
+      try {
+        const rawPayments = localStorage.getItem('_lms_payments');
+        if (rawPayments) {
+          const parsed = JSON.parse(rawPayments);
+          if (Array.isArray(parsed) && parsed.some(p => matchesCourse(p.courseId || p.course_id) && matchesUser(p) && ['successful', 'paid'].includes((p.status || '').toLowerCase()))) {
+            isLocalEnrolled = true;
+          }
+        }
+      } catch (_) {}
+
+      try {
+        const rawStore = localStorage.getItem('lms-store-storage');
+        if (rawStore) {
+          const parsed = JSON.parse(rawStore);
           const savedEnrollments = parsed?.state?.enrollments || [];
-          isLocalEnrolled = savedEnrollments.some(e => e.courseId === courseId && e.userId === user.id);
+          if (savedEnrollments.some(e => matchesCourse(e.courseId || e.course_id) && matchesUser(e))) {
+            isLocalEnrolled = true;
+          }
+          const savedPayments = parsed?.state?.payments || [];
+          if (savedPayments.some(p => matchesCourse(p.courseId || p.course_id) && matchesUser(p) && ['successful', 'paid'].includes((p.status || '').toLowerCase()))) {
+            isLocalEnrolled = true;
+          }
         }
       } catch (_) {}
 
@@ -152,15 +228,16 @@ export const CoursePlayer = () => {
         return;
       }
 
+      // 5. Backend API protected content check
       try {
         const res = await apiClient.courses.getProtectedLearningContent(courseId, user.id);
         if (active) {
-          setIsAuthorized(Boolean(res.authorized || isLocalEnrolled || isStoreEnrolled || userIsAdmin));
+          setIsAuthorized(Boolean(res.authorized || isLocalEnrolled || isStoreEnrolled || isStorePaid || userIsAdmin));
           setAuthChecking(false);
         }
       } catch (err) {
         if (active) {
-          setIsAuthorized(Boolean(isLocalEnrolled || isStoreEnrolled || userIsAdmin));
+          setIsAuthorized(Boolean(isLocalEnrolled || isStoreEnrolled || isStorePaid || userIsAdmin));
           setAuthChecking(false);
         }
       }
@@ -168,7 +245,7 @@ export const CoursePlayer = () => {
 
     checkBackendAuthorization();
     return () => { active = false; };
-  }, [courseId, user, authLoading, enrollments]);
+  }, [courseId, user, authLoading, enrollments, payments, course]);
 
   // Load target or first uncompleted lesson initially
   useEffect(() => {
