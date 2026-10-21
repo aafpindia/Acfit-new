@@ -35,7 +35,7 @@ export const CertificatePage = () => {
   });
 
   return (
-    <div className="min-h-screen graph-paper-bg font-sans py-12 px-6 flex flex-col items-center text-[#202124]">
+    <div className="min-h-screen graph-paper-bg font-sans py-6 px-3 sm:py-12 sm:px-6 flex flex-col items-center text-[#202124]">
       {/* Embedded print overrides style sheet */}
       <style dangerouslySetInnerHTML={{ __html: `
         @media print {
@@ -59,18 +59,19 @@ export const CertificatePage = () => {
       `}} />
 
       {/* Top action header */}
-      <div className="max-w-4xl w-full flex items-center justify-between mb-8 no-print">
-        <button onClick={() => navigate(-1)} className="font-mono text-xs sm:text-sm text-slate-600 hover:text-[#202124] font-bold flex items-center gap-1.5 cursor-pointer">
+      <div className="max-w-4xl w-full flex items-center justify-between mb-6 sm:mb-8 no-print gap-2">
+        <button onClick={() => navigate(-1)} className="font-mono text-xs sm:text-sm text-slate-600 hover:text-[#202124] font-bold flex items-center gap-1.5 cursor-pointer shrink-0">
           <ArrowLeft className="h-4.5 w-4.5" />
-          <span>[ RETURN TO LEARNING PORTAL ]</span>
+          <span className="hidden sm:inline">[ RETURN TO LEARNING PORTAL ]</span>
+          <span className="sm:hidden">[ BACK ]</span>
         </button>
-        <Button variant="primary" size="sm" onClick={handlePrint} className="font-mono font-bold text-xs h-9 px-4 rounded-xl shadow-tactile-sm bg-primary text-white" leftIcon={<Printer className="h-4 w-4" />}>
+        <Button variant="primary" size="sm" onClick={handlePrint} className="font-mono font-bold text-xs h-9 px-3 sm:px-4 rounded-xl shadow-tactile-sm bg-primary text-white shrink-0" leftIcon={<Printer className="h-4 w-4" />}>
           Print / Save PDF
         </Button>
       </div>
 
       {/* Certificate Frame wrapper */}
-      <div className="max-w-4xl w-full border-2 border-[#2563EB] bg-white shadow-tactile p-6 sm:p-12 print-certificate-container relative rounded-2xl corner-crosshair">
+      <div className="max-w-4xl w-full border-2 border-[#2563EB] bg-white shadow-tactile p-4 sm:p-12 print-certificate-container relative rounded-2xl corner-crosshair">
         
         {/* Certificate Watermark background */}
         <div className="absolute inset-0 graph-paper-dense opacity-20 pointer-events-none rounded-2xl" />

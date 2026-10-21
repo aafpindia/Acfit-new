@@ -33,7 +33,8 @@ import {
   Maximize,
   Minimize,
   Copy,
-  RefreshCw
+  RefreshCw,
+  X
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
@@ -57,11 +58,25 @@ export const CoursePlayer = () => {
   const { success, error } = useToast();
   const { courses, enrollments, progress, attempts, certificates, markLessonComplete, syncFromSupabase } = useLmsStore();
 
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // On mobile screens (< 1024px), sidebar defaults to closed so player content is immediately visible
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 1024;
+    }
+    return false;
+  });
   const [isFullscreenMode, setIsFullscreenMode] = useState(false);
   const [activeItem, setActiveItem] = useState(null); // { type: 'lesson' | 'quiz' | 'final', id, moduleId }
   const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'checklist' | 'discussion' | 'resources'
   const [completedTasks, setCompletedTasks] = useState({});
+
+  // Helper to select a syllabus item and auto-close sidebar on mobile
+  const selectItem = (item) => {
+    setActiveItem(item);
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setSidebarOpen(false);
+    }
+  };
 
   const course = courses.find((c) => c.id === courseId);
 
@@ -524,35 +539,41 @@ export const CoursePlayer = () => {
     <div className="h-screen w-screen max-h-screen overflow-hidden flex flex-col bg-[#F8FAFC] text-[#0F172A] font-sans selection:bg-[#2563EB] selection:text-white select-none">
       
       {/* ─── STICKY FULL SCREEN LEARNING STUDIO HEADER BAR ─────────── */}
-      <header className="h-14 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between z-30 shrink-0 shadow-xs select-none">
-        <div className="flex items-center gap-3 min-w-0">
+      <header className="h-14 bg-white border-b border-slate-200 px-3 sm:px-6 flex items-center justify-between z-30 shrink-0 shadow-xs select-none gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <Button
             variant="outline"
             size="sm"
             onClick={() => navigate('/app/dashboard')}
-            className="rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 font-extrabold text-xs h-9 px-3.5 gap-2 cursor-pointer shadow-2xs shrink-0"
-            leftIcon={<ArrowLeft className="h-4 w-4 text-slate-600" />}
+            className="rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 font-extrabold text-xs h-9 px-2.5 sm:px-3.5 gap-1.5 cursor-pointer shadow-2xs shrink-0"
+            leftIcon={<ArrowLeft className="h-4 w-4 text-slate-600 shrink-0" />}
           >
-            Back to Dashboard
+            <span className="hidden sm:inline">Back to Dashboard</span>
+            <span className="sm:hidden">Back</span>
           </Button>
 
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2 rounded-xl text-slate-600 hover:bg-slate-100 transition-colors focus:outline-none shrink-0 cursor-pointer"
-            title="Toggle Course Catalog Sidebar"
+            className={`h-9 px-2.5 sm:px-3 rounded-xl border transition-colors focus:outline-none shrink-0 cursor-pointer flex items-center gap-1.5 text-xs font-bold ${
+              sidebarOpen
+                ? 'bg-[#EFF6FF] border-[#2563EB]/40 text-[#2563EB]'
+                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
+            title="Toggle Course Syllabus"
           >
-            <Menu className="h-4.5 w-4.5" />
+            <Menu className="h-4 w-4" />
+            <span className="text-xs font-extrabold">Syllabus</span>
           </button>
 
-          <div className="hidden md:flex items-center gap-2.5 border-l border-slate-200 pl-3 truncate">
-            <h1 className="font-extrabold text-sm text-slate-900 truncate">
+          <div className="hidden lg:flex items-center gap-2.5 border-l border-slate-200 pl-3 truncate">
+            <h1 className="font-extrabold text-sm text-slate-900 truncate max-w-xs xl:max-w-md">
               {course.title}
             </h1>
           </div>
         </div>
 
         {/* Header Right Actions & Quick Navigation */}
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           
           {/* Progress Pill Indicator */}
           <div className="hidden sm:flex items-center gap-2 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-xl font-sans text-xs font-bold">
@@ -562,14 +583,14 @@ export const CoursePlayer = () => {
           </div>
 
           {/* Full Screen Mode & Sequential Prev/Next Buttons */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <button
               type="button"
               onClick={() => {
                 setIsFullscreenMode(!isFullscreenMode);
                 if (!isFullscreenMode) setSidebarOpen(false);
               }}
-              className={`h-9 px-3 rounded-xl border text-xs font-extrabold flex items-center gap-1.5 cursor-pointer transition-all ${
+              className={`h-9 px-2.5 sm:px-3 rounded-xl border text-xs font-extrabold flex items-center gap-1.5 cursor-pointer transition-all ${
                 isFullscreenMode
                   ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100 shadow-2xs'
                   : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200 shadow-2xs'
@@ -579,12 +600,12 @@ export const CoursePlayer = () => {
               {isFullscreenMode ? (
                 <>
                   <Minimize className="h-4 w-4 text-rose-600" />
-                  <span className="hidden sm:inline">Exit Full Screen</span>
+                  <span className="hidden md:inline">Exit</span>
                 </>
               ) : (
                 <>
                   <Maximize className="h-4 w-4 text-[#2563EB]" />
-                  <span className="hidden sm:inline">Full Screen</span>
+                  <span className="hidden md:inline">Full Screen</span>
                 </>
               )}
             </button>
@@ -593,7 +614,7 @@ export const CoursePlayer = () => {
               variant="outline"
               size="sm"
               onClick={loadPrevItem}
-              className="h-9 px-3 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 font-bold text-xs gap-1 cursor-pointer shadow-2xs"
+              className="h-9 px-2.5 sm:px-3 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 font-bold text-xs gap-1 cursor-pointer shadow-2xs"
             >
               <ChevronLeft className="h-4 w-4" />
               <span className="hidden md:inline">Prev</span>
@@ -601,7 +622,7 @@ export const CoursePlayer = () => {
             <Button
               size="sm"
               onClick={loadNextItem}
-              className="h-9 px-4 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-extrabold text-xs gap-1 cursor-pointer shadow-xs"
+              className="h-9 px-3 sm:px-4 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-extrabold text-xs gap-1 cursor-pointer shadow-xs"
             >
               <span className="hidden md:inline">Next</span>
               <ChevronRight className="h-4 w-4" />
@@ -613,20 +634,42 @@ export const CoursePlayer = () => {
       {/* ─── MAIN PLAYER BODY LAYOUT (CATALOG SIDEBAR + CONTENT CANVAS) ────── */}
       <div className="flex-1 flex flex-col lg:flex-row min-w-0 min-h-0 relative overflow-hidden">
         
-        {/* LEFT COURSE CATALOG SYLLABUS SIDEBAR */}
+        {/* Mobile Backdrop for Syllabus Overlay */}
+        {sidebarOpen && !isFullscreenMode && (
+          <div
+            onClick={() => setSidebarOpen(false)}
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-40 lg:hidden transition-opacity"
+          />
+        )}
+
+        {/* LEFT COURSE CATALOG SYLLABUS SIDEBAR: Responsive drawer on mobile, inline panel on lg */}
         <aside
-          className={`bg-white border-r border-slate-200 flex flex-col shrink-0 transition-all duration-300 ease-in-out z-20 h-full ${
-            sidebarOpen && !isFullscreenMode ? 'w-full lg:w-88' : 'w-0 overflow-hidden border-none'
+          className={`bg-white border-r border-slate-200 flex flex-col shrink-0 transition-all duration-300 ease-in-out h-full select-none ${
+            isFullscreenMode ? 'hidden' : ''
+          } ${
+            sidebarOpen
+              ? 'fixed inset-y-0 left-0 z-50 w-[88vw] max-w-sm shadow-2xl lg:shadow-none lg:static lg:w-88 lg:z-20'
+              : 'hidden lg:flex lg:w-0 lg:overflow-hidden lg:border-none'
           }`}
         >
-          {/* Syllabus Progress Card */}
-          <div className="p-5 border-b border-slate-200 bg-slate-50/70 space-y-3">
+          {/* Syllabus Progress Card with mobile close button */}
+          <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50/70 space-y-3">
             <div className="flex items-center justify-between font-sans text-xs font-bold text-slate-700">
               <span className="flex items-center gap-1.5 text-slate-900">
                 <Layers className="h-4 w-4 text-[#2563EB]" />
                 <span className="font-extrabold">Syllabus Completion</span>
               </span>
-              <span className="text-[#2563EB] font-black">{overallProgressPercentage}%</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[#2563EB] font-black">{overallProgressPercentage}%</span>
+                <button
+                  type="button"
+                  onClick={() => setSidebarOpen(false)}
+                  className="lg:hidden p-1 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-200 transition-colors cursor-pointer"
+                  title="Close Syllabus"
+                >
+                  <X className="h-4.5 w-4.5" />
+                </button>
+              </div>
             </div>
             
             <div className="h-2.5 bg-slate-200/80 rounded-full overflow-hidden">
@@ -693,7 +736,7 @@ export const CoursePlayer = () => {
                               error(`Module ${modIdx + 1} is locked. Complete previous modules first.`);
                               return;
                             }
-                            setActiveItem({ type: 'lesson', id: les.id, moduleId: mod.id });
+                            selectItem({ type: 'lesson', id: les.id, moduleId: mod.id });
                           }}
                           className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-bold cursor-pointer border text-left transition-all duration-200 group ${
                             active
@@ -729,7 +772,7 @@ export const CoursePlayer = () => {
                             error(`Module ${modIdx + 1} is locked. Complete previous modules first.`);
                             return;
                           }
-                          setActiveItem({ type: 'quiz', id: mod.assessment.id, moduleId: mod.id });
+                          selectItem({ type: 'quiz', id: mod.assessment.id, moduleId: mod.id });
                         }}
                         className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-bold cursor-pointer border text-left transition-all ${
                           activeItem?.type === 'quiz' && activeItem.id === mod.assessment.id
@@ -766,7 +809,7 @@ export const CoursePlayer = () => {
                       error(`Certificate Exam Locked: Complete all ${totalLessonsCount} lessons first to unlock (${remaining} remaining).`);
                       return;
                     }
-                    setActiveItem({ type: 'final', id: finalExamObj.id });
+                    selectItem({ type: 'final', id: finalExamObj.id });
                   }}
                   className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-bold border cursor-pointer text-left transition-all ${
                     activeItem?.type === 'final'
@@ -811,29 +854,29 @@ export const CoursePlayer = () => {
             <div className={isFullscreenMode ? 'h-full flex flex-col justify-between space-y-0 w-full' : 'space-y-6 max-w-5xl mx-auto'}>
               
               {/* Lesson Title Header Card */}
-              <div className={`bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+              <div className={`bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4 ${
                 isFullscreenMode ? 'hidden' : ''
               }`}>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
+                <div className="space-y-1.5 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="px-2.5 py-0.5 rounded-md bg-[#EFF6FF] text-[#2563EB] font-mono text-[9px] font-extrabold uppercase tracking-wider">
                       ● {currentLesson.type?.toUpperCase() || 'LESSON'}
                     </span>
                     {currentModule && (
-                      <span className="font-mono text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                      <span className="font-mono text-[10px] text-slate-500 font-bold uppercase tracking-wider truncate max-w-[220px] sm:max-w-none">
                         [ MODULE: {currentModule.title} ]
                       </span>
                     )}
                   </div>
 
-                  <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight leading-tight">
+                  <h2 className="text-xl sm:text-2xl lg:text-3xl font-extrabold text-slate-900 tracking-tight leading-snug">
                     {currentLesson.title}
                   </h2>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2 flex-wrap shrink-0">
                   {currentLesson.duration && (
-                    <div className="px-3 py-1.5 bg-slate-100 rounded-xl font-mono text-xs font-bold text-slate-700 border border-slate-200 flex items-center gap-1.5">
+                    <div className="px-2.5 py-1.5 bg-slate-100 rounded-xl font-mono text-xs font-bold text-slate-700 border border-slate-200 flex items-center gap-1.5">
                       <Clock className="h-3.5 w-3.5 text-slate-500" />
                       <span>{currentLesson.duration}</span>
                     </div>
@@ -842,7 +885,7 @@ export const CoursePlayer = () => {
                   <button
                     type="button"
                     onClick={() => setIsFullscreenMode(!isFullscreenMode)}
-                    className="h-10 px-3.5 rounded-xl border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                    className="h-9 sm:h-10 px-3 rounded-xl border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs"
                     title="Toggle Full Screen"
                   >
                     <Maximize className="h-4 w-4 text-[#2563EB]" />
@@ -852,14 +895,14 @@ export const CoursePlayer = () => {
                   <Button
                     type="button"
                     onClick={handleMarkComplete}
-                    className={`rounded-xl text-xs font-bold h-10 px-4 gap-2 cursor-pointer transition-all ${
+                    className={`rounded-xl text-xs font-bold h-9 sm:h-10 px-3.5 sm:px-4 gap-1.5 sm:gap-2 cursor-pointer transition-all ${
                       userProgress[currentLesson.id]
                         ? 'bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100'
                         : 'bg-[#2563EB] hover:bg-[#1D4ED8] text-white shadow-xs font-extrabold'
                     }`}
                   >
-                    <CheckCircle className="h-4 w-4" />
-                    <span>{userProgress[currentLesson.id] ? 'Marked Complete ✓' : 'Mark Complete & Next'}</span>
+                    <CheckCircle className="h-4 w-4 shrink-0" />
+                    <span>{userProgress[currentLesson.id] ? 'Completed ✓' : 'Mark Complete & Next'}</span>
                   </Button>
                 </div>
               </div>
@@ -1028,6 +1071,44 @@ export const CoursePlayer = () => {
           )}
         </main>
       </div>
+
+      {/* ─── MOBILE STICKY BOTTOM QUICK ACTION DOCK ─────────────────── */}
+      {!isFullscreenMode && (
+        <div className="md:hidden shrink-0 bg-white/95 backdrop-blur-md border-t border-slate-200 px-3 py-2 flex items-center justify-between gap-2 z-30 shadow-lg">
+          <button
+            type="button"
+            onClick={loadPrevItem}
+            className="h-9 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center gap-1 cursor-pointer shadow-2xs shrink-0"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            <span>Prev</span>
+          </button>
+
+          {activeItem?.type === 'lesson' && currentLesson && (
+            <button
+              type="button"
+              onClick={handleMarkComplete}
+              className={`h-9 px-3 flex-1 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-xs cursor-pointer truncate transition-all ${
+                userProgress[currentLesson.id]
+                  ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
+                  : 'bg-[#2563EB] hover:bg-[#1D4ED8] text-white'
+              }`}
+            >
+              <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{userProgress[currentLesson.id] ? 'Completed ✓' : 'Mark Complete'}</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={loadNextItem}
+            className="h-9 px-3 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-extrabold text-xs flex items-center gap-1 cursor-pointer shadow-xs shrink-0"
+          >
+            <span>Next</span>
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
     </div>
   );

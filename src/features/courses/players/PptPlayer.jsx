@@ -76,17 +76,17 @@ export const PptPlayer = ({ content = {} }) => {
         
         {/* If an iframe embed (Google Slides, Web PPT or PDF) is available */}
         {isIframeable ? (
-          <div className="relative aspect-[16/10] min-h-[480px] bg-slate-900 rounded-xl border border-border overflow-hidden shadow-md">
+          <div className="relative aspect-[16/10] min-h-[260px] sm:min-h-[380px] lg:min-h-[480px] bg-slate-900 rounded-xl border border-border overflow-hidden shadow-md">
             <iframe
               src={iframeSrc}
               title={mediaObj.title || 'Presentation Viewer'}
-              className="w-full h-full min-h-[480px] border-0"
+              className="w-full h-full min-h-[260px] sm:min-h-[380px] lg:min-h-[480px] border-0"
               allowFullScreen
             />
           </div>
         ) : (
           /* Slide Viewport */
-          <div className="slide-image-container relative aspect-[16/10] min-h-[420px] bg-gradient-to-br from-[#1E3A8A] via-[#1E65B8] to-[#0B2535] rounded-xl border border-border overflow-hidden flex items-center justify-center text-white shadow-inner">
+          <div className="slide-image-container relative aspect-[16/10] min-h-[260px] sm:min-h-[380px] lg:min-h-[440px] bg-gradient-to-br from-[#1E3A8A] via-[#1E65B8] to-[#0B2535] rounded-xl border border-border overflow-hidden flex items-center justify-center text-white shadow-inner">
             <AnimatePresence initial={false} custom={direction} mode="wait">
               {!hasImageError && isDirectImage ? (
                 <motion.img
@@ -105,7 +105,7 @@ export const PptPlayer = ({ content = {} }) => {
               ) : (
                 <motion.div
                   key={`canvas-${currentSlide}`}
-                  className="w-full h-full p-8 flex flex-col items-center justify-center text-center space-y-4 bg-gradient-to-br from-[#0F2042] via-[#1E3A8A] to-[#0F172A] absolute inset-0"
+                  className="w-full h-full p-4 sm:p-8 flex flex-col items-center justify-center text-center space-y-3 sm:space-y-4 bg-gradient-to-br from-[#0F2042] via-[#1E3A8A] to-[#0F172A] absolute inset-0 overflow-y-auto"
                   custom={direction}
                   variants={slideVariants}
                   initial="enter"
@@ -113,30 +113,30 @@ export const PptPlayer = ({ content = {} }) => {
                   exit="exit"
                   transition={{ type: 'spring', stiffness: 300, damping: 30, duration: 0.3 }}
                 >
-                  <div className="w-16 h-16 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center shadow-lg">
-                    <Presentation className="h-8 w-8 text-blue-200" />
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center shadow-lg shrink-0">
+                    <Presentation className="h-6 w-6 sm:h-8 sm:w-8 text-blue-200" />
                   </div>
                   <div className="space-y-1.5 max-w-md">
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-blue-300 bg-white/10 px-3 py-1 rounded-full border border-white/15">
+                    <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-blue-300 bg-white/10 px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full border border-white/15">
                       📊 SLIDE PRESENTATION DECK READY
                     </span>
-                    <h3 className="text-xl font-black text-white tracking-tight">
+                    <h3 className="text-base sm:text-xl font-black text-white tracking-tight">
                       {mediaObj.title || `Presentation Slide ${currentSlide + 1}`}
                     </h3>
-                    <p className="text-xs text-blue-100/80 leading-relaxed">
+                    <p className="text-[11px] sm:text-xs text-blue-100/80 leading-relaxed line-clamp-3 sm:line-clamp-none">
                       {mediaObj.instructions || mediaObj.notes || 'Official course slide presentation deck and curriculum study manual.'}
                     </p>
                   </div>
 
                   {fileUrl && (
-                    <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+                    <div className="pt-1 sm:pt-2 flex flex-wrap items-center justify-center gap-2 max-w-full">
                       <a
                         href={fileUrl}
                         download={mediaObj.fileName || `${mediaObj.title || 'course-presentation'}.pptx`}
-                        className="h-10 px-5 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold text-xs flex items-center gap-2 shadow-md transition-all cursor-pointer"
+                        className="py-2 px-3.5 sm:h-10 sm:px-5 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer max-w-full text-center"
                       >
-                        <Download className="h-4 w-4" />
-                        <span>Download & Open in PowerPoint (.pptx)</span>
+                        <Download className="h-4 w-4 shrink-0" />
+                        <span className="truncate">Download PowerPoint (.pptx)</span>
                       </a>
                     </div>
                   )}

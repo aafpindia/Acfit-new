@@ -154,8 +154,8 @@ export const AdminLayout = () => {
             </div>
           </Link>
 
-          {/* Center Clean Search Capsule */}
-          <div className="flex-1 max-w-md mx-auto flex items-center justify-center">
+          {/* Center Clean Search Capsule - hidden on small mobile, available on sm+ and in mobile drawer */}
+          <div className="hidden sm:flex flex-1 max-w-md mx-auto items-center justify-center">
             <div className="relative w-full flex items-center" ref={searchRef}>
               
               {/* Main Search Input Form */}
@@ -414,6 +414,24 @@ export const AdminLayout = () => {
                     <Button variant="ghost" size="sm" onClick={() => setMobileMenuOpen(false)} className="text-slate-400 hover:text-[#202124]">
                       <X className="h-5 w-5" />
                     </Button>
+                  </div>
+
+                  {/* Mobile Search Input */}
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#5F6368]" />
+                    <input
+                      type="text"
+                      placeholder="Search courses, users..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && searchQuery.trim()) {
+                          setMobileMenuOpen(false);
+                          navigate(`/admin/courses?search=${encodeURIComponent(searchQuery.trim())}`);
+                        }
+                      }}
+                      className="w-full h-9 pl-9 pr-3 rounded-lg topbar-search-input bg-[#F3F4F6] border border-[#E4E7EB] text-xs text-[#202124] placeholder:text-[#8A8F98] focus:outline-none font-sans"
+                    />
                   </div>
 
                   <nav className="space-y-4 text-xs font-medium">

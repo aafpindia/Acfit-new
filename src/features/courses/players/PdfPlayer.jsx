@@ -82,16 +82,16 @@ export const PdfPlayer = ({ content = {} }) => {
   };
 
   return (
-    <Card className="border-border bg-slate-100 p-4 space-y-4 select-none font-sans">
+    <Card className="border-border bg-slate-100 p-3 sm:p-4 space-y-3 sm:space-y-4 select-none font-sans">
       
       {/* Controls Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 text-xs sm:text-sm shadow-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-3 bg-white p-2.5 sm:p-3 rounded-xl border border-slate-200 text-xs sm:text-sm shadow-xs">
         {/* Page selector */}
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={handlePrevPage} disabled={currentPage === 1} className="p-1 h-8 w-8">
             <ChevronLeft className="h-4.5 w-4.5" />
           </Button>
-          <span className="font-semibold select-none text-slate-700">
+          <span className="font-semibold select-none text-slate-700 text-xs sm:text-sm">
             Page {currentPage} of {totalPages}
           </span>
           <Button variant="outline" size="sm" onClick={handleNextPage} disabled={currentPage === totalPages} className="p-1 h-8 w-8">
@@ -100,18 +100,19 @@ export const PdfPlayer = ({ content = {} }) => {
         </div>
 
         {/* Zoom & Download */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 border-r border-slate-200 pr-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          <div className="flex items-center gap-1 border-r border-slate-200 pr-2 sm:pr-3">
             <Button variant="ghost" size="sm" onClick={handleZoomOut} className="p-1.5 h-8 w-8"><ZoomOut className="h-4 w-4" /></Button>
-            <span className="font-bold text-slate-600 text-xs select-none w-10 text-center">{zoomPercent}%</span>
+            <span className="font-bold text-slate-600 text-xs select-none w-8 sm:w-10 text-center">{zoomPercent}%</span>
             <Button variant="ghost" size="sm" onClick={handleZoomIn} className="p-1.5 h-8 w-8"><ZoomIn className="h-4.5 w-4.5" /></Button>
-            <Button variant="ghost" size="sm" onClick={() => setZoomPercent(100)} className="p-1.5 h-8 w-8 text-slate-500"><RotateCcw className="h-4 w-4" /></Button>
+            <Button variant="ghost" size="sm" onClick={() => setZoomPercent(100)} className="p-1.5 h-8 w-8 text-slate-500 hidden sm:inline-flex"><RotateCcw className="h-4 w-4" /></Button>
           </div>
 
           {rawFileUrl ? (
             <Button variant="primary" size="sm" onClick={handleDownload} className="gap-1.5 h-8 text-xs font-bold bg-[#2563EB] text-white">
               <Download className="h-4 w-4" />
-              <span>Download PDF File</span>
+              <span className="hidden sm:inline">Download PDF File</span>
+              <span className="sm:hidden">Download</span>
             </Button>
           ) : (
             <Button variant="outline" size="sm" onClick={handleDownload} className="gap-1.5 h-8 text-xs font-semibold">
@@ -124,23 +125,23 @@ export const PdfPlayer = ({ content = {} }) => {
 
       {/* PDF Viewport */}
       {rawFileUrl ? (
-        <div className="rounded-xl overflow-hidden border border-slate-300 bg-white h-[650px] shadow-sm">
+        <div className="rounded-xl overflow-hidden border border-slate-300 bg-white h-[380px] sm:h-[520px] lg:h-[650px] shadow-sm">
           <object
             data={rawFileUrl}
             type="application/pdf"
-            className="w-full h-full min-h-[650px]"
+            className="w-full h-full min-h-[380px] sm:min-h-[520px] lg:min-h-[650px]"
           >
             <iframe
               src={rawFileUrl}
-              className="w-full h-full min-h-[650px] border-0"
+              className="w-full h-full min-h-[380px] sm:min-h-[520px] lg:min-h-[650px] border-0"
               title={content.title || 'PDF Document'}
             />
           </object>
         </div>
       ) : (
-        <div className="overflow-auto max-h-[500px] flex items-center justify-center p-4 bg-slate-200/60 rounded-xl border border-slate-300">
+        <div className="overflow-auto max-h-[380px] sm:max-h-[500px] flex items-center justify-center p-2 sm:p-4 bg-slate-200/60 rounded-xl border border-slate-300">
           <div
-            className="bg-white p-8 rounded-xl shadow-md border border-slate-200 max-w-xl w-full aspect-[1/1.4] flex flex-col justify-between transition-transform duration-200"
+            className="bg-white p-4 sm:p-8 rounded-xl shadow-md border border-slate-200 max-w-xl w-full aspect-[1/1.4] flex flex-col justify-between transition-transform duration-200"
             style={{ transform: `scale(${zoomPercent / 100})`, transformOrigin: 'top center' }}
           >
             {getMockPdfContent(currentPage)}

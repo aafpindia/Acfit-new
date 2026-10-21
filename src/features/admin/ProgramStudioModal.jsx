@@ -915,9 +915,9 @@ export const ProgramStudioModal = ({
       </div>
 
       {/* ─── 2. SUB-HEADER NAVIGATION TABS BAR ───────────────────────────── */}
-      <div className="bg-white border-b border-slate-200 px-6 h-14 flex items-center justify-between shrink-0 shadow-xs">
+      <div className="bg-white border-b border-slate-200 px-3 sm:px-6 h-14 flex items-center justify-between shrink-0 shadow-xs gap-2 overflow-x-auto">
         {/* Navigation Tabs */}
-        <div className="flex items-center gap-2 font-sans text-xs">
+        <div className="flex items-center gap-1.5 sm:gap-2 font-sans text-xs shrink-0">
           {[
             { id: 'OVERVIEW', label: 'OVERVIEW', icon: BookOpen },
             { id: 'MODULE', label: 'MODULE', icon: Layers },
@@ -930,13 +930,13 @@ export const ProgramStudioModal = ({
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`h-9 px-4 rounded-lg font-extrabold text-xs transition-all flex items-center gap-2 cursor-pointer ${
+                className={`h-8 sm:h-9 px-2.5 sm:px-4 rounded-lg font-extrabold text-[11px] sm:text-xs transition-all flex items-center gap-1.5 sm:gap-2 cursor-pointer shrink-0 whitespace-nowrap ${
                   isActive
                     ? 'bg-[#2563EB] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold'
                 }`}
               >
-                <Icon className={`h-4 w-4 ${isActive ? 'text-white' : 'text-slate-500'}`} />
+                <Icon className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${isActive ? 'text-white' : 'text-slate-500'}`} />
                 <span>{tab.label}</span>
               </button>
             );
