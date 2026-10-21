@@ -73,36 +73,54 @@ export const AdminDashboard = () => {
     } catch (_) {}
   }, [syncFromSupabase, subscribeToRealtime]);
 
-  // Compute Total Unique Members
+  // Compute Total Unique Members (Live Non-Deleted Users)
   useEffect(() => {
     let active = true;
     const computeTotalMembers = async () => {
-      let baseUsers = [];
+      const deletedUserIds = new Set(JSON.parse(localStorage.getItem('_lms_deleted_user_ids') || '[]'));
+      const uniqueLiveIds = new Set();
+      const uniqueLiveEmails = new Set();
+
       if (isSupabaseConfigured) {
         try {
-          const { data } = await supabase.from('profiles').select('*');
-          if (data && active) baseUsers = data;
+          const { data } = await supabase.from('profiles').select('id, email, status');
+          if (data && active) {
+            data.forEach((p) => {
+              if (p.id && !deletedUserIds.has(p.id) && p.status !== 'deleted') {
+                uniqueLiveIds.add(p.id);
+                if (p.email) uniqueLiveEmails.add(p.email.toLowerCase().trim());
+              }
+            });
+          }
         } catch (_) {}
       }
+
+      // Add real registered accounts from auth state (excluding dummy/deleted)
       try {
-        const mockUsers = JSON.parse(localStorage.getItem('_lms_mock_users') || '[]');
-        mockUsers.forEach((m) => {
-          if (!baseUsers.some((u) => u.id === m.id || u.email === m.email)) {
-            baseUsers.push(m);
+        const regUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
+        regUsers.forEach((reg) => {
+          const em = (reg.email || '').toLowerCase().trim();
+          if (em && em !== 'admin@lms.com' && em !== 'student@lms.com') {
+            if (!deletedUserIds.has(reg.id) && reg.status !== 'deleted') {
+              if (!uniqueLiveEmails.has(em)) {
+                uniqueLiveEmails.add(em);
+                uniqueLiveIds.add(reg.id || em);
+              }
+            }
           }
         });
       } catch (_) {}
 
-      const knownIds = new Set(baseUsers.map((u) => u.id));
+      // Count genuine enrollments matching non-deleted user IDs
       (enrollments || []).forEach((e) => {
-        if (e.userId && !knownIds.has(e.userId)) {
-          knownIds.add(e.userId);
-          baseUsers.push({ id: e.userId });
+        const uid = e.userId || e.user_id;
+        if (uid && !deletedUserIds.has(uid)) {
+          uniqueLiveIds.add(uid);
         }
       });
 
       if (active) {
-        setTotalMembers(Math.max(baseUsers.length, enrollments.length, 12));
+        setTotalMembers(uniqueLiveIds.size);
       }
     };
 
@@ -110,14 +128,27 @@ export const AdminDashboard = () => {
     return () => {
       active = false;
     };
-  }, [enrollments, payments, certificates]);
+  }, [enrollments]);
 
   // ─── 1. CORE 4 KPI CALCULATIONS ─────────────────────────────────────────
-  const successfulPayments = useMemo(() => payments.filter((p) => p.status === 'successful'), [payments]);
-  const totalRevenue = useMemo(() => successfulPayments.reduce((acc, p) => acc + (p.amount || 0), 0), [successfulPayments]);
+  const successfulPayments = useMemo(() => {
+    const deletedUserIds = new Set(JSON.parse(localStorage.getItem('_lms_deleted_user_ids') || '[]'));
+    return payments.filter((p) => {
+      if (!p || !p.id) return false;
+      if (p.id === 'PAY-1001' || p.studentEmail === 'student@lms.com' || p.studentEmail === 'admin@lms.com') return false;
+      if (deletedUserIds.has(p.userId || p.user_id)) return false;
+      const st = (p.status || '').toLowerCase();
+      return st === 'successful' || st === 'paid';
+    });
+  }, [payments]);
+
+  const totalRevenue = useMemo(
+    () => successfulPayments.reduce((acc, p) => acc + (parseFloat(p.amount) || 0), 0),
+    [successfulPayments]
+  );
 
   const overallCompletionRate = useMemo(() => {
-    if (courses.length === 0 || enrollments.length === 0) return 68.4;
+    if (courses.length === 0 || enrollments.length === 0) return 0;
     let totalPossible = 0;
     let totalDone = 0;
 
@@ -134,28 +165,31 @@ export const AdminDashboard = () => {
       }
     });
 
-    return totalPossible > 0 ? Math.min(100, Math.round((totalDone / totalPossible) * 100)) : 68.4;
+    return totalPossible > 0 ? Math.min(100, Math.round((totalDone / totalPossible) * 100)) : 0;
   }, [courses, enrollments, progress]);
 
   // ─── 2. REVENUE & TRANSACTIONS OVERVIEW CHART DATA ─────────────────────
   const overviewChartData = useMemo(() => {
+    // Generate the last 6 calendar months dynamically
+    const months = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push(d.toLocaleString('default', { month: 'short' }));
+    }
+
     const monthlyRevMap = {};
     const monthlyTxMap = {};
 
     successfulPayments.forEach((p) => {
-      const mon = new Date(p.date || p.enrolledAt || Date.now()).toLocaleString('default', {
-        month: 'short'
-      });
-      monthlyRevMap[mon] = (monthlyRevMap[mon] || 0) + (p.amount || 0);
+      const payDate = new Date(p.date || p.paidAt || p.createdAt || p.created_at || Date.now());
+      const mon = payDate.toLocaleString('default', { month: 'short' });
+      monthlyRevMap[mon] = (monthlyRevMap[mon] || 0) + (parseFloat(p.amount) || 0);
       monthlyTxMap[mon] = (monthlyTxMap[mon] || 0) + 1;
     });
 
-    const months = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'];
-    const defaultRev = { Apr: 18000, May: 24000, Jun: 32000, Jul: 45000, Aug: 58000, Sep: 72400 };
-    const defaultTx = { Apr: 14, May: 19, Jun: 26, Jul: 34, Aug: 42, Sep: 58 };
-
-    const revenueValues = months.map((m) => monthlyRevMap[m] || defaultRev[m]);
-    const transactionValues = months.map((m) => monthlyTxMap[m] || defaultTx[m]);
+    const revenueValues = months.map((m) => monthlyRevMap[m] || 0);
+    const transactionValues = months.map((m) => monthlyTxMap[m] || 0);
 
     return {
       months,
@@ -166,33 +200,51 @@ export const AdminDashboard = () => {
 
   // ─── 3. LEARNER OVERVIEW BREAKDOWN ─────────────────────────────────────
   const activeLearnersCount = useMemo(() => {
-    let count = 0;
+    const activeUserSet = new Set();
     enrollments.forEach((e) => {
-      const up = getUserCourseProgress(e.userId || e.user_id, e.courseId || e.course_id, progress);
-      if (Object.keys(up || {}).filter((k) => up[k]).length > 0) count++;
+      const uid = e.userId || e.user_id;
+      const cid = e.courseId || e.course_id;
+      const up = getUserCourseProgress(uid, cid, progress);
+      if (Object.keys(up || {}).filter((k) => up[k]).length > 0) {
+        activeUserSet.add(uid);
+      }
     });
-    return Math.max(count, Math.round(totalMembers * 0.66));
-  }, [enrollments, progress, totalMembers]);
+    return activeUserSet.size;
+  }, [enrollments, progress]);
 
   const completedLearnersCount = useMemo(() => {
-    let count = 0;
+    const completedSet = new Set();
     enrollments.forEach((e) => {
-      const course = courses.find((c) => c.id === e.courseId || c.id === e.course_id);
+      const uid = e.userId || e.user_id;
+      const cid = e.courseId || e.course_id;
+      const course = courses.find((c) => c.id === cid);
       const totalLessons = course?.modules?.flatMap((m) => m.lessons || []).length || 1;
-      const userProg = getUserCourseProgress(e.userId || e.user_id, e.courseId || e.course_id, progress);
+      const userProg = getUserCourseProgress(uid, cid, progress);
       const done = Object.keys(userProg || {}).filter((k) => userProg[k]).length;
-      if (done >= totalLessons) count++;
+      if (done >= totalLessons && totalLessons > 0) {
+        completedSet.add(uid);
+      }
     });
-    return Math.max(count, Math.round(totalMembers * 0.45));
-  }, [enrollments, courses, progress, totalMembers]);
+    return completedSet.size;
+  }, [enrollments, courses, progress]);
 
-  const certifiedCount = Math.max(certificates.length, Math.round(totalMembers * 0.25));
+  const certifiedCount = useMemo(() => {
+    const certUsers = new Set();
+    certificates.forEach((c) => {
+      if (c.userId || c.user_id) certUsers.add(c.userId || c.user_id);
+    });
+    return certUsers.size || certificates.length;
+  }, [certificates]);
+
+  const activePct = totalMembers > 0 ? Math.min(100, Math.round((activeLearnersCount / totalMembers) * 100)) : 0;
+  const completedPct = totalMembers > 0 ? Math.min(100, Math.round((completedLearnersCount / totalMembers) * 100)) : 0;
+  const certifiedPct = totalMembers > 0 ? Math.min(100, Math.round((certifiedCount / totalMembers) * 100)) : 0;
 
   // ─── 4. COURSE PERFORMANCE TABLE ────────────────────────────────────────
   const coursePerformanceList = useMemo(() => {
     return courses.map((c) => {
       const courseEnrollments = enrollments.filter((e) => e.courseId === c.id || e.course_id === c.id);
-      const totalLessons = c.modules?.flatMap((m) => m.lessons || []).length || 1;
+      const totalLessons = c.modules?.flatMap((m) => m.lessons || []).length || 0;
       let totalCompleted = 0;
       courseEnrollments.forEach((e) => {
         const up = getUserCourseProgress(e.userId || e.user_id, c.id, progress);
@@ -202,19 +254,19 @@ export const AdminDashboard = () => {
       const completionPct =
         courseEnrollments.length > 0 && totalLessons > 0
           ? Math.min(100, Math.round((totalCompleted / (totalLessons * courseEnrollments.length)) * 100))
-          : Math.floor(Math.random() * 20) + 65;
+          : 0;
 
-      const courseAttempts = attempts.filter((a) => a.courseId === c.id);
+      const courseAttempts = attempts.filter((a) => a.courseId === c.id || a.course_id === c.id);
       const avgScore =
         courseAttempts.length > 0
-          ? Math.round(courseAttempts.reduce((acc, a) => acc + (a.score || 0), 0) / courseAttempts.length)
-          : Math.floor(Math.random() * 15) + 75;
+          ? Math.round(courseAttempts.reduce((acc, a) => acc + (parseFloat(a.score) || 0), 0) / courseAttempts.length)
+          : 0;
 
       return {
         id: c.id,
         title: c.title,
         category: c.category || 'General',
-        learnersCount: courseEnrollments.length || Math.floor(Math.random() * 150) + 50,
+        learnersCount: courseEnrollments.length,
         completionPct,
         avgScore
       };
@@ -228,13 +280,15 @@ export const AdminDashboard = () => {
     let lowProgress = 0;
 
     enrollments.forEach((e) => {
-      const course = courses.find((c) => c.id === e.courseId || c.id === e.course_id);
+      const uid = e.userId || e.user_id;
+      const cid = e.courseId || e.course_id;
+      const course = courses.find((c) => c.id === cid);
       const totalLessons = course?.modules?.flatMap((m) => m.lessons || []).length || 1;
-      const userProg = getUserCourseProgress(e.userId || e.user_id, e.courseId || e.course_id, progress);
+      const userProg = getUserCourseProgress(uid, cid, progress);
       const done = Object.keys(userProg || {}).filter((k) => userProg[k]).length;
       const pct = Math.round((done / totalLessons) * 100);
 
-      const userAttempts = attempts.filter((a) => a.userId === e.userId && a.courseId === e.courseId);
+      const userAttempts = attempts.filter((a) => (a.userId === uid || a.user_id === uid) && (a.courseId === cid || a.course_id === cid));
       const failed = userAttempts.filter((a) => !a.passed).length;
 
       if (failed >= 2) highRisk++;
@@ -243,41 +297,42 @@ export const AdminDashboard = () => {
     });
 
     return {
-      highRisk: Math.max(highRisk, 3),
-      notStarted: Math.max(notStarted, 8),
-      lowProgress: Math.max(lowProgress, 5)
+      highRisk,
+      notStarted,
+      lowProgress
     };
   }, [enrollments, courses, progress, attempts]);
 
   // ─── 6. RECENT ACTIVITY FEED ───────────────────────────────────────────
   const recentActivities = useMemo(() => {
-    const defaultActivities = [
-      { id: 1, text: 'Priya purchased React Development', sub: '₹2,499 · 2 min ago', type: 'payment' },
-      { id: 2, text: 'Arun completed Java Backend', sub: '8 min ago', type: 'completion' },
-      { id: 3, text: 'Certificate issued to Karthik', sub: '15 min ago', type: 'cert' },
-      { id: 4, text: 'Ravi passed Spring Boot Assessment', sub: '21 min ago', type: 'exam' }
-    ];
-
     const liveLogs = [];
-    payments.forEach((p) => {
+    successfulPayments.forEach((p) => {
+      const dateStr = p.date || p.paidAt || p.createdAt || p.created_at;
+      const timeAgo = dateStr ? new Date(dateStr).toLocaleDateString() : 'Recent';
       liveLogs.push({
         id: `p-${p.id}`,
-        text: `${p.studentName || 'Learner'} purchased ${p.courseTitle || 'Course'}`,
-        sub: `₹${p.amount} · Recent`,
-        type: 'payment'
+        text: `${p.studentName || 'Learner'} enrolled in ${p.courseTitle || 'Course'}`,
+        sub: `₹${p.amount} · ${timeAgo}`,
+        type: 'payment',
+        timestamp: dateStr ? new Date(dateStr).getTime() : 0
       });
     });
     certificates.forEach((c) => {
+      const dateStr = c.issueDate || c.issuedAt || c.created_at;
+      const timeAgo = dateStr ? new Date(dateStr).toLocaleDateString() : 'Recent';
       liveLogs.push({
         id: `c-${c.id}`,
         text: `Certificate issued to ${c.studentName || 'Learner'}`,
-        sub: `${c.courseTitle || 'Program'} · Recent`,
-        type: 'cert'
+        sub: `${c.courseTitle || 'Program'} · ${timeAgo}`,
+        type: 'cert',
+        timestamp: dateStr ? new Date(dateStr).getTime() : 0
       });
     });
 
-    return liveLogs.length > 0 ? liveLogs.slice(0, 4) : defaultActivities;
-  }, [payments, certificates]);
+    liveLogs.sort((a, b) => b.timestamp - a.timestamp);
+    return liveLogs.slice(0, 5);
+  }, [successfulPayments, certificates]);
+
 
   // Export Dashboard CSV
   const handleExportDashboardCSV = () => {
@@ -381,7 +436,7 @@ export const AdminDashboard = () => {
                 <div className="min-w-0 flex-1">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">MEMBERS</span>
                   <h4 className="font-black text-base text-slate-900 truncate">{totalMembers.toLocaleString()}</h4>
-                  <p className="text-[10px] text-emerald-600 font-semibold truncate">↑ 12.4% vs last period</p>
+                  <p className="text-[10px] text-emerald-600 font-semibold truncate">Live Active Accounts</p>
                 </div>
               </div>
 
@@ -392,8 +447,8 @@ export const AdminDashboard = () => {
                 </div>
                 <div className="min-w-0 flex-1">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">COURSES</span>
-                  <h4 className="font-black text-base text-slate-900 truncate">{courses.length || 24}</h4>
-                  <p className="text-[10px] text-emerald-600 font-semibold truncate">↑ 2 new this month</p>
+                  <h4 className="font-black text-base text-slate-900 truncate">{courses.length}</h4>
+                  <p className="text-[10px] text-emerald-600 font-semibold truncate">Published Programs</p>
                 </div>
               </div>
 
@@ -404,8 +459,8 @@ export const AdminDashboard = () => {
                 </div>
                 <div className="min-w-0 flex-1">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">GROSS REVENUE</span>
-                  <h4 className="font-black text-base text-slate-900 truncate">₹{(totalRevenue || 482000).toLocaleString()}</h4>
-                  <p className="text-[10px] text-emerald-600 font-semibold truncate">↑ 18.2% vs last period</p>
+                  <h4 className="font-black text-base text-slate-900 truncate">₹{totalRevenue.toLocaleString()}</h4>
+                  <p className="text-[10px] text-emerald-600 font-semibold truncate">Verified Receipts</p>
                 </div>
               </div>
 
@@ -417,7 +472,7 @@ export const AdminDashboard = () => {
                 <div className="min-w-0 flex-1">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">COMPLETION RATE</span>
                   <h4 className="font-black text-base text-slate-900 truncate">{overallCompletionRate}%</h4>
-                  <p className="text-[10px] text-emerald-600 font-semibold truncate">↑ 5.6% vs last period</p>
+                  <p className="text-[10px] text-emerald-600 font-semibold truncate">Course Progress Sync</p>
                 </div>
               </div>
             </div>
@@ -435,8 +490,8 @@ export const AdminDashboard = () => {
                   </span>
                   <h3 className="text-2xl font-black text-[#202124]">
                     {revenueView === 'revenue'
-                      ? `₹${(totalRevenue || 72400).toLocaleString()}`
-                      : `${(successfulPayments.length || 58).toLocaleString()} Transactions`}
+                      ? `₹${totalRevenue.toLocaleString()}`
+                      : `${successfulPayments.length.toLocaleString()} Transactions`}
                   </h3>
                 </div>
                 <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold self-start sm:self-auto border border-slate-200/60">
@@ -474,11 +529,11 @@ export const AdminDashboard = () => {
 
               <div className="flex items-center justify-between text-xs text-[#5F6368] pt-3 border-t border-slate-100">
                 <span className="font-medium text-slate-500">
-                  {revenueView === 'revenue' ? 'Apr - Sep Inflow Trend' : 'Apr - Sep Transaction Volume'}
+                  {revenueView === 'revenue' ? 'Live Inflow Trend' : 'Live Transaction Volume'}
                 </span>
                 <span className={`font-extrabold flex items-center gap-1 ${revenueView === 'revenue' ? 'text-emerald-600' : 'text-indigo-600'}`}>
                   <TrendingUp className="h-3.5 w-3.5" />
-                  {revenueView === 'revenue' ? '+18.2% Revenue Growth' : '+24.5% Volume Growth'}
+                  {revenueView === 'revenue' ? `₹${totalRevenue.toLocaleString()} Live Total` : `${successfulPayments.length} Total Processed`}
                 </span>
               </div>
             </div>
@@ -497,10 +552,10 @@ export const AdminDashboard = () => {
                 <div className="space-y-1.5">
                   <div className="flex justify-between font-bold">
                     <span className="text-[#202124]">Active Learners</span>
-                    <span className="text-[#5F6368]">{activeLearnersCount} (66%)</span>
+                    <span className="text-[#5F6368]">{activeLearnersCount} ({activePct}%)</span>
                   </div>
                   <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden border border-slate-200/50">
-                    <div className="bg-[#2563EB] h-full rounded-full w-[66%]" />
+                    <div className="bg-[#2563EB] h-full rounded-full transition-all" style={{ width: `${activePct}%` }} />
                   </div>
                 </div>
 
@@ -508,10 +563,10 @@ export const AdminDashboard = () => {
                 <div className="space-y-1.5">
                   <div className="flex justify-between font-bold">
                     <span className="text-[#202124]">Completed</span>
-                    <span className="text-[#5F6368]">{completedLearnersCount} (45%)</span>
+                    <span className="text-[#5F6368]">{completedLearnersCount} ({completedPct}%)</span>
                   </div>
                   <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden border border-slate-200/50">
-                    <div className="bg-emerald-500 h-full rounded-full w-[45%]" />
+                    <div className="bg-emerald-500 h-full rounded-full transition-all" style={{ width: `${completedPct}%` }} />
                   </div>
                 </div>
 
@@ -519,10 +574,10 @@ export const AdminDashboard = () => {
                 <div className="space-y-1.5">
                   <div className="flex justify-between font-bold">
                     <span className="text-[#202124]">Certified</span>
-                    <span className="text-[#5F6368]">{certifiedCount} (25%)</span>
+                    <span className="text-[#5F6368]">{certifiedCount} ({certifiedPct}%)</span>
                   </div>
                   <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden border border-slate-200/50">
-                    <div className="bg-amber-500 h-full rounded-full w-[25%]" />
+                    <div className="bg-amber-500 h-full rounded-full transition-all" style={{ width: `${certifiedPct}%` }} />
                   </div>
                 </div>
               </div>
@@ -663,15 +718,19 @@ export const AdminDashboard = () => {
               </div>
 
               <div className="space-y-3 text-xs">
-                {recentActivities.map((act) => (
-                  <div key={act.id} className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition-colors">
-                    <div className="w-2.5 h-2.5 rounded-full bg-[#2563EB] mt-1.5 shrink-0" />
-                    <div className="min-w-0 flex-1 space-y-0.5">
-                      <span className="font-bold text-[#202124] block truncate">{act.text}</span>
-                      <span className="text-[11px] text-[#5F6368] block">{act.sub}</span>
+                {recentActivities.length === 0 ? (
+                  <p className="text-slate-400 text-xs italic py-6 text-center">No recent activity recorded yet.</p>
+                ) : (
+                  recentActivities.map((act) => (
+                    <div key={act.id} className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition-colors">
+                      <div className="w-2.5 h-2.5 rounded-full bg-[#2563EB] mt-1.5 shrink-0" />
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <span className="font-bold text-[#202124] block truncate">{act.text}</span>
+                        <span className="text-[11px] text-[#5F6368] block">{act.sub}</span>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
 

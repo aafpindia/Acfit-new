@@ -13,32 +13,41 @@ export const usePayments = () => {
   return useQuery({
     queryKey: ['payments', 'all'],
     queryFn: async () => {
-      const map = new Map();
+      const deletedUserIds = new Set(JSON.parse(localStorage.getItem('_lms_deleted_user_ids') || '[]'));
+      const isCleanRecord = (p) => {
+        if (!p || !p.id) return false;
+        if (p.id === 'PAY-1001' || p.studentEmail === 'student@lms.com' || p.studentEmail === 'admin@lms.com') return false;
+        if (deletedUserIds.has(p.userId) || deletedUserIds.has(p.user_id)) return false;
+        return true;
+      };
 
-      // 1. Add Zustand local payments
+      // 1. Fetch Supabase DB payments if available (Primary Live Source)
+      if (isSupabaseConfigured) {
+        try {
+          const result = await fetchAllPayments();
+          if (result.success && Array.isArray(result.data)) {
+            const list = result.data.map(normalizePaymentRecord).filter(isCleanRecord);
+            return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          }
+        } catch (err) {
+          console.warn('fetchAllPayments error:', err);
+        }
+      }
+
+      // 2. Fallback to Zustand local payments, sanitized of mock/deleted data
+      const map = new Map();
       (storePayments || []).forEach((p) => {
         const norm = normalizePaymentRecord(p);
-        if (norm && norm.id) map.set(norm.id, norm);
+        if (norm && isCleanRecord(norm)) map.set(norm.id, norm);
       });
-
-      // 2. Fetch Supabase DB payments if available
-      try {
-        const result = await fetchAllPayments();
-        if (result.success && Array.isArray(result.data)) {
-          result.data.forEach((p) => {
-            const norm = normalizePaymentRecord(p);
-            if (norm && norm.id) map.set(norm.id, norm);
-          });
-        }
-      } catch (err) {
-        console.warn('fetchAllPayments error:', err);
-      }
 
       const list = Array.from(map.values());
       return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     },
-    initialData: (storePayments || []).map(normalizePaymentRecord),
-    refetchInterval: 15000,
+    initialData: (storePayments || [])
+      .map(normalizePaymentRecord)
+      .filter((p) => p && p.id !== 'PAY-1001' && p.studentEmail !== 'student@lms.com' && p.studentEmail !== 'admin@lms.com'),
+    refetchInterval: 10000,
   });
 };
 

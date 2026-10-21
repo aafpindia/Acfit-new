@@ -115,9 +115,16 @@ export const Users = () => {
     }
   }, []);
 
-  // Fetch users from Supabase profiles / local storage
+  // Fetch users strictly from Supabase profiles and active registered auth accounts
   const loadUsers = async () => {
     let baseUsers = [];
+    const deletedUserIds = new Set(JSON.parse(localStorage.getItem('_lms_deleted_user_ids') || '[]'));
+
+    // Purge legacy mock user storage keys
+    try {
+      localStorage.removeItem('_lms_mock_users');
+      localStorage.removeItem('_lms_mock_users_initialized');
+    } catch (_) {}
 
     if (isSupabaseConfigured) {
       try {
@@ -127,145 +134,52 @@ export const Users = () => {
           .order('created_at', { ascending: false });
 
         const timeoutPromise = new Promise((resolve) =>
-          setTimeout(() => resolve({ data: null, error: 'timeout' }), 1200)
+          setTimeout(() => resolve({ data: null, error: 'timeout' }), 5000)
         );
 
         const result = await Promise.race([fetchProfilesPromise, timeoutPromise]);
 
         if (result && result.data && Array.isArray(result.data) && result.data.length > 0) {
-          baseUsers = result.data.map((p) => ({
-            id: p.id,
-            fullName: p.full_name || p.email?.split('@')[0] || 'User',
-            email: p.email || 'no-email@acfitacademy.app',
-            role: p.role || 'user',
-            status: p.status || 'active',
-            createdAt: p.created_at || new Date().toISOString(),
-            avatarUrl: p.avatar_url || ''
-          }));
+          result.data.forEach((p) => {
+            if (p.id && !deletedUserIds.has(p.id) && p.status !== 'deleted') {
+              baseUsers.push({
+                id: p.id,
+                fullName: p.full_name || p.email?.split('@')[0] || 'User',
+                email: p.email || 'no-email@acfitacademy.app',
+                role: p.role || 'user',
+                status: p.status || 'active',
+                createdAt: p.created_at || new Date().toISOString(),
+                avatarUrl: p.avatar_url || ''
+              });
+            }
+          });
         }
       } catch (err) {
         console.warn('Profiles fetch warning:', err);
       }
     }
 
-    // Merge registered users from localStorage
+    // Merge registered auth users from localStorage (excluding deleted and dummy accounts)
     try {
       const registeredUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
       registeredUsers.forEach((reg) => {
-        const regEmail = (reg.email || '').toLowerCase();
-        if (regEmail && !baseUsers.some((u) => u.email.toLowerCase() === regEmail)) {
-          baseUsers.push({
-            id: reg.id || `reg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-            fullName: reg.fullName || reg.name || regEmail.split('@')[0],
-            email: reg.email,
-            role: (reg.role || 'USER').toLowerCase(),
-            status: 'active',
-            createdAt: new Date().toISOString(),
-            avatarUrl: reg.avatarUrl || ''
-          });
+        const regEmail = (reg.email || '').toLowerCase().trim();
+        const isDummy = regEmail === 'admin@lms.com' || regEmail === 'student@lms.com';
+        if (regEmail && !isDummy && !deletedUserIds.has(reg.id) && reg.status !== 'deleted') {
+          if (!baseUsers.some((u) => u.email.toLowerCase() === regEmail || u.id === reg.id)) {
+            baseUsers.push({
+              id: reg.id || `reg-${Date.now()}`,
+              fullName: reg.fullName || reg.name || regEmail.split('@')[0],
+              email: reg.email,
+              role: (reg.role || 'user').toLowerCase(),
+              status: reg.status || 'active',
+              createdAt: reg.createdAt || new Date().toISOString(),
+              avatarUrl: reg.avatarUrl || ''
+            });
+          }
         }
       });
     } catch (_) {}
-
-    // Merge mock users
-    try {
-      const mockUsers = JSON.parse(localStorage.getItem('_lms_mock_users') || '[]');
-      mockUsers.forEach((m) => {
-        const mEmail = (m.email || '').toLowerCase();
-        if (mEmail && !baseUsers.some((u) => u.email.toLowerCase() === mEmail)) {
-          baseUsers.push({
-            id: m.id,
-            fullName: m.fullName || mEmail.split('@')[0],
-            email: m.email,
-            role: (m.role || 'user').toLowerCase(),
-            status: m.status || 'active',
-            createdAt: m.createdAt || new Date().toISOString(),
-            avatarUrl: m.avatarUrl || ''
-          });
-        }
-      });
-    } catch (_) {}
-
-    // Default Fallback Mock Users if never initialized
-    const isInitialized = localStorage.getItem('_lms_mock_users_initialized');
-    if (baseUsers.length === 0 && !isInitialized) {
-      baseUsers = [
-        {
-          id: 'usr-irma-flores',
-          fullName: 'Irma Flores',
-          email: 'irma.flores@zylker.biz',
-          role: 'admin',
-          status: 'active',
-          department: 'Operations Lead',
-          createdAt: '2025-01-15T08:30:00Z',
-          avatarUrl: ''
-        },
-        {
-          id: 'usr-fatima-yilmaz',
-          fullName: 'Fatima Yilmaz',
-          email: 'fatima.yilmaz@zylker.biz',
-          role: 'user',
-          status: 'active',
-          department: 'Product Design',
-          createdAt: '2025-02-10T10:15:00Z',
-          avatarUrl: ''
-        },
-        {
-          id: 'usr-hiyoshi-nakamura',
-          fullName: 'Hiyoshi Nakamura',
-          email: 'hiyoshi.nakamura@zylker.biz',
-          role: 'user',
-          status: 'active',
-          department: 'Engineering Lead',
-          createdAt: '2025-03-01T14:20:00Z',
-          avatarUrl: ''
-        },
-        {
-          id: 'usr-indira-agrawal',
-          fullName: 'Indira Agrawal',
-          email: 'indira.agrawal@zylker.biz',
-          role: 'user',
-          status: 'active',
-          department: 'Marketing Specialist',
-          createdAt: '2025-03-12T09:45:00Z',
-          avatarUrl: ''
-        },
-        {
-          id: 'usr-jacalyn-alarie',
-          fullName: 'Jacalyn Alarie',
-          email: 'jacalyn.a@zylker.biz',
-          role: 'user',
-          status: 'active',
-          department: 'Quality Assurance',
-          createdAt: '2025-04-05T11:00:00Z',
-          avatarUrl: ''
-        },
-        {
-          id: 'usr-jasmine-frank',
-          fullName: 'Jasmine Frank',
-          email: 'jasmine.frank@zylker.biz',
-          role: 'user',
-          status: 'active',
-          department: 'Customer Support',
-          createdAt: '2025-04-18T16:30:00Z',
-          avatarUrl: ''
-        },
-        {
-          id: 'usr-john-watanabe',
-          fullName: 'John Watanabe',
-          email: 'john.watanabe@zylker.biz',
-          role: 'user',
-          status: 'active',
-          department: 'DevOps & Infrastructure',
-          createdAt: '2025-05-02T13:10:00Z',
-          avatarUrl: ''
-        }
-      ];
-      try {
-        localStorage.setItem('_lms_mock_users', JSON.stringify(baseUsers));
-        localStorage.setItem('_lms_mock_users_initialized', 'true');
-      } catch (_) {}
-    }
 
     setUsersList(baseUsers);
     setIsLoadingUsers(false);
@@ -344,8 +258,8 @@ export const Users = () => {
     }
 
     try {
-      const mockUsers = JSON.parse(localStorage.getItem('_lms_mock_users') || '[]');
-      localStorage.setItem('_lms_mock_users', JSON.stringify([newUserRecord, ...mockUsers]));
+      const registeredUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
+      localStorage.setItem('_lms_registered_users', JSON.stringify([newUserRecord, ...registeredUsers]));
     } catch (_) {}
 
     setIsSubmittingNewUser(false);
@@ -369,9 +283,9 @@ export const Users = () => {
     }
 
     try {
-      const mockUsers = JSON.parse(localStorage.getItem('_lms_mock_users') || '[]');
-      const updatedMock = mockUsers.map((u) => (u.id === userId ? { ...u, role: nextRole } : u));
-      localStorage.setItem('_lms_mock_users', JSON.stringify(updatedMock));
+      const regUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
+      const updatedReg = regUsers.map((u) => (u.id === userId ? { ...u, role: nextRole } : u));
+      localStorage.setItem('_lms_registered_users', JSON.stringify(updatedReg));
     } catch (_) {}
 
     loadUsers();
@@ -393,9 +307,9 @@ export const Users = () => {
     }
 
     try {
-      const mockUsers = JSON.parse(localStorage.getItem('_lms_mock_users') || '[]');
-      const updated = mockUsers.map((u) => (u.id === userId ? { ...u, status: nextStatus } : u));
-      localStorage.setItem('_lms_mock_users', JSON.stringify(updated));
+      const regUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
+      const updatedReg = regUsers.map((u) => (u.id === userId ? { ...u, status: nextStatus } : u));
+      localStorage.setItem('_lms_registered_users', JSON.stringify(updatedReg));
     } catch (_) {}
 
     loadUsers();
@@ -410,25 +324,29 @@ export const Users = () => {
     success(`Password reset email sent to ${selectedUser?.email || 'user'}.`);
   };
 
-  // Delete User
+  // Delete User Permanently
   const handleDeleteUser = async (userId) => {
-    if (!window.confirm(`Are you sure you want to permanently delete ${selectedUser?.fullName || 'this user'}? This action cannot be undone.`)) {
+    if (!window.confirm(`Are you sure you want to permanently delete ${selectedUser?.fullName || 'this user'}? This will also remove their enrollments and payments from live metrics.`)) {
       return;
     }
 
     if (isSupabaseConfigured) {
       try {
         await supabase.from('profiles').delete().eq('id', userId);
+        await supabase.from('enrollments').delete().eq('user_id', userId);
+        await supabase.from('payments').delete().eq('user_id', userId);
+        await supabase.from('certificates').delete().eq('user_id', userId);
+        await supabase.from('attempts').delete().eq('user_id', userId);
       } catch (err) {
-        console.warn('Supabase delete notice:', err);
+        console.warn('Supabase cascade delete notice:', err);
       }
     }
 
-    // Remove from _lms_mock_users
+    // Persist deleted user ID so deleted data never reappears
     try {
-      const mockUsers = JSON.parse(localStorage.getItem('_lms_mock_users') || '[]');
-      const updated = mockUsers.filter((u) => u.id !== userId);
-      localStorage.setItem('_lms_mock_users', JSON.stringify(updated));
+      const deletedSet = new Set(JSON.parse(localStorage.getItem('_lms_deleted_user_ids') || '[]'));
+      deletedSet.add(userId);
+      localStorage.setItem('_lms_deleted_user_ids', JSON.stringify([...deletedSet]));
     } catch (_) {}
 
     // Remove from _lms_registered_users
@@ -438,9 +356,22 @@ export const Users = () => {
       localStorage.setItem('_lms_registered_users', JSON.stringify(updatedReg));
     } catch (_) {}
 
+    // Update Zustand LMS store to remove all deleted user's records immediately
+    try {
+      useLmsStore.setState((state) => ({
+        enrollments: (state.enrollments || []).filter((e) => e.userId !== userId && e.user_id !== userId),
+        payments: (state.payments || []).filter((p) => p.userId !== userId && p.user_id !== userId),
+        certificates: (state.certificates || []).filter((c) => c.userId !== userId && c.user_id !== userId),
+        attempts: (state.attempts || []).filter((a) => a.userId !== userId && a.user_id !== userId)
+      }));
+    } catch (_) {}
+
     setSelectedUser(null);
     loadUsers();
-    success('User record deleted.');
+    try {
+      syncFromSupabase();
+    } catch (_) {}
+    success('User and associated records permanently deleted.');
   };
 
   // Save Edit User
@@ -454,9 +385,9 @@ export const Users = () => {
     }
 
     try {
-      const mockUsers = JSON.parse(localStorage.getItem('_lms_mock_users') || '[]');
-      const updated = mockUsers.map((u) => (u.id === selectedUser.id ? { ...u, fullName: editName, email: editEmail } : u));
-      localStorage.setItem('_lms_mock_users', JSON.stringify(updated));
+      const regUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
+      const updatedReg = regUsers.map((u) => (u.id === selectedUser.id ? { ...u, fullName: editName, email: editEmail } : u));
+      localStorage.setItem('_lms_registered_users', JSON.stringify(updatedReg));
     } catch (_) {}
 
     setIsEditing(false);

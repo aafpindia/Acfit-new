@@ -91,6 +91,7 @@ export const AdminLayout = () => {
 
   // Global Search logic
   useEffect(() => {
+    let active = true;
     if (!searchQuery.trim()) {
       setSearchResults({ courses: [], users: [] });
       return;
@@ -102,15 +103,32 @@ export const AdminLayout = () => {
       (c) => c.title?.toLowerCase().includes(query) || (c.category && c.category.toLowerCase().includes(query))
     );
 
-    const mockUsers = JSON.parse(localStorage.getItem('_lms_mock_users') || '[]');
-    const matchedUsers = mockUsers.filter(
-      (u) => (u.fullName && u.fullName.toLowerCase().includes(query)) || (u.email && u.email.toLowerCase().includes(query))
-    );
+    const searchLive = async () => {
+      try {
+        const { fetchUsers } = await import('../../services/userService');
+        const liveUsers = await fetchUsers();
+        if (!active) return;
+        const matchedUsers = liveUsers.filter(
+          (u) => (u.fullName && u.fullName.toLowerCase().includes(query)) || (u.email && u.email.toLowerCase().includes(query))
+        );
+        setSearchResults({
+          courses: matchedCourses.slice(0, 5),
+          users: matchedUsers.slice(0, 5)
+        });
+      } catch (_) {
+        if (active) {
+          setSearchResults({
+            courses: matchedCourses.slice(0, 5),
+            users: []
+          });
+        }
+      }
+    };
 
-    setSearchResults({
-      courses: matchedCourses.slice(0, 5),
-      users: matchedUsers.slice(0, 5)
-    });
+    searchLive();
+    return () => {
+      active = false;
+    };
   }, [searchQuery, courses]);
 
   // Click outside listener

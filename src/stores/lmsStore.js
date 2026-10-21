@@ -456,9 +456,7 @@ const defaultAnnouncements = [
   { id: 'ann-2', title: 'ACFIT Academy Live Workouts Added', body: 'Live streaming schedules have been configured. Register inside your settings page.', target: 'course-strength-101', date: '2026-07-16T15:30:00Z' }
 ];
 
-const defaultPayments = [
-  { id: 'PAY-1001', studentEmail: 'student@lms.com', studentName: 'Jane Student', courseTitle: 'HIIT Cardio & Athletic Conditioning Masterclass', amount: 29, status: 'successful', method: 'Razorpay', date: '2026-07-16T10:30:00Z' }
-];
+const defaultPayments = [];
 
 const defaultSystemSettings = {
   platformName: 'ACFIT Academy',
@@ -517,9 +515,9 @@ export const useLmsStore = create(
             (e) => e.courseId === courseId && e.userId === userId
           );
           const targetCourse = state.courses.find(c => c.id === courseId);
-          const userEmail = paymentData?.studentEmail || (userId === 'admin-id' ? 'admin@lms.com' : 'student@lms.com');
-          const userName = paymentData?.studentName || (userId === 'admin-id' ? 'Jane Instructor' : 'Jane Student');
-          const payId = paymentData?.razorpayPaymentId || `PAY-${Math.floor(10000 + Math.random() * 90000)}`;
+          const userEmail = paymentData?.studentEmail || (userId === 'admin-id' ? 'admin@gmail.com' : 'athlete@acfitacademy.app');
+          const userName = paymentData?.studentName || (userId === 'admin-id' ? 'System Administrator' : 'Student Athlete');
+          const payId = paymentData?.razorpayPaymentId || `PAY-${Date.now()}`;
 
           const now = new Date().toISOString();
           const newPayment = {
@@ -1427,6 +1425,19 @@ export const useLmsStore = create(
         }
       },
 
+      deletePayment: async (paymentId) => {
+        set((state) => ({
+          payments: (state.payments || []).filter((p) => p.id !== paymentId)
+        }));
+        if (isSupabaseConfigured) {
+          try {
+            await supabase.from('payments').delete().eq('id', paymentId);
+          } catch (e) {
+            console.warn('[lmsStore] DB deletePayment warning:', e);
+          }
+        }
+      },
+
       syncFromSupabase: async (user) => {
         if (!isSupabaseConfigured) return;
 
@@ -1482,17 +1493,13 @@ export const useLmsStore = create(
             set({ testimonials: testRes.data });
           }
 
+          const deletedUserIds = new Set(JSON.parse(localStorage.getItem('_lms_deleted_user_ids') || '[]'));
           const isAdmin = !user || (user.role && user.role.toString().toLowerCase() === 'admin');
 
           const enrollRes = isAdmin ? await fetchAllEnrollments() : await fetchUserEnrollments();
-          if (enrollRes.success && enrollRes.data) {
-            set((state) => {
-              const existing = state.enrollments || [];
-              const mergedMap = new Map();
-              existing.forEach((e) => mergedMap.set(`${e.userId}-${e.courseId}`, e));
-              (enrollRes.data || []).forEach((e) => mergedMap.set(`${e.userId}-${e.courseId}`, e));
-              return { enrollments: Array.from(mergedMap.values()) };
-            });
+          if (enrollRes.success && Array.isArray(enrollRes.data)) {
+            const cleanEnrollments = enrollRes.data.filter((e) => !deletedUserIds.has(e.userId || e.user_id));
+            set({ enrollments: cleanEnrollments });
           }
 
           const progressRes = await fetchAllProgress();
@@ -1501,46 +1508,38 @@ export const useLmsStore = create(
               const currentProgress = state.progress || {};
               const mergedProgress = { ...currentProgress };
               Object.keys(progressRes.data).forEach((uid) => {
-                mergedProgress[uid] = {
-                  ...(mergedProgress[uid] || {}),
-                  ...progressRes.data[uid]
-                };
+                if (!deletedUserIds.has(uid)) {
+                  mergedProgress[uid] = {
+                    ...(mergedProgress[uid] || {}),
+                    ...progressRes.data[uid]
+                  };
+                }
               });
               return { progress: mergedProgress };
             });
           }
 
           const attemptsRes = await fetchAllAttempts();
-          if (attemptsRes.success && attemptsRes.data) {
-            set((state) => {
-              const existing = state.attempts || [];
-              const mergedMap = new Map();
-              existing.forEach((a) => mergedMap.set(a.id, a));
-              (attemptsRes.data || []).forEach((a) => mergedMap.set(a.id, a));
-              return { attempts: Array.from(mergedMap.values()) };
-            });
+          if (attemptsRes.success && Array.isArray(attemptsRes.data)) {
+            const cleanAttempts = attemptsRes.data.filter((a) => !deletedUserIds.has(a.userId || a.user_id));
+            set({ attempts: cleanAttempts });
           }
 
           const certsRes = isAdmin ? await fetchAllCertificates() : await fetchUserCertificates();
-          if (certsRes.success && certsRes.data) {
-            set((state) => {
-              const existing = state.certificates || [];
-              const mergedMap = new Map();
-              existing.forEach((c) => mergedMap.set(c.id, c));
-              (certsRes.data || []).forEach((c) => mergedMap.set(c.id, c));
-              return { certificates: Array.from(mergedMap.values()) };
-            });
+          if (certsRes.success && Array.isArray(certsRes.data)) {
+            const cleanCerts = certsRes.data.filter((c) => !deletedUserIds.has(c.userId || c.user_id));
+            set({ certificates: cleanCerts });
           }
 
           const paymentsRes = isAdmin ? await fetchAllPayments() : await fetchUserPayments();
-          if (paymentsRes.success && paymentsRes.data) {
-            set((state) => {
-              const existing = state.payments || [];
-              const mergedMap = new Map();
-              existing.forEach((p) => mergedMap.set(p.id, p));
-              (paymentsRes.data || []).forEach((p) => mergedMap.set(p.id, p));
-              return { payments: Array.from(mergedMap.values()) };
+          if (paymentsRes.success && Array.isArray(paymentsRes.data)) {
+            const cleanPayments = paymentsRes.data.filter((p) => {
+              if (!p || !p.id) return false;
+              if (p.id === 'PAY-1001' || p.studentEmail === 'student@lms.com' || p.studentEmail === 'admin@lms.com') return false;
+              if (deletedUserIds.has(p.userId || p.user_id)) return false;
+              return true;
             });
+            set({ payments: cleanPayments });
           }
         } catch (err) {
           console.error('Error syncing Supabase data to Zustand:', err);

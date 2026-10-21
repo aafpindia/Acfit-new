@@ -76,19 +76,11 @@ const initLocalUserDatabase = () => {
     });
   }
 
-  const hasDefaultAdmin = seedUsers.some(u => u.email?.toLowerCase() === 'admin@lms.com');
-  if (!hasDefaultAdmin) {
-    seedUsers.push({
-      id: 'da896585-64ad-438f-a89e-2dc7ff520448',
-      fullName: 'Alex Admin',
-      email: 'admin@lms.com',
-      passwordHash: 'password',
-      role: 'ADMIN',
-      status: 'active',
-      createdAt: new Date().toISOString(),
-      avatarUrl: ''
-    });
-  }
+  // Filter out any legacy dummy seed users like admin@lms.com or student@lms.com
+  seedUsers = seedUsers.filter(u => {
+    const em = (u.email || '').toLowerCase();
+    return em !== 'admin@lms.com' && em !== 'student@lms.com';
+  });
 
   localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(seedUsers));
 };

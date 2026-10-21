@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { usePayments } from '../../hooks/usePayments';
 import { useToast } from '../../hooks/useToast';
+import { useLmsStore } from '../../stores/lmsStore';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   CreditCard,
   Eye,
@@ -18,14 +20,17 @@ import {
   ChevronRight,
   User as UserIcon,
   Sparkles,
-  Check
+  Check,
+  Trash2
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 
 export const Payments = () => {
   const { success, error: toastError } = useToast();
+  const queryClient = useQueryClient();
   const { data: payments = [] } = usePayments();
+  const { deletePayment } = useLmsStore();
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -59,10 +64,35 @@ export const Payments = () => {
   const totalPages = Math.ceil(filteredPayments.length / itemsPerPage) || 1;
   const paginatedPayments = filteredPayments.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-  // KPI calculations
-  const totalRevenue = useMemo(() => payments.reduce((acc, p) => acc + (parseFloat(p.amount) || 0), 0), [payments]);
-  const successfulCount = useMemo(() => payments.filter((p) => p.status === 'successful' || p.status === 'Paid').length, [payments]);
-  const avgOrderValue = useMemo(() => (payments.length > 0 ? Math.round(totalRevenue / payments.length) : 0), [payments, totalRevenue]);
+  // Live KPI calculations (strictly successful payments)
+  const successfulPayments = useMemo(
+    () => payments.filter((p) => (p.status || '').toLowerCase() === 'successful' || (p.status || '').toLowerCase() === 'paid'),
+    [payments]
+  );
+  const totalRevenue = useMemo(
+    () => successfulPayments.reduce((acc, p) => acc + (parseFloat(p.amount) || 0), 0),
+    [successfulPayments]
+  );
+  const successfulCount = successfulPayments.length;
+  const avgOrderValue = useMemo(
+    () => (successfulCount > 0 ? Math.round(totalRevenue / successfulCount) : 0),
+    [successfulCount, totalRevenue]
+  );
+
+  const handleDeletePayment = async (paymentId, studentName) => {
+    if (!window.confirm(`Are you sure you want to permanently delete transaction ${paymentId} for ${studentName || 'this user'}? This action updates live gross revenue immediately.`)) {
+      return;
+    }
+    try {
+      if (deletePayment) {
+        await deletePayment(paymentId);
+      }
+      queryClient.invalidateQueries({ queryKey: ['payments'] });
+      success('Transaction record deleted successfully.');
+    } catch (err) {
+      toastError('Failed to delete transaction.');
+    }
+  };
 
   // CSV Exporter
   const handleExportCSV = () => {
@@ -293,14 +323,24 @@ export const Payments = () => {
                     </td>
 
                     <td className="py-3.5 px-4 text-right">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedInvoice(pay)}
-                        className="px-2.5 py-1 rounded bg-blue-50 hover:bg-blue-100 text-[#2088E7] border border-blue-200 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer ml-auto"
-                      >
-                        <Eye className="h-3 w-3" />
-                        <span>Inspect Receipt</span>
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedInvoice(pay)}
+                          className="px-2.5 py-1 rounded bg-blue-50 hover:bg-blue-100 text-[#2088E7] border border-blue-200 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                        >
+                          <Eye className="h-3 w-3" />
+                          <span>Receipt</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePayment(pay.id, pay.studentName)}
+                          className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                          title="Delete transaction"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))

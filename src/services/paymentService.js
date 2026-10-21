@@ -123,3 +123,18 @@ export const fetchUserPayments = async (userEmail = null) => {
 
   return handleSuccess((data || []).map(normalizePaymentRecord));
 };
+
+/**
+ * Delete a payment record (Admin action or cascading user deletion).
+ */
+export const deletePaymentDb = async (paymentId) => {
+  if (!isSupabaseConfigured) return handleSuccess(true);
+  try {
+    const { error } = await supabase.from('payments').delete().eq('id', paymentId);
+    if (error) return handleSupabaseError(error, 'deletePaymentDb');
+    return handleSuccess(true);
+  } catch (err) {
+    return handleSupabaseError(err, 'deletePaymentDb');
+  }
+};
+

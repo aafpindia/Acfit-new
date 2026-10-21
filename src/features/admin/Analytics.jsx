@@ -53,66 +53,143 @@ export const Analytics = () => {
   };
 
   // Revenue & Monetization Metrics
-  const successfulPayments = useMemo(() => payments.filter((p) => p.status === 'successful' && isWithinDateRange(p.date || p.paidAt || p.createdAt)), [payments, dateCutoff]);
-  const grossRevenue = useMemo(() => successfulPayments.reduce((acc, p) => acc + (p.amount || 0), 0), [successfulPayments]);
+  const successfulPayments = useMemo(
+    () => payments.filter((p) => {
+      const st = (p.status || '').toLowerCase();
+      const isPaid = st === 'successful' || st === 'paid';
+      return isPaid && isWithinDateRange(p.date || p.paidAt || p.createdAt);
+    }),
+    [payments, dateCutoff]
+  );
+  const grossRevenue = useMemo(() => successfulPayments.reduce((acc, p) => acc + (parseFloat(p.amount) || 0), 0), [successfulPayments]);
 
-  const totalMembers = Math.max(12, enrollments.length);
-  const arpu = totalMembers > 0 ? Math.round((grossRevenue || 482000) / totalMembers) : 386;
-  const aov = successfulPayments.length > 0 ? Math.round((grossRevenue || 482000) / successfulPayments.length) : 1840;
-  const conversionRate = totalMembers > 0 ? Math.round((successfulPayments.length / totalMembers) * 100) : 23.6;
+  const uniqueUsersSet = useMemo(() => {
+    const s = new Set();
+    enrollments.forEach(e => {
+      const uid = e.userId || e.user_id;
+      if (uid) s.add(uid);
+    });
+    return s;
+  }, [enrollments]);
 
-  // Monthly Revenue Map
+  const totalMembers = uniqueUsersSet.size;
+  const arpu = totalMembers > 0 ? Math.round(grossRevenue / totalMembers) : 0;
+  const aov = successfulPayments.length > 0 ? Math.round(grossRevenue / successfulPayments.length) : 0;
+  const conversionRate = totalMembers > 0 ? Math.min(100, Math.round((successfulPayments.length / totalMembers) * 100)) : 0;
+
+  // Active learners count
+  const activeLearnersCount = useMemo(() => {
+    const s = new Set();
+    enrollments.forEach(e => {
+      const uid = e.userId || e.user_id;
+      const cid = e.courseId || e.course_id;
+      const up = getUserCourseProgress(uid, cid, progress);
+      if (Object.keys(up || {}).filter(k => up[k]).length > 0) s.add(uid);
+    });
+    return s.size;
+  }, [enrollments, progress]);
+
+  // Overall completion rate
+  const overallCompletionRate = useMemo(() => {
+    if (courses.length === 0 || enrollments.length === 0) return 0;
+    let totalPossible = 0;
+    let totalDone = 0;
+    courses.forEach((c) => {
+      const lessonsCount = c.modules?.flatMap((m) => m.lessons || []).length || 0;
+      if (lessonsCount === 0) return;
+      const enrolled = enrollments.filter((e) => e.courseId === c.id || e.course_id === c.id);
+      if (enrolled.length > 0) {
+        totalPossible += lessonsCount * enrolled.length;
+        enrolled.forEach((e) => {
+          const up = getUserCourseProgress(e.userId || e.user_id, c.id, progress);
+          totalDone += Object.keys(up || {}).filter((k) => up[k]).length;
+        });
+      }
+    });
+    return totalPossible > 0 ? Math.min(100, Math.round((totalDone / totalPossible) * 100)) : 0;
+  }, [courses, enrollments, progress]);
+
+  // Completed learners count
+  const completedLearnersCount = useMemo(() => {
+    const s = new Set();
+    enrollments.forEach(e => {
+      const uid = e.userId || e.user_id;
+      const cid = e.courseId || e.course_id;
+      const course = courses.find(c => c.id === cid);
+      const totalLessons = course?.modules?.flatMap(m => m.lessons || []).length || 1;
+      const up = getUserCourseProgress(uid, cid, progress);
+      const done = Object.keys(up || {}).filter(k => up[k]).length;
+      if (done >= totalLessons && totalLessons > 0) s.add(uid);
+    });
+    return s.size;
+  }, [enrollments, courses, progress]);
+
+  // Dynamic Month Labels & Values
+  const monthLabels = useMemo(() => {
+    const list = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      list.push(d.toLocaleString('default', { month: 'short' }));
+    }
+    return list;
+  }, []);
+
   const monthlyRevMap = useMemo(() => {
     return successfulPayments.reduce((acc, p) => {
-      const mon = new Date(p.date || p.enrolledAt || Date.now()).toLocaleString('default', { month: 'short' });
-      acc[mon] = (acc[mon] || 0) + (p.amount || 0);
+      const mon = new Date(p.date || p.paidAt || p.createdAt || Date.now()).toLocaleString('default', { month: 'short' });
+      acc[mon] = (acc[mon] || 0) + (parseFloat(p.amount) || 0);
       return acc;
     }, {});
   }, [successfulPayments]);
 
-  const monthLabels = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'];
-  const monthValues = monthLabels.map((m) => monthlyRevMap[m] || (m === 'Sep' ? 72400 : m === 'Aug' ? 58000 : m === 'Jul' ? 45000 : m === 'Jun' ? 32000 : m === 'May' ? 24000 : 18000));
+  const monthValues = useMemo(() => monthLabels.map((m) => monthlyRevMap[m] || 0), [monthLabels, monthlyRevMap]);
 
   // Program Enrollment Share
   const enrollmentByProgram = useMemo(() => {
-    return courses
-      .map((c, idx) => ({
-        label: c.title.length > 16 ? c.title.substring(0, 16) + '…' : c.title,
-        fullTitle: c.title,
-        value: enrollments.filter((e) => e.courseId === c.id || e.course_id === c.id).length || Math.floor(Math.random() * 200) + 50,
-        color: CHART_COLORS[idx % CHART_COLORS.length]
-      }));
+    return courses.map((c, idx) => ({
+      label: c.title.length > 16 ? c.title.substring(0, 16) + '…' : c.title,
+      fullTitle: c.title,
+      value: enrollments.filter((e) => e.courseId === c.id || e.course_id === c.id).length,
+      color: CHART_COLORS[idx % CHART_COLORS.length]
+    }));
   }, [courses, enrollments]);
 
   // Assessment Score Averages
   const courseScores = useMemo(() => {
     return courses.map((c) => {
-      const ca = attempts.filter((a) => a.courseId === c.id);
-      const avg = ca.length > 0 ? Math.round(ca.reduce((s, a) => s + (a.score || 0), 0) / ca.length) : Math.floor(Math.random() * 15) + 75;
+      const ca = attempts.filter((a) => a.courseId === c.id || a.course_id === c.id);
+      const avg = ca.length > 0 ? Math.round(ca.reduce((s, a) => s + (parseFloat(a.score) || 0), 0) / ca.length) : 0;
       return { label: c.title.length > 12 ? c.title.substring(0, 12) + '…' : c.title, value: avg };
     });
   }, [courses, attempts]);
 
   // Learning Funnel Data
   const learningFunnelData = useMemo(() => {
-    const enrolled = totalMembers || 1248;
-    const started = Math.round(enrolled * 0.91);
-    const assessment = Math.round(enrolled * 0.71);
-    const completed = Math.round(enrolled * 0.51);
-    const certified = Math.round(enrolled * 0.45);
+    const enrolled = totalMembers;
+    const started = activeLearnersCount;
+    const attemptUsers = new Set(attempts.map(a => a.userId || a.user_id)).size;
+    const completed = completedLearnersCount;
+    const certified = certificates.length;
+
+    const getPct = (cnt) => (enrolled > 0 ? `${Math.min(100, Math.round((cnt / enrolled) * 100))}%` : '0%');
 
     return [
-      { stage: 'Enrolled', count: enrolled, pct: '100%' },
-      { stage: 'Started Learning', count: started, pct: '91%' },
-      { stage: 'Assessment Attempt', count: assessment, pct: '71%' },
-      { stage: 'Completed', count: completed, pct: '51%' },
-      { stage: 'Certified', count: certified, pct: '45%' }
+      { stage: 'Enrolled', count: enrolled, pct: enrolled > 0 ? '100%' : '0%' },
+      { stage: 'Started Learning', count: started, pct: getPct(started) },
+      { stage: 'Assessment Attempt', count: attemptUsers, pct: getPct(attemptUsers) },
+      { stage: 'Completed', count: completed, pct: getPct(completed) },
+      { stage: 'Certified', count: certified, pct: getPct(certified) }
     ];
-  }, [totalMembers]);
+  }, [totalMembers, activeLearnersCount, attempts, completedLearnersCount, certificates]);
 
   const passRate = attempts.length > 0
     ? Math.round((attempts.filter((a) => a.passed).length / attempts.length) * 100)
-    : 82.1;
+    : 0;
+
+  const avgAttemptScore = attempts.length > 0
+    ? Math.round(attempts.reduce((s, a) => s + (parseFloat(a.score) || 0), 0) / attempts.length)
+    : 0;
 
   return (
     <div className="space-y-6 font-sans pb-16 max-w-7xl mx-auto">
@@ -170,11 +247,11 @@ export const Analytics = () => {
             </div>
             <div className="bg-white border border-[#E4E7EB] rounded-2xl p-5 shadow-2xs">
               <span className="text-xs font-semibold text-[#5F6368]">Revenue</span>
-              <div className="text-2xl font-bold text-[#202124] mt-1">₹{(grossRevenue || 482000).toLocaleString()}</div>
+              <div className="text-2xl font-bold text-[#202124] mt-1">₹{grossRevenue.toLocaleString()}</div>
             </div>
             <div className="bg-white border border-[#E4E7EB] rounded-2xl p-5 shadow-2xs">
               <span className="text-xs font-semibold text-[#5F6368]">Completion Rate</span>
-              <div className="text-2xl font-bold text-[#202124] mt-1">68.4%</div>
+              <div className="text-2xl font-bold text-[#202124] mt-1">{overallCompletionRate}%</div>
             </div>
             <div className="bg-white border border-[#E4E7EB] rounded-2xl p-5 shadow-2xs">
               <span className="text-xs font-semibold text-[#5F6368]">Pass Rate</span>
@@ -187,7 +264,13 @@ export const Analytics = () => {
               <h3 className="text-sm font-bold text-[#202124]">Learner Growth</h3>
               <LineAreaChart
                 color="#2563EB"
-                data={monthLabels.map((m, idx) => ({ label: m, value: (idx + 1) * 220 }))}
+                data={monthLabels.map((m) => {
+                  const mCount = enrollments.filter(e => {
+                    const d = new Date(e.enrolledAt || e.created_at || Date.now());
+                    return d.toLocaleString('default', { month: 'short' }) === m;
+                  }).length;
+                  return { label: m, value: mCount };
+                })}
                 height={160}
               />
             </div>
@@ -210,16 +293,16 @@ export const Analytics = () => {
               <div className="text-2xl font-bold text-[#202124] mt-1">{totalMembers}</div>
             </div>
             <div className="bg-white border border-[#E4E7EB] rounded-2xl p-5 shadow-2xs">
-              <span className="text-xs font-semibold text-[#5F6368]">New Learners</span>
-              <div className="text-2xl font-bold text-emerald-600 mt-1">+142</div>
-            </div>
-            <div className="bg-white border border-[#E4E7EB] rounded-2xl p-5 shadow-2xs">
               <span className="text-xs font-semibold text-[#5F6368]">Active Learners</span>
-              <div className="text-2xl font-bold text-[#2563EB] mt-1">824</div>
+              <div className="text-2xl font-bold text-[#2563EB] mt-1">{activeLearnersCount}</div>
             </div>
             <div className="bg-white border border-[#E4E7EB] rounded-2xl p-5 shadow-2xs">
-              <span className="text-xs font-semibold text-[#5F6368]">Returning Rate</span>
-              <div className="text-2xl font-bold text-[#202124] mt-1">78%</div>
+              <span className="text-xs font-semibold text-[#5F6368]">Completed</span>
+              <div className="text-2xl font-bold text-emerald-600 mt-1">{completedLearnersCount}</div>
+            </div>
+            <div className="bg-white border border-[#E4E7EB] rounded-2xl p-5 shadow-2xs">
+              <span className="text-xs font-semibold text-[#5F6368]">Completion Rate</span>
+              <div className="text-2xl font-bold text-[#202124] mt-1">{overallCompletionRate}%</div>
             </div>
           </div>
 
@@ -241,10 +324,10 @@ export const Analytics = () => {
                 <div key={idx} className="space-y-1 text-xs">
                   <div className="flex justify-between font-semibold">
                     <span className="text-[#202124]">{item.fullTitle || item.label}</span>
-                    <span className="text-[#5F6368]">{Math.floor(Math.random() * 20) + 70}%</span>
+                    <span className="text-[#5F6368]">{overallCompletionRate}%</span>
                   </div>
                   <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                    <div className="bg-[#2563EB] h-full rounded-full" style={{ width: `${Math.floor(Math.random() * 20) + 70}%` }} />
+                    <div className="bg-[#2563EB] h-full rounded-full transition-all" style={{ width: `${overallCompletionRate}%` }} />
                   </div>
                 </div>
               ))}
@@ -257,7 +340,7 @@ export const Analytics = () => {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white border border-[#E4E7EB] rounded-2xl p-5 shadow-2xs">
               <span className="text-xs font-semibold text-[#5F6368]">Average Score</span>
-              <div className="text-2xl font-bold text-[#2563EB] mt-1">78.4%</div>
+              <div className="text-2xl font-bold text-[#2563EB] mt-1">{avgAttemptScore}%</div>
             </div>
             <div className="bg-white border border-[#E4E7EB] rounded-2xl p-5 shadow-2xs">
               <span className="text-xs font-semibold text-[#5F6368]">Pass Rate</span>
@@ -265,7 +348,7 @@ export const Analytics = () => {
             </div>
             <div className="bg-white border border-[#E4E7EB] rounded-2xl p-5 shadow-2xs">
               <span className="text-xs font-semibold text-[#5F6368]">Total Attempts</span>
-              <div className="text-2xl font-bold text-[#202124] mt-1">3,421</div>
+              <div className="text-2xl font-bold text-[#202124] mt-1">{attempts.length}</div>
             </div>
           </div>
 
@@ -280,7 +363,7 @@ export const Analytics = () => {
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div className="bg-white border border-[#E4E7EB] rounded-2xl p-5 shadow-2xs">
               <span className="text-xs font-semibold text-[#5F6368]">Gross Revenue</span>
-              <div className="text-2xl font-bold text-[#202124] mt-1">₹{(grossRevenue || 482000).toLocaleString()}</div>
+              <div className="text-2xl font-bold text-[#202124] mt-1">₹{grossRevenue.toLocaleString()}</div>
             </div>
             <div className="bg-white border border-[#E4E7EB] rounded-2xl p-5 shadow-2xs">
               <span className="text-xs font-semibold text-[#5F6368]">ARPU (Avg Rev / User)</span>
@@ -295,6 +378,7 @@ export const Analytics = () => {
               <div className="text-2xl font-bold text-emerald-600 mt-1">{conversionRate}%</div>
             </div>
           </div>
+
 
           <div className="bg-white border border-[#E4E7EB] rounded-2xl p-6 shadow-2xs space-y-4">
             <h3 className="text-sm font-bold text-[#202124]">Revenue Trend Over Time</h3>

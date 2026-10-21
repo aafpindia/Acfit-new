@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useLmsStore } from '../../stores/lmsStore';
 import { useToast } from '../../hooks/useToast';
+import { fetchUsers } from '../../services/userService';
 import { FileSpreadsheet, Download, RefreshCw, BarChart2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '../../components/ui/table';
@@ -17,12 +18,12 @@ export const Reports = () => {
   const [reportType, setReportType] = useState('users');
   const [reportData, setReportData] = useState([]);
 
-  const handleGenerateReport = () => {
+  const handleGenerateReport = async () => {
     if (reportType === 'users') {
-      const mockUsers = JSON.parse(localStorage.getItem('_lms_mock_users') || '[]');
-      const formatted = mockUsers.map((u) => {
-        const enrols = enrollments.filter(e => e.userId === u.id).length;
-        const certs = certificates.filter(c => c.userId === u.id).length;
+      const liveUsers = await fetchUsers();
+      const formatted = liveUsers.map((u) => {
+        const enrols = enrollments.filter(e => e.userId === u.id || e.user_id === u.id).length;
+        const certs = certificates.filter(c => c.userId === u.id || c.user_id === u.id).length;
         return {
           id: u.id,
           name: u.fullName,
