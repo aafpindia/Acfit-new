@@ -89,7 +89,7 @@ export const ProgramStudioModal = ({
   const { courses, categories: storeCategories, createCourse, updateCourse, syncFromSupabase, enrollments } = useLmsStore();
 
   // Navigation Tabs matching Zoho Learn subheader
-  const [activeTab, setActiveTab] = useState(initialTab || (initialStep === 2 ? 'MODULE' : 'OVERVIEW')); // 'OVERVIEW' | 'MODULE' | 'MEMBERS' | 'NOTES'
+  const [activeTab, setActiveTab] = useState(initialTab || (initialStep === 2 ? 'MODULE' : 'OVERVIEW')); // 'OVERVIEW' | 'MODULE' | 'FINAL_EXAM'
   const [isPreviewPlayerOpen, setIsPreviewPlayerOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -129,35 +129,6 @@ export const ProgramStudioModal = ({
     success(`Category "${catName}" added!`);
   };
 
-  // Notes State
-  const [notesList, setNotesList] = useState([]);
-  const [isAddingNote, setIsAddingNote] = useState(false);
-  const [noteForm, setNoteForm] = useState({ title: '', content: '' });
-
-  const handleSaveNote = () => {
-    if (!noteForm.title.trim()) {
-      error('Please enter a note title.');
-      return;
-    }
-    const newNote = {
-      id: `note-${Date.now()}`,
-      title: noteForm.title.trim(),
-      content: noteForm.content.trim(),
-      createdAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-    };
-    setNotesList((prev) => [newNote, ...prev]);
-    setFormData((prev) => ({ ...prev, notes: [newNote, ...(prev.notes || [])] }));
-    setNoteForm({ title: '', content: '' });
-    setIsAddingNote(false);
-    success('Note created successfully!');
-  };
-
-  const handleDeleteNote = (noteId) => {
-    setNotesList((prev) => prev.filter((n) => n.id !== noteId));
-    setFormData((prev) => ({ ...prev, notes: (prev.notes || []).filter((n) => n.id !== noteId) }));
-    success('Note deleted.');
-  };
-
   // Form State
   const existingCourse = useMemo(() => {
     return courses.find((c) => c.id === courseId) || null;
@@ -186,7 +157,6 @@ export const ProgramStudioModal = ({
   useEffect(() => {
     if (isOpen) {
       if (existingCourse) {
-        setNotesList(existingCourse.notes || []);
         const loadedExam = existingCourse.finalExam || existingCourse.finalAssessment || {
           id: `fe-${existingCourse.id || Date.now()}`,
           title: '',
@@ -348,7 +318,6 @@ export const ProgramStudioModal = ({
       passingPercentage: '',
       timerMinutes: '',
       feedbackText: '',
-      notes: '',
       questions: contentTypeId === 'quiz' ? [
         {
           id: `q-${Date.now()}`,
@@ -410,7 +379,6 @@ export const ProgramStudioModal = ({
       passingPercentage: item?.passingPercentage !== undefined ? item.passingPercentage : (targetLesson?.passingPercentage !== undefined ? targetLesson.passingPercentage : ''),
       timerMinutes: item?.timerMinutes !== undefined ? item.timerMinutes : (targetLesson?.timerMinutes !== undefined ? targetLesson.timerMinutes : ''),
       feedbackText: item?.feedbackText || targetLesson?.feedbackText || '',
-      notes: targetLesson?.notes || item?.notes || '',
       questions: normalizedQuestions
     });
   };
@@ -714,7 +682,6 @@ export const ProgramStudioModal = ({
       passingPercentage: contentFormData.passingPercentage !== '' ? Number(contentFormData.passingPercentage) : 70,
       timerMinutes: contentFormData.timerMinutes !== '' ? Number(contentFormData.timerMinutes) : 10,
       feedbackText: contentFormData.feedbackText || '',
-      notes: contentFormData.notes || '',
       questions: formattedQuestions
     };
 
@@ -745,7 +712,6 @@ export const ProgramStudioModal = ({
                   body: contentFormData.body || l.body || '',
                   passingPercentage: contentFormData.passingPercentage,
                   timerMinutes: contentFormData.timerMinutes,
-                  notes: contentFormData.notes || '',
                   questions: formattedQuestions,
                   assessment: constructedAssessment,
                   items: [{
@@ -799,7 +765,6 @@ export const ProgramStudioModal = ({
 
       const updatedPayload = {
         ...formData,
-        notes: notesList,
         published: publishState,
         finalExam: finalExamObj,
         finalAssessment: finalExamObj
@@ -921,8 +886,7 @@ export const ProgramStudioModal = ({
           {[
             { id: 'OVERVIEW', label: 'OVERVIEW', icon: BookOpen },
             { id: 'MODULE', label: 'MODULE', icon: Layers },
-            { id: 'FINAL_EXAM', label: 'FINAL EXAM', icon: Award },
-            { id: 'NOTES', label: 'NOTES', icon: FileText }
+            { id: 'FINAL_EXAM', label: 'FINAL EXAM', icon: Award }
           ].map((tab) => {
             const isActive = activeTab === tab.id;
             const Icon = tab.icon;
@@ -951,16 +915,6 @@ export const ProgramStudioModal = ({
           >
             <Plus className="h-4 w-4 text-white" />
             <span>Add Module</span>
-          </button>
-        )}
-
-        {activeTab === 'NOTES' && (
-          <button
-            onClick={() => setIsAddingNote(true)}
-            className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-semibold px-4 py-1.5 rounded-md flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer shrink-0"
-          >
-            <Plus className="h-4 w-4 text-white" />
-            <span>Add Note</span>
           </button>
         )}
       </div>
@@ -1686,115 +1640,7 @@ export const ProgramStudioModal = ({
 
 
 
-          {/* ─── NOTES TAB ─────────────────────────────────────────────── */}
-          {activeTab === 'NOTES' && (
-            <div className="space-y-6">
-              {/* Top Banner / Add Note trigger */}
-              <div className="bg-white rounded-xl border border-[#E4E7EB] p-6 shadow-2xs flex items-center justify-between">
-                <div>
-                  <h2 className="text-base font-bold text-[#202124]">Instructor & Course Notes</h2>
-                  <p className="text-xs text-[#5F6368]">
-                    Internal notes, teaching guidelines, and curriculum planning remarks for this course.
-                  </p>
-                </div>
-                {!isAddingNote && (
-                  <Button
-                    onClick={() => setIsAddingNote(true)}
-                    className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-semibold px-4 py-2 gap-1.5 rounded-md shadow-xs cursor-pointer shrink-0"
-                  >
-                    <Plus className="h-4 w-4" /> Add Note
-                  </Button>
-                )}
-              </div>
 
-              {/* Add Note Input Card */}
-              {isAddingNote && (
-                <div className="bg-white rounded-xl border border-[#2563EB]/30 p-6 shadow-md space-y-4 animate-in fade-in duration-200">
-                  <div className="flex items-center justify-between border-b border-[#E4E7EB] pb-3">
-                    <h3 className="font-bold text-sm text-[#202124] flex items-center gap-2">
-                      <FileText className="h-4 w-4 text-[#2563EB]" /> Create New Course Note
-                    </h3>
-                    <button onClick={() => setIsAddingNote(false)} className="text-slate-400 hover:text-[#202124]">
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-[#202124]">Note Title *</label>
-                    <Input
-                      placeholder="e.g. Module 1 Teaching Guidelines"
-                      value={noteForm.title}
-                      onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })}
-                      className="h-9 text-xs border-[#E4E7EB]"
-                      autoFocus
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-[#202124]">Note Content</label>
-                    <Textarea
-                      rows={4}
-                      placeholder="Write your note, instructions, or teaching details..."
-                      value={noteForm.content}
-                      onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })}
-                      className="text-xs border-[#E4E7EB] font-sans"
-                    />
-                  </div>
-
-                  <div className="flex justify-end gap-2.5 pt-2">
-                    <Button variant="outline" onClick={() => setIsAddingNote(false)} className="text-xs h-8 px-4">
-                      Cancel
-                    </Button>
-                    <Button onClick={handleSaveNote} className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs h-8 px-5 font-semibold">
-                      Save Note
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {/* Notes List */}
-              {notesList.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {notesList.map((note) => (
-                    <div key={note.id} className="bg-white rounded-xl border border-[#E4E7EB] p-5 shadow-2xs space-y-3 relative group">
-                      <div className="flex items-start justify-between gap-3 border-b border-[#E4E7EB] pb-2.5">
-                        <div className="space-y-0.5">
-                          <h4 className="font-bold text-sm text-[#202124]">{note.title}</h4>
-                          <span className="text-[10px] text-[#8A8F98]">{note.createdAt}</span>
-                        </div>
-                        <button
-                          onClick={() => handleDeleteNote(note.id)}
-                          className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors cursor-pointer"
-                          title="Delete note"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                      <p className="text-xs text-[#5F6368] leading-relaxed whitespace-pre-wrap font-sans">
-                        {note.content || 'No details provided.'}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                !isAddingNote && (
-                  <div className="bg-white rounded-xl border border-dashed border-[#E4E7EB] p-12 text-center space-y-3">
-                    <FileText className="h-10 w-10 text-slate-300 mx-auto" />
-                    <h4 className="font-bold text-sm text-[#202124]">No notes added yet</h4>
-                    <p className="text-xs text-[#5F6368] max-w-sm mx-auto">
-                      Create notes to store teaching strategy, instructor guidelines, or internal course announcements.
-                    </p>
-                    <Button
-                      onClick={() => setIsAddingNote(true)}
-                      className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-semibold px-4 py-2 gap-1.5 rounded-md shadow-xs cursor-pointer"
-                    >
-                      <Plus className="h-4 w-4" /> Add Note
-                    </Button>
-                  </div>
-                )
-              )}
-            </div>
-          )}
 
         </div>
       </div>
@@ -2182,61 +2028,7 @@ export const ProgramStudioModal = ({
                 </div>
               )}
 
-              {/* 📝 LESSON NOTES & INSTRUCTOR RESOURCES (FETCH FROM COURSE NOTES) */}
-              <div className="space-y-3 pt-6 border-t border-[#E4E7EB]">
-                <div className="flex items-center justify-between">
-                  <label className="font-bold text-xs text-[#2563EB] uppercase tracking-wide flex items-center gap-1.5">
-                    <FileText className="h-4 w-4 text-[#2563EB]" />
-                    <span>Lesson Notes & Teaching Resources</span>
-                  </label>
-                  {notesList && notesList.length > 0 && (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button
-                          type="button"
-                          className="text-[11px] font-bold text-[#2563EB] bg-[#EFF6FF] hover:bg-[#E5DFFF] px-3 py-1 rounded-md flex items-center gap-1.5 cursor-pointer transition-colors"
-                        >
-                          <Download className="h-3.5 w-3.5" />
-                          <span>Fetch from Course Notes ({notesList.length})</span>
-                          <ChevronDown className="h-3 w-3" />
-                        </button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-72 p-1 font-sans text-xs">
-                        {notesList.map((n) => (
-                          <DropdownMenuItem
-                            key={n.id}
-                            onClick={() => {
-                              const existing = contentFormData.notes ? contentFormData.notes + '\n\n' : '';
-                              setContentFormData({
-                                ...contentFormData,
-                                notes: existing + `📌 ${n.title}\n${n.content}`
-                              });
-                              success(`Fetched note "${n.title}" into lesson!`);
-                            }}
-                            className="cursor-pointer p-2.5 hover:bg-slate-50 rounded-md"
-                          >
-                            <div className="space-y-0.5 min-w-0 flex-1">
-                              <span className="font-bold text-[#202124] block truncate">{n.title}</span>
-                              <span className="text-[10px] text-slate-500 block truncate">{n.content || 'No text content'}</span>
-                            </div>
-                          </DropdownMenuItem>
-                        ))}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  )}
-                </div>
 
-                <Textarea
-                  rows={4}
-                  placeholder="Type or fetch lesson reference notes, key takeaways, instructor remarks, or resource links..."
-                  value={contentFormData.notes || ''}
-                  onChange={(e) => setContentFormData({ ...contentFormData, notes: e.target.value })}
-                  className="text-xs border-[#E4E7EB] font-sans leading-relaxed"
-                />
-                <span className="text-[11px] text-slate-500 block">
-                  Reference notes attached here will be fetched and made available to students in the lesson player resources panel.
-                </span>
-              </div>
 
               <div className="flex justify-end gap-3 pt-4 border-t border-[#E4E7EB]">
                 <Button variant="outline" onClick={() => setEditingContentItem(null)} className="text-xs h-9 px-4 cursor-pointer">
