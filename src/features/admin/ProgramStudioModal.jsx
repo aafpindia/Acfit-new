@@ -170,21 +170,14 @@ export const ProgramStudioModal = ({
     instructor: '',
     price: '',
     published: false,
-    difficulty: 'Beginner',
+    difficulty: '',
     thumbnail: '',
     modules: [], // Starts EMPTY for new courses!
     finalExam: {
-      title: 'Final Certification Exam',
-      passingPercentage: 70,
-      timerSeconds: 600,
-      questions: [
-        {
-          id: 'fe-q1',
-          text: 'What is the primary concept of modular course development?',
-          options: ['Reusability and structured progression', 'Increasing file size', 'Blocking execution', 'None of the above'],
-          correctIndex: 0
-        }
-      ]
+      title: '',
+      passingPercentage: '',
+      timerSeconds: '',
+      questions: []
     }
   });
 
@@ -195,17 +188,10 @@ export const ProgramStudioModal = ({
         setNotesList(existingCourse.notes || []);
         const loadedExam = existingCourse.finalExam || existingCourse.finalAssessment || {
           id: `fe-${existingCourse.id || Date.now()}`,
-          title: 'Final Certification Exam',
-          passingPercentage: 70,
-          timerSeconds: 600,
-          questions: [
-            {
-              id: 'fe-q1',
-              text: 'What is the primary concept of modular course development?',
-              options: ['Reusability and structured progression', 'Increasing file size', 'Blocking execution', 'None of the above'],
-              correctIndex: 0
-            }
-          ]
+          title: '',
+          passingPercentage: '',
+          timerSeconds: '',
+          questions: []
         };
 
         setFormData({
@@ -216,27 +202,20 @@ export const ProgramStudioModal = ({
           instructor: existingCourse.instructor || '',
           price: existingCourse.price !== undefined ? existingCourse.price : '',
           published: Boolean(existingCourse.published),
-          difficulty: existingCourse.difficulty || 'Beginner',
+          difficulty: existingCourse.difficulty || '',
           thumbnail: existingCourse.thumbnail || '',
           modules: existingCourse.modules || [],
           finalExam: loadedExam,
           finalAssessment: loadedExam
         });
       } else {
-        // EMPTY START FOR NEW COURSE CREATION
+        // EMPTY START FOR NEW COURSE CREATION - all fields empty so only placeholders show
         const defaultExam = {
           id: `fe-${Date.now()}`,
-          title: 'Final Certification Exam',
-          passingPercentage: 70,
-          timerSeconds: 600,
-          questions: [
-            {
-              id: 'fe-q1',
-              text: 'What is the primary concept of modular course development?',
-              options: ['Reusability and structured progression', 'Increasing file size', 'Blocking execution', 'None of the above'],
-              correctIndex: 0
-            }
-          ]
+          title: '',
+          passingPercentage: '',
+          timerSeconds: '',
+          questions: []
         };
 
         setFormData({
@@ -247,7 +226,7 @@ export const ProgramStudioModal = ({
           instructor: '',
           price: '',
           published: false,
-          difficulty: 'Beginner',
+          difficulty: '',
           thumbnail: '',
           modules: [],
           finalExam: defaultExam,
@@ -360,20 +339,21 @@ export const ProgramStudioModal = ({
       itemId: newLesson.items[0].id
     });
     setContentFormData({
-      title: newLesson.title,
+      title: '',
       body: '',
       videoUrl: '',
       bunnyVideoId: '',
       fileUrl: '',
-      passingPercentage: 70,
-      timerMinutes: 10,
+      passingPercentage: '',
+      timerMinutes: '',
       feedbackText: '',
+      notes: '',
       questions: contentTypeId === 'quiz' ? [
         {
           id: `q-${Date.now()}`,
           format: 'single-choice',
-          text: 'What is the primary topic of this lesson?',
-          options: ['Option A', 'Option B', 'Option C', 'Option D'],
+          text: '',
+          options: ['', '', '', ''],
           correctIndex: 0,
           correctAnswerText: '',
           modelSolution: ''
@@ -389,30 +369,48 @@ export const ProgramStudioModal = ({
 
     setEditingContentItem({
       isNew: !item,
-      type: targetLesson?.type || 'video',
+      type: targetLesson?.type || item?.type || 'video',
       moduleId: moduleId,
       lessonId: lessonId,
       itemId: item?.id
     });
 
-    setContentFormData({
-      title: targetLesson?.title || item?.title || 'Lesson Title',
-      body: item?.body || '',
-      videoUrl: item?.videoUrl || '',
-      bunnyVideoId: item?.bunnyVideoId || '',
-      fileUrl: item?.fileUrl || '',
-      passingPercentage: item?.passingPercentage || 70,
-      timerMinutes: item?.timerMinutes || 10,
-      feedbackText: item?.feedbackText || '',
-      questions: item?.questions || [
-        {
-          id: `q-${Date.now()}`,
-          format: 'single-choice',
-          text: 'Sample Quiz Question',
-          options: ['Choice 1', 'Choice 2', 'Choice 3', 'Choice 4'],
-          correctIndex: 0
+    const rawQuestions = item?.questions || targetLesson?.assessment?.questions || targetLesson?.questions || [];
+    const normalizedQuestions = (rawQuestions || []).map((q, idx) => {
+      const opts = (q.options || []).map((o) => {
+        if (typeof o === 'object' && o !== null) {
+          return o.text !== undefined && o.text !== null ? String(o.text) : '';
         }
-      ]
+        return String(o ?? '');
+      });
+      let correctIdx = q.correctIndex;
+      if (correctIdx === undefined && Array.isArray(q.options)) {
+        const found = q.options.findIndex(o => typeof o === 'object' && o?.isCorrect);
+        if (found !== -1) correctIdx = found;
+      }
+      return {
+        id: q.id || `q-${idx}`,
+        format: q.format || (q.type === 'multi-mcq' ? 'multiple-choice' : (q.type === 'fill-in-blank' ? 'fill-in-blank' : (q.type === 'descriptive' ? 'descriptive' : 'single-choice'))),
+        text: q.text || q.question || '',
+        question: q.text || q.question || '',
+        options: opts.length > 0 ? opts : ['', '', '', ''],
+        correctIndex: correctIdx !== undefined ? correctIdx : 0,
+        correctAnswerText: q.correctAnswerText || '',
+        modelSolution: q.modelSolution || q.explanation || ''
+      };
+    });
+
+    setContentFormData({
+      title: targetLesson?.title || item?.title || '',
+      body: item?.body || targetLesson?.body || '',
+      videoUrl: item?.videoUrl || targetLesson?.videoUrl || '',
+      bunnyVideoId: item?.bunnyVideoId || targetLesson?.bunnyVideoId || '',
+      fileUrl: item?.fileUrl || targetLesson?.fileUrl || '',
+      passingPercentage: item?.passingPercentage !== undefined ? item.passingPercentage : (targetLesson?.passingPercentage !== undefined ? targetLesson.passingPercentage : ''),
+      timerMinutes: item?.timerMinutes !== undefined ? item.timerMinutes : (targetLesson?.timerMinutes !== undefined ? targetLesson.timerMinutes : ''),
+      feedbackText: item?.feedbackText || targetLesson?.feedbackText || '',
+      notes: targetLesson?.notes || item?.notes || '',
+      questions: normalizedQuestions
     });
   };
 
@@ -554,7 +552,12 @@ export const ProgramStudioModal = ({
       questions: (prev.questions || []).map((q, idx) => {
         if (idx !== qIdx) return q;
         const updated = [...(q.options || [])];
-        updated[oIdx] = text;
+        const existing = updated[oIdx];
+        if (typeof existing === 'object' && existing !== null) {
+          updated[oIdx] = { ...existing, text };
+        } else {
+          updated[oIdx] = text;
+        }
         return { ...q, options: updated };
       })
     }));
@@ -602,8 +605,8 @@ export const ProgramStudioModal = ({
         {
           id: `q-${Date.now()}`,
           format: 'single-choice',
-          text: 'New Question Prompt',
-          options: ['Option A', 'Option B', 'Option C', 'Option D'],
+          text: '',
+          options: ['', '', '', ''],
           correctIndex: 0,
           correctAnswerText: '',
           modelSolution: ''
@@ -628,7 +631,7 @@ export const ProgramStudioModal = ({
         if (idx !== qIdx) return q;
         const opts = q.options || [];
         if (opts.length >= 6) return q;
-        return { ...q, options: [...opts, `Option ${opts.length + 1}`] };
+        return { ...q, options: [...opts, ''] };
       })
     }));
   };
@@ -663,28 +666,45 @@ export const ProgramStudioModal = ({
   const handleSaveContentItem = () => {
     if (!editingContentItem) return;
 
-    const formattedQuestions = (contentFormData.questions || []).map((q, idx) => ({
-      id: q.id || `q-${Date.now()}-${idx}`,
-      question: q.text || q.question || 'Question',
-      text: q.text || q.question || 'Question',
-      options: (q.options || []).map((opt, oIdx) => ({
-        text: typeof opt === 'string' ? opt : opt.text || `Option ${oIdx + 1}`,
-        isCorrect: typeof opt === 'object' ? Boolean(opt.isCorrect) : (oIdx === (q.correctIndex || 0))
-      })),
-      explanation: q.modelSolution || q.explanation || q.feedbackText || ''
-    }));
+    const formattedQuestions = (contentFormData.questions || []).map((q, idx) => {
+      const qFormat = q.format || 'single-choice';
+      const isMulti = qFormat === 'multiple-choice';
+      const correctList = Array.isArray(q.correctIndex) ? q.correctIndex : [q.correctIndex ?? 0];
+
+      return {
+        id: q.id || `q-${Date.now()}-${idx}`,
+        question: q.text || q.question || 'Question',
+        text: q.text || q.question || 'Question',
+        format: qFormat,
+        type: qFormat === 'multiple-choice' ? 'multi-mcq' : (qFormat === 'fill-in-blank' ? 'fill-in-blank' : (qFormat === 'descriptive' ? 'descriptive' : 'mcq')),
+        options: (q.options || []).map((opt, oIdx) => {
+          const optText = typeof opt === 'object' && opt !== null ? (opt.text ?? '') : String(opt ?? '');
+          const isCorrect = isMulti
+            ? correctList.includes(oIdx)
+            : (q.correctIndex !== undefined ? q.correctIndex === oIdx : (typeof opt === 'object' ? Boolean(opt.isCorrect) : oIdx === 0));
+          return {
+            text: optText,
+            isCorrect
+          };
+        }),
+        correctAnswerText: q.correctAnswerText || '',
+        modelSolution: q.modelSolution || '',
+        explanation: q.modelSolution || q.explanation || q.feedbackText || ''
+      };
+    });
 
     const newItem = {
       id: editingContentItem.itemId || `ci-${Date.now()}`,
       type: editingContentItem.type,
-      title: contentFormData.title || 'Untitled Content',
+      title: contentFormData.title || 'Untitled Lesson',
       body: contentFormData.body || '',
       videoUrl: contentFormData.videoUrl || '',
       bunnyVideoId: contentFormData.bunnyVideoId || '',
       fileUrl: contentFormData.fileUrl || '',
-      passingPercentage: contentFormData.passingPercentage || 70,
-      timerMinutes: contentFormData.timerMinutes || 10,
+      passingPercentage: contentFormData.passingPercentage !== '' ? Number(contentFormData.passingPercentage) : 70,
+      timerMinutes: contentFormData.timerMinutes !== '' ? Number(contentFormData.timerMinutes) : 10,
       feedbackText: contentFormData.feedbackText || '',
+      notes: contentFormData.notes || '',
       questions: formattedQuestions
     };
 
@@ -699,15 +719,15 @@ export const ProgramStudioModal = ({
                 const isQuiz = editingContentItem.type === 'quiz';
                 const constructedAssessment = isQuiz ? {
                   id: `quiz-${l.id}`,
-                  title: contentFormData.title || l.title,
-                  passingPercentage: Number(contentFormData.passingPercentage) || 70,
-                  timerSeconds: (Number(contentFormData.timerMinutes) || 10) * 60,
+                  title: contentFormData.title || l.title || 'Lesson Quiz',
+                  passingPercentage: contentFormData.passingPercentage !== '' ? Number(contentFormData.passingPercentage) : 70,
+                  timerSeconds: (contentFormData.timerMinutes !== '' ? Number(contentFormData.timerMinutes) : 10) * 60,
                   questions: formattedQuestions
                 } : l.assessment;
 
                 return {
                   ...l,
-                  title: contentFormData.title || l.title,
+                  title: contentFormData.title || l.title || 'Untitled Lesson',
                   type: editingContentItem.type || l.type,
                   fileUrl: contentFormData.fileUrl || l.fileUrl || '',
                   videoUrl: contentFormData.videoUrl || l.videoUrl || '',
@@ -715,6 +735,7 @@ export const ProgramStudioModal = ({
                   body: contentFormData.body || l.body || '',
                   passingPercentage: contentFormData.passingPercentage,
                   timerMinutes: contentFormData.timerMinutes,
+                  notes: contentFormData.notes || '',
                   questions: formattedQuestions,
                   assessment: constructedAssessment,
                   items: [{
@@ -768,6 +789,7 @@ export const ProgramStudioModal = ({
 
       const updatedPayload = {
         ...formData,
+        notes: notesList,
         published: publishState,
         finalExam: finalExamObj,
         finalAssessment: finalExamObj
@@ -1204,15 +1226,16 @@ export const ProgramStudioModal = ({
                     onClick={() => {
                       const newQ = {
                         id: `fe-q-${Date.now()}`,
-                        question: 'Enter new question prompt here...',
+                        question: '',
+                        text: '',
                         type: 'mcq',
                         options: [
-                          { text: 'Option A', isCorrect: true },
-                          { text: 'Option B', isCorrect: false },
-                          { text: 'Option C', isCorrect: false },
-                          { text: 'Option D', isCorrect: false }
+                          { text: '', isCorrect: true },
+                          { text: '', isCorrect: false },
+                          { text: '', isCorrect: false },
+                          { text: '', isCorrect: false }
                         ],
-                        explanation: 'Add detailed rationale for students post-exam.'
+                        explanation: ''
                       };
                       setFormData(prev => ({
                         ...prev,
@@ -1237,7 +1260,7 @@ export const ProgramStudioModal = ({
                   <label className="font-semibold text-[#202124]">Exam Title</label>
                   <Input
                     placeholder="e.g. Final Certification Exam"
-                    value={formData.finalExam?.title || 'Final Certification Exam'}
+                    value={formData.finalExam?.title || ''}
                     onChange={(e) => setFormData(prev => ({
                       ...prev,
                       finalExam: { ...(prev.finalExam || {}), title: e.target.value }
@@ -1253,10 +1276,10 @@ export const ProgramStudioModal = ({
                     min="1"
                     max="100"
                     placeholder="75"
-                    value={formData.finalExam?.passingPercentage || 75}
+                    value={formData.finalExam?.passingPercentage !== undefined && formData.finalExam?.passingPercentage !== '' && formData.finalExam?.passingPercentage !== null ? formData.finalExam.passingPercentage : ''}
                     onChange={(e) => setFormData(prev => ({
                       ...prev,
-                      finalExam: { ...(prev.finalExam || {}), passingPercentage: Number(e.target.value) || 75 }
+                      finalExam: { ...(prev.finalExam || {}), passingPercentage: e.target.value === '' ? '' : Number(e.target.value) }
                     }))}
                     className="h-9 text-xs border-[#E4E7EB] bg-white font-medium"
                   />
@@ -1268,10 +1291,10 @@ export const ProgramStudioModal = ({
                     type="number"
                     min="1"
                     placeholder="10"
-                    value={Math.round((formData.finalExam?.timerSeconds || 600) / 60)}
+                    value={formData.finalExam?.timerSeconds !== undefined && formData.finalExam?.timerSeconds !== '' && formData.finalExam?.timerSeconds !== null ? Math.round(Number(formData.finalExam.timerSeconds) / 60) : ''}
                     onChange={(e) => setFormData(prev => ({
                       ...prev,
-                      finalExam: { ...(prev.finalExam || {}), timerSeconds: (Number(e.target.value) || 10) * 60 }
+                      finalExam: { ...(prev.finalExam || {}), timerSeconds: e.target.value === '' ? '' : (Number(e.target.value) || 0) * 60 }
                     }))}
                     className="h-9 text-xs border-[#E4E7EB] bg-white font-medium"
                   />
@@ -1335,44 +1358,52 @@ export const ProgramStudioModal = ({
                       <div className="pl-6 space-y-2">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Options Choices</span>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {(q.options || []).map((opt, oIdx) => (
-                            <div key={oIdx} className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-200">
-                              <input
-                                type="radio"
-                                name={`correct-${q.id || qIdx}`}
-                                checked={Boolean(opt.isCorrect)}
-                                onChange={() => {
-                                  const updatedOptions = (q.options || []).map((o, idx) => ({
-                                    ...o,
-                                    isCorrect: idx === oIdx
-                                  }));
-                                  const updatedQuestions = [...(formData.finalExam?.questions || [])];
-                                  updatedQuestions[qIdx] = { ...q, options: updatedOptions };
-                                  setFormData(prev => ({
-                                    ...prev,
-                                    finalExam: { ...(prev.finalExam || {}), questions: updatedQuestions }
-                                  }));
-                                }}
-                                className="w-4 h-4 text-[#2563EB] focus:ring-0 cursor-pointer shrink-0"
-                                title="Mark as correct answer"
-                              />
-                              <Input
-                                placeholder={`Option ${oIdx + 1}`}
-                                value={opt.text || ''}
-                                onChange={(e) => {
-                                  const updatedOptions = [...(q.options || [])];
-                                  updatedOptions[oIdx] = { ...opt, text: e.target.value };
-                                  const updatedQuestions = [...(formData.finalExam?.questions || [])];
-                                  updatedQuestions[qIdx] = { ...q, options: updatedOptions };
-                                  setFormData(prev => ({
-                                    ...prev,
-                                    finalExam: { ...(prev.finalExam || {}), questions: updatedQuestions }
-                                  }));
-                                }}
-                                className="h-7 text-xs border-none bg-transparent shadow-none font-medium text-slate-800"
-                              />
-                            </div>
-                          ))}
+                          {(q.options || []).map((opt, oIdx) => {
+                            const optText = typeof opt === 'object' && opt !== null ? (opt.text ?? '') : String(opt ?? '');
+                            const isCorrect = typeof opt === 'object' && opt !== null ? Boolean(opt.isCorrect) : (q.correctIndex !== undefined ? q.correctIndex === oIdx : oIdx === 0);
+
+                            return (
+                              <div key={oIdx} className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-200">
+                                <input
+                                  type="radio"
+                                  name={`correct-${q.id || qIdx}`}
+                                  checked={isCorrect}
+                                  onChange={() => {
+                                    const updatedOptions = (q.options || []).map((o, idx) => ({
+                                      text: typeof o === 'object' && o !== null ? (o.text ?? '') : String(o ?? ''),
+                                      isCorrect: idx === oIdx
+                                    }));
+                                    const updatedQuestions = [...(formData.finalExam?.questions || [])];
+                                    updatedQuestions[qIdx] = { ...q, options: updatedOptions };
+                                    setFormData(prev => ({
+                                      ...prev,
+                                      finalExam: { ...(prev.finalExam || {}), questions: updatedQuestions }
+                                    }));
+                                  }}
+                                  className="w-4 h-4 text-[#2563EB] focus:ring-0 cursor-pointer shrink-0"
+                                  title="Mark as correct answer"
+                                />
+                                <Input
+                                  placeholder={`Option ${oIdx + 1}`}
+                                  value={optText}
+                                  onChange={(e) => {
+                                    const updatedOptions = (q.options || []).map((o, idx) => {
+                                      const text = idx === oIdx ? e.target.value : (typeof o === 'object' && o !== null ? (o.text ?? '') : String(o ?? ''));
+                                      const correct = typeof o === 'object' && o !== null ? Boolean(o.isCorrect) : (q.correctIndex !== undefined ? q.correctIndex === idx : idx === 0);
+                                      return { text, isCorrect: correct };
+                                    });
+                                    const updatedQuestions = [...(formData.finalExam?.questions || [])];
+                                    updatedQuestions[qIdx] = { ...q, options: updatedOptions };
+                                    setFormData(prev => ({
+                                      ...prev,
+                                      finalExam: { ...(prev.finalExam || {}), questions: updatedQuestions }
+                                    }));
+                                  }}
+                                  className="h-7 text-xs border-none bg-transparent shadow-none font-medium text-slate-800"
+                                />
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
 
@@ -2031,7 +2062,7 @@ export const ProgramStudioModal = ({
                         <div className="space-y-1">
                           <Input
                             placeholder="Type your question text here..."
-                            value={q.text}
+                            value={q.text || q.question || ''}
                             onChange={(e) => handleQuestionTextChange(qIdx, e.target.value)}
                             className="h-9 text-xs bg-white border-[#E4E7EB]"
                           />
@@ -2043,27 +2074,30 @@ export const ProgramStudioModal = ({
                             <span className="text-[11px] font-semibold text-slate-600 block">
                               Answer Choices & Mark Correct Answer:
                             </span>
-                            {(q.options || []).map((opt, optIdx) => (
-                              <div key={optIdx} className="flex items-center gap-2.5">
-                                <input
-                                  type={q.format === 'multiple-choice' ? 'checkbox' : 'radio'}
-                                  name={`q-${qIdx}-correct`}
-                                  checked={
-                                    q.format === 'multiple-choice'
-                                      ? Array.isArray(q.correctIndex) && q.correctIndex.includes(optIdx)
-                                      : q.correctIndex === optIdx
-                                  }
-                                  onChange={() => handleMarkCorrectAnswer(qIdx, optIdx, q.format)}
-                                  className="w-4 h-4 text-[#2563EB] focus:ring-[#2563EB] cursor-pointer"
-                                />
-                                <Input
-                                  placeholder={`Choice ${optIdx + 1}`}
-                                  value={opt}
-                                  onChange={(e) => handleOptionTextChange(qIdx, optIdx, e.target.value)}
-                                  className="h-8 text-xs bg-white border-[#E4E7EB] flex-1"
-                                />
-                              </div>
-                            ))}
+                            {(q.options || []).map((opt, optIdx) => {
+                              const optText = typeof opt === 'object' && opt !== null ? (opt.text ?? '') : String(opt ?? '');
+                              const isChecked = q.format === 'multiple-choice'
+                                ? (Array.isArray(q.correctIndex) ? q.correctIndex.includes(optIdx) : (typeof opt === 'object' && Boolean(opt.isCorrect)))
+                                : (q.correctIndex !== undefined ? q.correctIndex === optIdx : (typeof opt === 'object' ? Boolean(opt.isCorrect) : optIdx === 0));
+
+                              return (
+                                <div key={optIdx} className="flex items-center gap-2.5">
+                                  <input
+                                    type={q.format === 'multiple-choice' ? 'checkbox' : 'radio'}
+                                    name={`q-${qIdx}-correct`}
+                                    checked={isChecked}
+                                    onChange={() => handleMarkCorrectAnswer(qIdx, optIdx, q.format)}
+                                    className="w-4 h-4 text-[#2563EB] focus:ring-[#2563EB] cursor-pointer"
+                                  />
+                                  <Input
+                                    placeholder={`Choice ${optIdx + 1}`}
+                                    value={optText}
+                                    onChange={(e) => handleOptionTextChange(qIdx, optIdx, e.target.value)}
+                                    className="h-8 text-xs bg-white border-[#E4E7EB] flex-1"
+                                  />
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
 

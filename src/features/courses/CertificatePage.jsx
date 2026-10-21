@@ -27,6 +27,13 @@ export const CertificatePage = () => {
     window.print();
   };
 
+  const issueDate = cert.issuedAt || cert.date || cert.created_at || new Date().toISOString();
+  const formattedDate = new Date(issueDate).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+
   return (
     <div className="min-h-screen graph-paper-bg font-sans py-12 px-6 flex flex-col items-center text-[#202124]">
       {/* Embedded print overrides style sheet */}
@@ -98,11 +105,16 @@ export const CertificatePage = () => {
           <div className="w-full pt-8 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-4 font-mono text-xs text-slate-600">
             <div className="text-left space-y-1">
               <span className="text-[10px] text-slate-400 uppercase tracking-widest block">Issue Timestamp</span>
-              <span className="font-bold text-[#202124]">{new Date(cert.issuedAt).toLocaleDateString()}</span>
+              <span className="font-bold text-[#202124]">{formattedDate}</span>
             </div>
 
             <div className="flex items-center gap-2">
               <span className="sticker-tag-red text-[10px]">● 100% ACCREDITED</span>
+              {cert.score && (
+                <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 rounded-full font-bold text-[10px]">
+                  EXAM SCORE: {cert.score}%
+                </span>
+              )}
             </div>
 
             <div className="text-right space-y-1">

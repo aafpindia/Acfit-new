@@ -644,13 +644,14 @@ export const useLmsStore = create(
 
       submitFinalAssessmentAttempt: async (courseId, score, passed, userId, fullName, assessmentId) => {
         // Optimistically update local attempts and certificates immediately
+        const nowIso = new Date().toISOString();
         const newAttempt = {
           userId,
           courseId,
           moduleId: null,
           score,
           passed,
-          date: new Date().toISOString()
+          date: nowIso
         };
 
         set((state) => {
@@ -658,21 +659,32 @@ export const useLmsStore = create(
           let updatedCertificates = [...state.certificates];
 
           if (passed) {
-            const certExists = state.certificates.some(
+            const certIndex = state.certificates.findIndex(
               (c) => c.courseId === courseId && c.userId === userId
             );
 
-            if (!certExists) {
-              const targetCourse = state.courses.find((c) => c.id === courseId);
-              const certId = `CERT-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-              updatedCertificates.push({
-                id: certId,
-                userId,
-                courseId,
-                fullName,
-                courseTitle: targetCourse?.title || 'Course Platform Module',
-                date: new Date().toISOString()
-              });
+            const targetCourse = state.courses.find((c) => c.id === courseId);
+            const certId = certIndex !== -1 
+              ? state.certificates[certIndex].id 
+              : `CERT-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+
+            const certData = {
+              id: certId,
+              userId,
+              courseId,
+              fullName: fullName || 'Graduate Student',
+              courseTitle: targetCourse?.title || 'Certified Fitness Professional',
+              date: nowIso,
+              issuedAt: nowIso,
+              created_at: nowIso,
+              score,
+              credentialId: certId
+            };
+
+            if (certIndex === -1) {
+              updatedCertificates.push(certData);
+            } else {
+              updatedCertificates[certIndex] = { ...state.certificates[certIndex], ...certData };
             }
           }
 

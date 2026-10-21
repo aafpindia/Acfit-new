@@ -31,7 +31,8 @@ import {
   ListTodo,
   Image as ImageIcon,
   Maximize,
-  Minimize
+  Minimize,
+  Copy
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
@@ -326,6 +327,15 @@ export const CoursePlayer = () => {
     }
   };
 
+  const handleFinalPassed = () => {
+    const cert = certificates.find(c => c.courseId === courseId && (c.userId === user?.id || !c.userId)) || certificates[certificates.length - 1];
+    if (cert) {
+      navigate(`/certificates/${cert.id}`);
+    } else {
+      success('Congratulations! Official Certificate is available in your sidebar.');
+    }
+  };
+
   const loadNextItem = (justCompletedLessonId = null) => {
     const finalExamUnlocked = isFinalUnlocked(justCompletedLessonId);
 
@@ -504,6 +514,11 @@ export const CoursePlayer = () => {
           lessonId={currentLesson?.id}
         />
       );
+    }
+
+    if (normType === 'text' || normType === 'rich-text') {
+      const textBody = typeof itemContent === 'string' ? itemContent : (itemContent?.body || fullItem?.body || fullItem?.instructions || '');
+      return <RichTextPlayer content={{ body: textBody, title: lessonTitle }} />;
     }
 
     const videoUrl = itemContent?.videoUrl || fullItem?.videoUrl || (typeof itemContent === 'string' && itemContent.startsWith('http') ? itemContent : '');
@@ -795,8 +810,8 @@ export const CoursePlayer = () => {
                 {/* View Certificate Link */}
                 {isCertificateUnlocked() && (
                   <Link
-                    to={`/certificates/${certificates.find(c => c.courseId === courseId && c.userId === user?.id)?.id}`}
-                    className="block w-full p-3 rounded-xl text-xs font-bold bg-emerald-50 border border-emerald-200 text-emerald-700 text-center hover:bg-emerald-100 transition-all shadow-2xs"
+                    to={`/certificates/${(certificates.find(c => c.courseId === courseId && (c.userId === user?.id || !c.userId)) || certificates[certificates.length - 1])?.id}`}
+                    className="block w-full p-3 rounded-xl text-xs font-bold bg-emerald-50 border border-emerald-200 text-emerald-700 text-center hover:bg-emerald-100 transition-all shadow-2xs cursor-pointer"
                   >
                     View Official Certificate 🎓
                   </Link>
@@ -906,6 +921,69 @@ export const CoursePlayer = () => {
                 </div>
               </div>
 
+              {/* 📝 LESSON NOTES & INSTRUCTOR RESOURCES PANEL */}
+              {!isFullscreenMode && (
+                <div className="space-y-4 pt-2">
+                  {/* Current Lesson Notes */}
+                  {(currentLesson?.notes || currentLesson?.items?.[0]?.notes) ? (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-2xs space-y-3">
+                      <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-blue-50 text-[#2563EB] flex items-center justify-center">
+                            <FileText className="h-4 w-4" />
+                          </div>
+                          <div>
+                            <h3 className="font-extrabold text-sm text-slate-900">Lesson Notes & Key Takeaways</h3>
+                            <span className="text-[10px] text-slate-500 font-medium">Instructor reference notes attached to this lesson</span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const noteText = currentLesson?.notes || currentLesson?.items?.[0]?.notes || '';
+                            navigator.clipboard.writeText(noteText);
+                            success('Lesson notes copied to clipboard!');
+                          }}
+                          className="text-xs font-bold text-[#2563EB] bg-[#EFF6FF] hover:bg-blue-100 px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                          <span>Copy Notes</span>
+                        </button>
+                      </div>
+
+                      <div className="text-xs sm:text-sm text-slate-700 leading-relaxed font-sans whitespace-pre-wrap bg-slate-50/70 p-4 rounded-xl border border-slate-200/60">
+                        {currentLesson?.notes || currentLesson?.items?.[0]?.notes}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Course Level Reference Notes */}
+                  {Array.isArray(course.notes) && course.notes.length > 0 && (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-2xs space-y-4">
+                      <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+                        <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+                          <BookOpen className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <h3 className="font-extrabold text-sm text-slate-900">Course Reference Repository ({course.notes.length})</h3>
+                          <span className="text-[10px] text-slate-500 font-medium">Curated study notes provided for this course</span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {course.notes.map((n) => (
+                          <div key={n.id} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 space-y-1.5">
+                            <span className="font-bold text-xs text-slate-900 block truncate">{n.title}</span>
+                            <p className="text-xs text-slate-600 line-clamp-3 whitespace-pre-wrap leading-relaxed">{n.content}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
             </div>
           )}
 
@@ -927,7 +1005,7 @@ export const CoursePlayer = () => {
               <AssessmentPlayer
                 courseId={courseId}
                 isFinal={true}
-                onPassed={handleMarkComplete}
+                onPassed={handleFinalPassed}
               />
             </div>
           )}

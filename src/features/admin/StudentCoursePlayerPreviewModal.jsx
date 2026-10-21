@@ -135,21 +135,24 @@ export const StudentCoursePlayerPreviewModal = ({ isOpen, onClose, courseData })
 
                                 {(q.format === 'single-choice' || q.format === 'multiple-choice' || !q.format) && (
                                   <div className="space-y-1.5 pt-1">
-                                    {(q.options || []).map((opt, optIdx) => (
-                                      <div key={optIdx} className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50">
-                                        <input
-                                          type={q.format === 'multiple-choice' ? 'checkbox' : 'radio'}
-                                          name={`preview-q-${qIdx}`}
-                                          readOnly
-                                          checked={
-                                            q.format === 'multiple-choice'
-                                              ? Array.isArray(q.correctIndex) && q.correctIndex.includes(optIdx)
-                                              : q.correctIndex === optIdx
-                                          }
-                                        />
-                                        <span className="text-[#202124]">{opt}</span>
-                                      </div>
-                                    ))}
+                                    {(q.options || []).map((opt, optIdx) => {
+                                      const optText = typeof opt === 'object' && opt !== null ? (opt.text ?? '') : String(opt ?? '');
+                                      const isChecked = q.format === 'multiple-choice'
+                                        ? (Array.isArray(q.correctIndex) ? q.correctIndex.includes(optIdx) : (typeof opt === 'object' && Boolean(opt.isCorrect)))
+                                        : (q.correctIndex !== undefined ? q.correctIndex === optIdx : (typeof opt === 'object' ? Boolean(opt.isCorrect) : optIdx === 0));
+
+                                      return (
+                                        <div key={optIdx} className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50">
+                                          <input
+                                            type={q.format === 'multiple-choice' ? 'checkbox' : 'radio'}
+                                            name={`preview-q-${qIdx}`}
+                                            readOnly
+                                            checked={isChecked}
+                                          />
+                                          <span className="text-[#202124]">{optText}</span>
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                 )}
 

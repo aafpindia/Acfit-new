@@ -1,16 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useLmsStore } from '../../../stores/lmsStore';
 import { useAuth } from '../../../hooks/useAuth';
 import { useToast } from '../../../hooks/useToast';
-import { AlertCircle, Clock, CheckCircle2, XCircle, Award, RotateCcw, ChevronRight, Check, X } from 'lucide-react';
+import { AlertCircle, Clock, CheckCircle2, XCircle, Award, RotateCcw, ChevronRight, Check, X, FileCheck, ExternalLink } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 
 export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed, lessonId }) => {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { success, error } = useToast();
-  const { courses, submitAssessmentAttempt, submitFinalAssessmentAttempt } = useLmsStore();
+  const { courses, submitAssessmentAttempt, submitFinalAssessmentAttempt, certificates } = useLmsStore();
 
   const course = courses.find((c) => c.id === courseId);
   
@@ -200,7 +202,8 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
     setQuizState('result');
 
     if (isFinal) {
-      submitFinalAssessmentAttempt(courseId, score, passed, user?.id, user?.fullName, quiz.id);
+      const studentName = user?.fullName || user?.name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Graduate Member');
+      submitFinalAssessmentAttempt(courseId, score, passed, user?.id, studentName, quiz.id);
     } else {
       submitAssessmentAttempt(courseId, resolvedModuleId || moduleId, score, passed, user?.id, quiz.id);
     }
@@ -440,6 +443,64 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
     return (
       <div className="space-y-6 max-w-xl mx-auto font-sans">
         
+        {/* 🎉 Real-time Certificate Release Card when Final Exam Passed */}
+        {isFinal && scoreResult.passed && (
+          <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-blue-50 border-2 border-emerald-500 rounded-2xl p-6 sm:p-7 text-center space-y-4 shadow-lg relative overflow-hidden">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-600 text-white flex items-center justify-center mx-auto shadow-md">
+              <Award className="h-8 w-8 text-white" />
+            </div>
+
+            <div className="space-y-1">
+              <span className="font-mono text-[10px] font-extrabold uppercase tracking-widest text-emerald-800 bg-emerald-200/80 px-3.5 py-1 rounded-full border border-emerald-300/80">
+                🎓 OFFICIAL CERTIFICATE RELEASED & ACCREDITED
+              </span>
+              <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+                Congratulations, {user?.fullName || user?.name || 'Graduate Student'}!
+              </h2>
+              <p className="text-xs text-slate-600 max-w-lg mx-auto leading-relaxed">
+                You have successfully completed the certification examination for <span className="font-bold text-slate-900">{course?.title || quiz.title}</span>. Your accredited certificate is released and verified.
+              </p>
+            </div>
+
+            {/* Real-time credentials metadata */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white/90 p-3.5 rounded-xl border border-emerald-200/80 text-xs text-left shadow-2xs">
+              <div className="space-y-0.5">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Awarded To</span>
+                <span className="font-bold text-slate-800 truncate block">{user?.fullName || user?.name || 'Student Member'}</span>
+              </div>
+              <div className="space-y-0.5 border-t sm:border-t-0 sm:border-x border-slate-200 pt-2 sm:pt-0 sm:px-3">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Issue Date</span>
+                <span className="font-bold text-slate-800 block">
+                  {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+                </span>
+              </div>
+              <div className="space-y-0.5 border-t sm:border-t-0 border-slate-200 pt-2 sm:pt-0">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Exam Result</span>
+                <span className="font-bold text-emerald-700 block">{scoreResult.score}% (Passed)</span>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <Button
+                variant="primary"
+                onClick={() => {
+                  const targetCert = certificates.find(c => c.courseId === courseId && (c.userId === user?.id || !c.userId)) || certificates[certificates.length - 1];
+                  if (targetCert) {
+                    navigate(`/certificates/${targetCert.id}`);
+                  } else if (onPassed) {
+                    onPassed();
+                  }
+                }}
+                className="w-full justify-center h-11 text-xs font-extrabold bg-[#1E65B8] hover:bg-[#1976D2] text-white shadow-md gap-2 cursor-pointer"
+              >
+                <Award className="h-4 w-4" />
+                <span>View & Print Official Certificate 🎓</span>
+                <ExternalLink className="h-3.5 w-3.5 opacity-80" />
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Results Overview Card */}
         <Card className="border-border bg-white text-center shadow-md rounded-2xl overflow-hidden">
           <CardContent className="p-8 flex flex-col items-center justify-center space-y-6">
@@ -508,14 +569,23 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
                 Retake Quiz
               </Button>
 
-              {scoreResult.passed && onPassed && (
+              {scoreResult.passed && (
                 <Button
                   variant="primary"
-                  onClick={onPassed}
+                  onClick={() => {
+                    if (isFinal) {
+                      const targetCert = certificates.find(c => c.courseId === courseId && (c.userId === user?.id || !c.userId)) || certificates[certificates.length - 1];
+                      if (targetCert) {
+                        navigate(`/certificates/${targetCert.id}`);
+                        return;
+                      }
+                    }
+                    if (onPassed) onPassed();
+                  }}
                   rightIcon={<ChevronRight className="h-4 w-4" />}
                   className="w-full justify-center text-xs h-10 font-bold bg-[#1E65B8] hover:bg-[#1976D2] text-white"
                 >
-                  {isFinal ? 'Claim Certificate 🎓' : 'Continue Next Step'}
+                  {isFinal ? 'Claim Official Certificate 🎓' : 'Continue Next Step'}
                 </Button>
               )}
             </div>

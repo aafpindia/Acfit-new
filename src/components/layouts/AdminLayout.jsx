@@ -297,7 +297,7 @@ export const AdminLayout = () => {
                       )}
                       <div className="min-w-0">
                         <span className="font-bold text-[#202124] block truncate">{user?.fullName || 'ACFIT Academy Admin'}</span>
-                        <span className="text-[10px] text-[#5F6368] block truncate">{user?.email || 'admin@acfitacademy.com'}</span>
+                        <span className="text-[10px] text-[#5F6368] block truncate">{user?.email || 'info@acfitacademy.com'}</span>
                       </div>
                     </div>
                     <div className="py-2 space-y-1">

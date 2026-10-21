@@ -43,9 +43,9 @@ export const EditProgramDialog = ({
   const [formData, setFormData] = useState({
     title: '',
     description: '',
-    category: 'Strength Training',
-    price: 0,
-    difficulty: 'Beginner',
+    category: '',
+    price: '',
+    difficulty: '',
     instructor: '',
     thumbnail: '',
     published: false
@@ -59,12 +59,23 @@ export const EditProgramDialog = ({
       setFormData({
         title: course.title || '',
         description: course.description || '',
-        category: course.category || 'Strength Training',
-        price: course.price || 0,
-        difficulty: course.difficulty || 'Beginner',
+        category: course.category || '',
+        price: course.price !== undefined ? course.price : '',
+        difficulty: course.difficulty || '',
         instructor: course.instructor || '',
-        thumbnail: course.thumbnail || PRESET_THUMBNAILS[0].url,
+        thumbnail: course.thumbnail || '',
         published: Boolean(course.published)
+      });
+    } else {
+      setFormData({
+        title: '',
+        description: '',
+        category: '',
+        price: '',
+        difficulty: '',
+        instructor: '',
+        thumbnail: '',
+        published: false
       });
     }
   }, [course, isOpen]);
