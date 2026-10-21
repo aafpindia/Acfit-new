@@ -3,6 +3,7 @@ import { useLmsStore } from '../../stores/lmsStore';
 import { useToast } from '../../hooks/useToast';
 import { supabase, isSupabaseConfigured } from '../../config/supabase';
 import { getUserCourseProgress } from '../../services/progressService';
+import { fetchUsers, createUser, updateUser, deleteUser } from '../../services/userService';
 import {
   Shield,
   Ban,
@@ -115,77 +116,20 @@ export const Users = () => {
     }
   }, []);
 
-  // Fetch users strictly from Supabase profiles and active registered auth accounts
+  // Fetch users directly from Supabase DB profiles
   const loadUsers = async () => {
-    let baseUsers = [];
-    const deletedUserIds = new Set(JSON.parse(localStorage.getItem('_lms_deleted_user_ids') || '[]'));
-
-    // Purge legacy mock user storage keys
+    setIsLoadingUsers(true);
     try {
-      localStorage.removeItem('_lms_mock_users');
-      localStorage.removeItem('_lms_mock_users_initialized');
-    } catch (_) {}
-
-    if (isSupabaseConfigured) {
-      try {
-        const fetchProfilesPromise = supabase
-          .from('profiles')
-          .select('*')
-          .order('created_at', { ascending: false });
-
-        const timeoutPromise = new Promise((resolve) =>
-          setTimeout(() => resolve({ data: null, error: 'timeout' }), 5000)
-        );
-
-        const result = await Promise.race([fetchProfilesPromise, timeoutPromise]);
-
-        if (result && result.data && Array.isArray(result.data) && result.data.length > 0) {
-          result.data.forEach((p) => {
-            if (p.id && !deletedUserIds.has(p.id) && p.status !== 'deleted') {
-              baseUsers.push({
-                id: p.id,
-                fullName: p.full_name || p.email?.split('@')[0] || 'User',
-                email: p.email || 'no-email@acfitacademy.app',
-                role: p.role || 'user',
-                status: p.status || 'active',
-                createdAt: p.created_at || new Date().toISOString(),
-                avatarUrl: p.avatar_url || ''
-              });
-            }
-          });
-        }
-      } catch (err) {
-        console.warn('Profiles fetch warning:', err);
+      const users = await fetchUsers();
+      setUsersList(users);
+      if (useLmsStore.getState().setUsers) {
+        useLmsStore.getState().setUsers(users);
       }
+    } catch (err) {
+      console.warn('Profiles fetch warning:', err);
+    } finally {
+      setIsLoadingUsers(false);
     }
-
-    // Merge registered auth users from localStorage (excluding deleted and dummy accounts)
-    try {
-      const registeredUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
-      registeredUsers.forEach((reg) => {
-        const regEmail = (reg.email || '').toLowerCase().trim();
-        const isDummy = regEmail === 'admin@lms.com' || regEmail === 'student@lms.com';
-        if (regEmail && !isDummy && !deletedUserIds.has(reg.id) && reg.status !== 'deleted') {
-          if (!baseUsers.some((u) => u.email.toLowerCase() === regEmail || u.id === reg.id)) {
-            baseUsers.push({
-              id: reg.id || `reg-${Date.now()}`,
-              fullName: reg.fullName || reg.name || regEmail.split('@')[0],
-              email: reg.email,
-              role: (reg.role || 'user').toLowerCase(),
-              status: reg.status || 'active',
-              createdAt: reg.createdAt || new Date().toISOString(),
-              avatarUrl: reg.avatarUrl || ''
-            });
-          }
-        }
-      });
-    } catch (_) {}
-
-    setUsersList(baseUsers);
-    if (useLmsStore.getState().setUsers) {
-      useLmsStore.getState().setUsers(baseUsers);
-    }
-    setIsLoadingUsers(false);
   };
 
   useEffect(() => {
@@ -230,7 +174,7 @@ export const Users = () => {
     });
   }, [usersList, search, statusFilter]);
 
-  // Add New User Handler
+  // Add New User Handler (Direct Supabase DB)
   const handleCreateUserSubmit = async (e) => {
     e.preventDefault();
     if (!newUserData.fullName.trim() || !newUserData.email.trim()) {
@@ -239,129 +183,56 @@ export const Users = () => {
     }
 
     setIsSubmittingNewUser(true);
-    let newId = (typeof crypto !== 'undefined' && crypto.randomUUID)
-      ? crypto.randomUUID()
-      : `usr-${Date.now()}`;
-
-    const cleanEmail = newUserData.email.trim().toLowerCase();
-    const cleanName = newUserData.fullName.trim();
-    const cleanRole = (newUserData.role || 'user').toLowerCase();
-    const userPassword = newUserData.password?.trim() || 'password';
-
-    if (isSupabaseConfigured) {
-      try {
-        const { data: authData } = await supabase.auth.signUp({
-          email: cleanEmail,
-          password: userPassword,
-          options: {
-            data: {
-              full_name: cleanName,
-              role: cleanRole
-            }
-          }
-        });
-        if (authData?.user?.id) {
-          newId = authData.user.id;
-        }
-      } catch (authErr) {
-        console.warn('Supabase auth signup attempt:', authErr);
-      }
-
-      try {
-        await supabase.from('profiles').upsert([
-          {
-            id: newId,
-            full_name: cleanName,
-            email: cleanEmail,
-            role: cleanRole,
-            status: 'active'
-          }
-        ], { onConflict: 'id' });
-      } catch (err) {
-        console.warn('Supabase insert notice:', err);
-      }
-    }
-
-    const newUserRecord = {
-      id: newId,
-      fullName: cleanName,
-      name: cleanName,
-      email: cleanEmail,
-      role: cleanRole,
-      status: 'active',
-      department: 'Member',
-      password: userPassword,
-      passwordHash: userPassword,
-      createdAt: new Date().toISOString(),
-      avatarUrl: `https://api.dicebear.com/7.x/avataaars/svg?seed=${cleanEmail}`
-    };
-
-    try {
-      const registeredUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
-      const filtered = registeredUsers.filter(u => u.email.toLowerCase() !== cleanEmail && u.id !== newId);
-      localStorage.setItem('_lms_registered_users', JSON.stringify([newUserRecord, ...filtered]));
-    } catch (_) {}
-
-    if (useLmsStore.getState().addUser) {
-      useLmsStore.getState().addUser(newUserRecord);
-    }
-    try { window.dispatchEvent(new Event('lms_users_updated')); } catch (_) {}
+    const res = await createUser({
+      email: newUserData.email,
+      fullName: newUserData.fullName,
+      role: newUserData.role,
+      password: newUserData.password || 'Password123!'
+    });
 
     setIsSubmittingNewUser(false);
-    setIsAddUserModalOpen(false);
-    setNewUserData({ fullName: '', email: '', role: 'user', password: 'password' });
-    await loadUsers();
-    setSelectedUser(newUserRecord);
-    success(`New user "${newUserRecord.fullName}" created successfully!`);
+    if (res.success && res.data) {
+      setIsAddUserModalOpen(false);
+      setNewUserData({ fullName: '', email: '', role: 'user', password: '' });
+      await loadUsers();
+      setSelectedUser(res.data);
+      try { window.dispatchEvent(new Event('lms_users_updated')); } catch (_) {}
+      success(`New user "${res.data.fullName}" created in database successfully!`);
+    } else {
+      toastError(res.error || 'Failed to create user in database.');
+    }
   };
 
   // Toggle User Role
   const toggleRole = async (userId, currentRole) => {
     const nextRole = (currentRole || '').toLowerCase() === 'admin' ? 'user' : 'admin';
-
-    if (isSupabaseConfigured) {
-      try {
-        await supabase.from('profiles').update({ role: nextRole }).eq('id', userId);
-      } catch (err) {
-        console.warn('Supabase role update notice:', err);
+    const res = await updateUser(userId, { role: nextRole });
+    if (res.success) {
+      await loadUsers();
+      if (selectedUser?.id === userId) {
+        setSelectedUser((prev) => ({ ...prev, role: nextRole }));
       }
+      try { window.dispatchEvent(new Event('lms_users_updated')); } catch (_) {}
+      success(`Role updated to ${nextRole.toUpperCase()}`);
+    } else {
+      toastError(res.error || 'Failed to update role.');
     }
-
-    try {
-      const regUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
-      const updatedReg = regUsers.map((u) => (u.id === userId ? { ...u, role: nextRole } : u));
-      localStorage.setItem('_lms_registered_users', JSON.stringify(updatedReg));
-    } catch (_) {}
-
-    loadUsers();
-    if (selectedUser?.id === userId) {
-      setSelectedUser((prev) => ({ ...prev, role: nextRole }));
-    }
-    success(`Role updated to ${nextRole.toUpperCase()}`);
   };
 
   // Toggle Status (Activate / Deactivate)
   const toggleStatus = async (userId, currentStatus) => {
     const nextStatus = currentStatus === 'suspended' ? 'active' : 'suspended';
-    if (isSupabaseConfigured) {
-      try {
-        await supabase.from('profiles').update({ status: nextStatus }).eq('id', userId);
-      } catch (err) {
-        console.warn('Supabase status update notice:', err);
+    const res = await updateUser(userId, { status: nextStatus });
+    if (res.success) {
+      await loadUsers();
+      if (selectedUser?.id === userId) {
+        setSelectedUser((prev) => ({ ...prev, status: nextStatus }));
       }
+      try { window.dispatchEvent(new Event('lms_users_updated')); } catch (_) {}
+      success(`User ${nextStatus === 'suspended' ? 'Deactivated' : 'Activated'} successfully.`);
+    } else {
+      toastError(res.error || 'Failed to update status.');
     }
-
-    try {
-      const regUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
-      const updatedReg = regUsers.map((u) => (u.id === userId ? { ...u, status: nextStatus } : u));
-      localStorage.setItem('_lms_registered_users', JSON.stringify(updatedReg));
-    } catch (_) {}
-
-    loadUsers();
-    if (selectedUser?.id === userId) {
-      setSelectedUser((prev) => ({ ...prev, status: nextStatus }));
-    }
-    success(`User ${nextStatus === 'suspended' ? 'Deactivated' : 'Activated'} successfully.`);
   };
 
   // Reset Password
@@ -369,54 +240,22 @@ export const Users = () => {
     success(`Password reset email sent to ${selectedUser?.email || 'user'}.`);
   };
 
-  // Delete User Permanently
+  // Delete User Permanently from Supabase DB
   const handleDeleteUser = async (userId) => {
-    if (!window.confirm(`Are you sure you want to permanently delete ${selectedUser?.fullName || 'this user'}? This will also remove their enrollments and payments from live metrics.`)) {
+    if (!window.confirm(`Are you sure you want to permanently delete ${selectedUser?.fullName || 'this user'}? This will also remove their database enrollments and payments.`)) {
       return;
     }
 
-    if (isSupabaseConfigured) {
-      try {
-        await supabase.from('profiles').delete().eq('id', userId);
-        await supabase.from('enrollments').delete().eq('user_id', userId);
-        await supabase.from('payments').delete().eq('user_id', userId);
-        await supabase.from('certificates').delete().eq('user_id', userId);
-        await supabase.from('attempts').delete().eq('user_id', userId);
-      } catch (err) {
-        console.warn('Supabase cascade delete notice:', err);
-      }
+    const res = await deleteUser(userId);
+    if (res.success) {
+      await loadUsers();
+      setSelectedUser(null);
+      try { window.dispatchEvent(new Event('lms_users_updated')); } catch (_) {}
+      try { syncFromSupabase(); } catch (_) {}
+      success('User deleted from database successfully.');
+    } else {
+      toastError(res.error || 'Failed to delete user from database.');
     }
-
-    // Persist deleted user ID so deleted data never reappears
-    try {
-      const deletedSet = new Set(JSON.parse(localStorage.getItem('_lms_deleted_user_ids') || '[]'));
-      deletedSet.add(userId);
-      localStorage.setItem('_lms_deleted_user_ids', JSON.stringify([...deletedSet]));
-    } catch (_) {}
-
-    // Remove from _lms_registered_users
-    try {
-      const regUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
-      const updatedReg = regUsers.filter((u) => u.id !== userId);
-      localStorage.setItem('_lms_registered_users', JSON.stringify(updatedReg));
-    } catch (_) {}
-
-    // Update Zustand LMS store to remove all deleted user's records immediately
-    try {
-      useLmsStore.setState((state) => ({
-        enrollments: (state.enrollments || []).filter((e) => e.userId !== userId && e.user_id !== userId),
-        payments: (state.payments || []).filter((p) => p.userId !== userId && p.user_id !== userId),
-        certificates: (state.certificates || []).filter((c) => c.userId !== userId && c.user_id !== userId),
-        attempts: (state.attempts || []).filter((a) => a.userId !== userId && a.user_id !== userId)
-      }));
-    } catch (_) {}
-
-    setSelectedUser(null);
-    loadUsers();
-    try {
-      syncFromSupabase();
-    } catch (_) {}
-    success('User and associated records permanently deleted.');
   };
 
   // Save Edit User

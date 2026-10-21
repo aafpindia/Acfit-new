@@ -4,6 +4,7 @@ import { useLmsStore } from '../../stores/lmsStore';
 import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../hooks/useToast';
 import apiClient from '../../lib/apiClient';
+import { fetchCourseById } from '../../services/courseService';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -78,9 +79,31 @@ export const CoursePlayer = () => {
     }
   };
 
-  const course = courses.find((c) => c.id === courseId ||
+  const storeCourse = courses.find((c) => c.id === courseId ||
     (courseId === 'course-cardio-hiit' && c.id === '20202020-2020-2020-2020-202020202020') ||
     (courseId === '20202020-2020-2020-2020-202020202020' && c.id === 'course-cardio-hiit'));
+
+  const [dbCourse, setDbCourse] = useState(null);
+  const [courseLoading, setCourseLoading] = useState(!storeCourse);
+
+  const course = storeCourse || dbCourse;
+
+  useEffect(() => {
+    let active = true;
+    if (!storeCourse && courseId) {
+      setCourseLoading(true);
+      fetchCourseById(courseId).then((res) => {
+        if (active && res.success && res.data) {
+          setDbCourse(res.data);
+        }
+      }).finally(() => {
+        if (active) setCourseLoading(false);
+      });
+    } else if (storeCourse) {
+      setCourseLoading(false);
+    }
+    return () => { active = false; };
+  }, [storeCourse, courseId]);
 
   const [isAuthorized, setIsAuthorized] = useState(true);
   const [authChecking, setAuthChecking] = useState(true);
@@ -157,11 +180,11 @@ export const CoursePlayer = () => {
         return;
       }
 
-      // 2. Zustand store enrollments check
-      const isStoreEnrolled = (enrollments || []).some(
+      // 2. Database enrollments check (from syncFromSupabase)
+      const isDbEnrolled = (enrollments || []).some(
         e => matchesCourse(e.courseId || e.course_id) && matchesUser(e)
       );
-      if (isStoreEnrolled) {
+      if (isDbEnrolled) {
         if (active) {
           setIsAuthorized(true);
           setAuthChecking(false);
@@ -169,13 +192,13 @@ export const CoursePlayer = () => {
         return;
       }
 
-      // 3. Zustand store payments check (if paid for this course, access is granted)
-      const isStorePaid = (payments || []).some(
+      // 3. Database payments check (from syncFromSupabase)
+      const isDbPaid = (payments || []).some(
         p => matchesCourse(p.courseId || p.course_id) &&
              matchesUser(p) &&
              ['successful', 'paid', 'completed'].includes((p.status || '').toLowerCase())
       );
-      if (isStorePaid) {
+      if (isDbPaid) {
         if (active) {
           setIsAuthorized(true);
           setAuthChecking(false);
@@ -183,61 +206,16 @@ export const CoursePlayer = () => {
         return;
       }
 
-      // 4. LocalStorage persistent fallback check
-      let isLocalEnrolled = false;
-      try {
-        const rawEnrollments = localStorage.getItem('_lms_enrollments');
-        if (rawEnrollments) {
-          const parsed = JSON.parse(rawEnrollments);
-          if (Array.isArray(parsed) && parsed.some(e => matchesCourse(e.courseId || e.course_id) && matchesUser(e))) {
-            isLocalEnrolled = true;
-          }
-        }
-      } catch (_) {}
-
-      try {
-        const rawPayments = localStorage.getItem('_lms_payments');
-        if (rawPayments) {
-          const parsed = JSON.parse(rawPayments);
-          if (Array.isArray(parsed) && parsed.some(p => matchesCourse(p.courseId || p.course_id) && matchesUser(p) && ['successful', 'paid'].includes((p.status || '').toLowerCase()))) {
-            isLocalEnrolled = true;
-          }
-        }
-      } catch (_) {}
-
-      try {
-        const rawStore = localStorage.getItem('lms-store-storage');
-        if (rawStore) {
-          const parsed = JSON.parse(rawStore);
-          const savedEnrollments = parsed?.state?.enrollments || [];
-          if (savedEnrollments.some(e => matchesCourse(e.courseId || e.course_id) && matchesUser(e))) {
-            isLocalEnrolled = true;
-          }
-          const savedPayments = parsed?.state?.payments || [];
-          if (savedPayments.some(p => matchesCourse(p.courseId || p.course_id) && matchesUser(p) && ['successful', 'paid'].includes((p.status || '').toLowerCase()))) {
-            isLocalEnrolled = true;
-          }
-        }
-      } catch (_) {}
-
-      if (isLocalEnrolled) {
-        if (active) {
-          setIsAuthorized(true);
-          setAuthChecking(false);
-        }
-        return;
-      }
-
-      // 5. Backend API protected content check
+      // 4. Supabase DB direct check via API client
       try {
         const res = await apiClient.courses.getProtectedLearningContent(courseId, user.id);
         if (active) {
-          setIsAuthorized(Boolean(res.authorized || isLocalEnrolled || isStoreEnrolled || isStorePaid || userIsAdmin));
+          setIsAuthorized(Boolean(res?.authorized || isDbEnrolled || isDbPaid || userIsAdmin));
           setAuthChecking(false);
         }
       } catch (err) {
         if (active) {
-          setIsAuthorized(Boolean(isLocalEnrolled || isStoreEnrolled || isStorePaid || userIsAdmin));
+          setIsAuthorized(Boolean(isDbEnrolled || isDbPaid || userIsAdmin));
           setAuthChecking(false);
         }
       }
@@ -284,7 +262,7 @@ export const CoursePlayer = () => {
     }
   }, [course?.id, activeItem?.id, user?.id, courseId]);
 
-  if (authChecking) {
+  if (authChecking || courseLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center graph-paper-bg text-[#202124] font-sans space-y-4">
         <div className="w-12 h-12 rounded-2xl bg-primary text-white flex items-center justify-center shadow-tactile-sm">

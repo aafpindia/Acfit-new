@@ -579,60 +579,6 @@ export const apiClient = {
         return { data: null, authorized: false, error: 'Authentication required to access course player.' };
       }
 
-      const matchesCourse = (c) => {
-        const str1 = String(c || '').toLowerCase();
-        const str2 = String(courseId || '').toLowerCase();
-        if (str1 === str2) return true;
-        if ((str1 === 'course-cardio-hiit' && str2 === '20202020-2020-2020-2020-202020202020') ||
-            (str2 === 'course-cardio-hiit' && str1 === '20202020-2020-2020-2020-202020202020')) {
-          return true;
-        }
-        return false;
-      };
-
-      // Check persistent local enrollments & store
-      let isEnrolledLocally = false;
-      try {
-        const rawEnrollments = localStorage.getItem('_lms_enrollments');
-        if (rawEnrollments) {
-          const parsed = JSON.parse(rawEnrollments);
-          if (Array.isArray(parsed) && parsed.some(e => matchesCourse(e.courseId || e.course_id) && String(e.userId || e.user_id) === String(userId))) {
-            isEnrolledLocally = true;
-          }
-        }
-      } catch (_) {}
-
-      try {
-        const storeRaw = localStorage.getItem('lms-store-storage');
-        if (storeRaw) {
-          const parsed = JSON.parse(storeRaw);
-          const localEnrollments = parsed?.state?.enrollments || [];
-          if (localEnrollments.some(e => matchesCourse(e.courseId || e.course_id) && String(e.userId || e.user_id) === String(userId))) {
-            isEnrolledLocally = true;
-          }
-          const localPayments = parsed?.state?.payments || [];
-          if (localPayments.some(p => matchesCourse(p.courseId || p.course_id) && String(p.userId || p.user_id) === String(userId) && ['successful', 'paid'].includes((p.status || '').toLowerCase()))) {
-            isEnrolledLocally = true;
-          }
-        }
-      } catch (_) {}
-
-      try {
-        const rawPayments = localStorage.getItem('_lms_payments');
-        if (rawPayments) {
-          const parsed = JSON.parse(rawPayments);
-          if (Array.isArray(parsed) && parsed.some(p => matchesCourse(p.courseId || p.course_id) && String(p.userId || p.user_id) === String(userId) && ['successful', 'paid'].includes((p.status || '').toLowerCase()))) {
-            isEnrolledLocally = true;
-          }
-        }
-      } catch (_) {}
-
-      // Free course bypass
-      if (courseId === '10101010-1010-1010-1010-101010101010') {
-        isEnrolledLocally = true;
-      }
-
-      // Verify Enrollment in Database if possible
       let dbCourseId = courseId;
       if (dbCourseId === 'course-cardio-hiit') {
         dbCourseId = '20202020-2020-2020-2020-202020202020';
@@ -640,42 +586,54 @@ export const apiClient = {
 
       if (isSupabaseConfigured) {
         try {
-          const { data: enrollment } = (isValidUUID(userId) && isValidUUID(dbCourseId))
-            ? await supabase
-                .from('enrollments')
-                .select('id')
-                .eq('user_id', userId)
-                .eq('course_id', dbCourseId)
-                .maybeSingle()
-            : { data: null };
-
+          // 1. Admin check
           const { data: profile } = isValidUUID(userId)
             ? await supabase.from('profiles').select('role').eq('id', userId).maybeSingle()
             : { data: null };
           const isAdmin = profile?.role?.toString().toLowerCase() === 'admin';
-
-          if (!enrollment && !isAdmin && !isEnrolledLocally) {
-            return { data: null, authorized: false, error: 'Enrollment required to access course content.' };
-          }
-
-          const { data: courseData, error } = isValidUUID(dbCourseId)
-            ? await supabase
-                .from('courses')
-                .select('*, modules(*, lessons(*), assessments(*))')
-                .eq('id', dbCourseId)
-                .maybeSingle()
-            : { data: null, error: null };
-
-          return { data: courseData, authorized: true, error: error?.message || null };
-        } catch (_) {
-          if (isEnrolledLocally) {
+          if (isAdmin) {
             return { data: null, authorized: true, error: null };
           }
-        }
+
+          // 2. Free course check
+          if (isValidUUID(dbCourseId)) {
+            const { data: courseRow } = await supabase.from('courses').select('price').eq('id', dbCourseId).maybeSingle();
+            if (courseRow && (parseFloat(courseRow.price) === 0 || !courseRow.price)) {
+              return { data: null, authorized: true, error: null };
+            }
+          }
+
+          // 3. Database enrollment check
+          if (isValidUUID(userId) && isValidUUID(dbCourseId)) {
+            const { data: enrollment } = await supabase
+              .from('enrollments')
+              .select('id')
+              .eq('user_id', userId)
+              .eq('course_id', dbCourseId)
+              .maybeSingle();
+
+            if (enrollment) {
+              return { data: null, authorized: true, error: null };
+            }
+
+            // 4. Database payment check
+            const { data: payment } = await supabase
+              .from('payments')
+              .select('id, status')
+              .eq('user_id', userId)
+              .eq('course_id', dbCourseId)
+              .maybeSingle();
+
+            if (payment && ['successful', 'paid', 'completed'].includes((payment.status || '').toLowerCase())) {
+              return { data: null, authorized: true, error: null };
+            }
+          }
+
+          return { data: null, authorized: false, error: 'Enrollment required to access course content.' };
+        } catch (_) {}
       }
 
-      // Local fallback verification
-      return { data: null, authorized: isEnrolledLocally, error: isEnrolledLocally ? null : 'Enrollment required' };
+      return { data: null, authorized: false, error: 'Enrollment required' };
     }
   },
 

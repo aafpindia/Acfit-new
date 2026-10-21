@@ -79,28 +79,9 @@ export const CourseDetails = () => {
     return false;
   };
 
-  let isEnrolledLocally = false;
-  try {
-    const rawEnrollments = localStorage.getItem('_lms_enrollments');
-    if (rawEnrollments) {
-      const parsed = JSON.parse(rawEnrollments);
-      if (Array.isArray(parsed) && parsed.some(e => matchesCourse(e.courseId || e.course_id) && matchesUser(e))) {
-        isEnrolledLocally = true;
-      }
-    }
-    const rawPayments = localStorage.getItem('_lms_payments');
-    if (rawPayments) {
-      const parsed = JSON.parse(rawPayments);
-      if (Array.isArray(parsed) && parsed.some(p => matchesCourse(p.courseId || p.course_id) && matchesUser(p) && ['successful', 'paid'].includes((p.status || '').toLowerCase()))) {
-        isEnrolledLocally = true;
-      }
-    }
-  } catch (_) {}
-
   const isEnrolled = user
     ? (enrollments.some((e) => matchesCourse(e.courseId || e.course_id) && matchesUser(e)) ||
-       payments.some((p) => matchesCourse(p.courseId || p.course_id) && matchesUser(p) && ['successful', 'paid'].includes((p.status || '').toLowerCase())) ||
-       isEnrolledLocally)
+       payments.some((p) => matchesCourse(p.courseId || p.course_id) && matchesUser(p) && ['successful', 'paid', 'completed'].includes((p.status || '').toLowerCase())))
     : false;
 
   const handleEnroll = async () => {

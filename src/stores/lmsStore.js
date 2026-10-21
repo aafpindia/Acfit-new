@@ -20,8 +20,7 @@ import {
 import {
   enrollUser as enrollUserDb,
   fetchUserEnrollments,
-  fetchAllEnrollments,
-  saveLocalEnrollment
+  fetchAllEnrollments
 } from '../services/enrollmentService';
 import {
   markLessonComplete as markLessonCompleteDb,
@@ -50,8 +49,7 @@ import {
 import {
   fetchAllPayments,
   fetchUserPayments,
-  createPayment as createPaymentDb,
-  saveLocalPayment
+  createPayment as createPaymentDb
 } from '../services/paymentService';
 import {
   fetchSettings,
@@ -536,7 +534,7 @@ export const useLmsStore = create(
         const now = new Date().toISOString();
         const payId = paymentData?.razorpayPaymentId || paymentData?.id || `PAY-${Date.now()}`;
 
-        // Update local Zustand state immediately
+        // 1. Optimistically update local Zustand state for immediate UI feedback
         set((state) => {
           const isEnrolled = (state.enrollments || []).some(
             (e) => matchesCourse(e.courseId || e.course_id) && (String(e.userId || e.user_id) === String(userId))
@@ -577,10 +575,6 @@ export const useLmsStore = create(
             enrolled_at: now
           };
 
-          // Save to persistent localStorage backups immediately
-          saveLocalEnrollment(newEnrollment);
-          saveLocalPayment(newPayment);
-
           const updatedEnrollments = isEnrolled
             ? state.enrollments
             : [...state.enrollments, newEnrollment];
@@ -604,19 +598,16 @@ export const useLmsStore = create(
           };
         });
 
-        // Trigger persistent helpers and DB operations safely (best-effort)
-        try {
-          await enrollUserDb(courseId, userId);
-        } catch (e) {
-          console.warn('[lmsStore] DB enrollment failed, local state used:', e.message);
-        }
-
+        // 2. Persist directly to Supabase DB tables
         try {
           if (paymentData) {
             await createPaymentDb(paymentData);
           }
+          await enrollUserDb(courseId, userId);
+          // Re-sync authoritative state from Supabase
+          await get().syncFromSupabase({ id: userId });
         } catch (e) {
-          console.warn('[lmsStore] Payment record failed:', e.message);
+          console.warn('[lmsStore] Database sync error on enrollInCourse:', e.message);
         }
       },
 
@@ -643,12 +634,13 @@ export const useLmsStore = create(
           };
         });
 
+        // Write directly to Supabase DB `progress` table
         if (isSupabaseConfigured) {
           try {
             await markLessonCompleteDb(courseId, lessonId, userId);
             await get().syncFromSupabase({ id: userId });
           } catch (e) {
-            console.warn('[lmsStore] DB markLessonComplete failed, local state used:', e.message);
+            console.warn('[lmsStore] DB markLessonComplete failed:', e.message);
           }
         }
       },
@@ -1535,93 +1527,42 @@ export const useLmsStore = create(
           const deletedUserIds = new Set(JSON.parse(localStorage.getItem('_lms_deleted_user_ids') || '[]'));
           const isAdmin = !user || (user.role && user.role.toString().toLowerCase() === 'admin');
 
-          // Sync Users list for real-time reflection across dashboards
+          // 1. Sync authoritative Users list from Supabase profiles
           try {
             const allUsers = await fetchUsersDb();
-            if (Array.isArray(allUsers) && allUsers.length > 0) {
+            if (Array.isArray(allUsers)) {
               set({ users: allUsers });
             }
           } catch (_) {}
 
-          // Safely fetch and merge enrollments (preserving active local enrollments)
+          // 2. Sync authoritative Enrollments directly from Supabase DB
           const enrollRes = isAdmin ? await fetchAllEnrollments() : await fetchUserEnrollments(user?.id);
           if (enrollRes.success && Array.isArray(enrollRes.data)) {
-            set((state) => {
-              const currentEnrollments = state.enrollments || [];
-              const dbFiltered = enrollRes.data.filter((e) => !deletedUserIds.has(e.userId || e.user_id));
-              const merged = [...dbFiltered];
-
-              currentEnrollments.forEach((local) => {
-                const lCourse = String(local.courseId || local.course_id || '');
-                const lUser = String(local.userId || local.user_id || '');
-                const exists = merged.some(
-                  (m) => String(m.courseId || m.course_id) === lCourse && String(m.userId || m.user_id) === lUser
-                );
-                if (!exists && !deletedUserIds.has(lUser)) {
-                  merged.push(local);
-                }
-              });
-
-              return { enrollments: merged };
-            });
+            set({ enrollments: enrollRes.data });
           }
 
+          // 3. Sync authoritative Progress directly from Supabase DB
           const progressRes = await fetchAllProgress();
           if (progressRes.success && progressRes.data) {
-            set((state) => {
-              const currentProgress = state.progress || {};
-              const mergedProgress = { ...currentProgress };
-              Object.keys(progressRes.data).forEach((uid) => {
-                if (!deletedUserIds.has(uid)) {
-                  mergedProgress[uid] = {
-                    ...(mergedProgress[uid] || {}),
-                    ...progressRes.data[uid]
-                  };
-                }
-              });
-              return { progress: mergedProgress };
-            });
+            set({ progress: progressRes.data });
           }
 
+          // 4. Sync Attempts directly from Supabase DB
           const attemptsRes = await fetchAllAttempts();
           if (attemptsRes.success && Array.isArray(attemptsRes.data)) {
-            const cleanAttempts = attemptsRes.data.filter((a) => !deletedUserIds.has(a.userId || a.user_id));
-            set({ attempts: cleanAttempts });
+            set({ attempts: attemptsRes.data });
           }
 
+          // 5. Sync Certificates directly from Supabase DB
           const certsRes = isAdmin ? await fetchAllCertificates() : await fetchUserCertificates();
           if (certsRes.success && Array.isArray(certsRes.data)) {
-            const cleanCerts = certsRes.data.filter((c) => !deletedUserIds.has(c.userId || c.user_id));
-            set({ certificates: cleanCerts });
+            set({ certificates: certsRes.data });
           }
 
-          // Safely fetch and merge payments (preserving active local receipts)
-          const paymentsRes = isAdmin ? await fetchAllPayments() : await fetchUserPayments(user?.email);
+          // 6. Sync authoritative Payments directly from Supabase DB
+          const paymentsRes = isAdmin ? await fetchAllPayments() : await fetchUserPayments(user?.email, user?.id);
           if (paymentsRes.success && Array.isArray(paymentsRes.data)) {
-            set((state) => {
-              const currentPayments = state.payments || [];
-              const dbFiltered = paymentsRes.data.filter((p) => {
-                if (!p || !p.id) return false;
-                if (p.id === 'PAY-1001' || p.studentEmail === 'student@lms.com' || p.studentEmail === 'admin@lms.com') return false;
-                if (deletedUserIds.has(p.userId || p.user_id)) return false;
-                return true;
-              });
-
-              const merged = [...dbFiltered];
-              currentPayments.forEach((local) => {
-                const lId = local.id || local.razorpayPaymentId || local.razorpay_payment_id;
-                const exists = merged.some(
-                  (m) => (lId && (m.id === lId || m.razorpayPaymentId === lId || m.razorpay_payment_id === lId)) ||
-                         (String(m.courseId || m.course_id) === String(local.courseId || local.course_id) &&
-                          String(m.userId || m.user_id) === String(local.userId || local.user_id))
-                );
-                if (!exists && !deletedUserIds.has(local.userId || local.user_id)) {
-                  merged.push(local);
-                }
-              });
-
-              return { payments: merged };
-            });
+            set({ payments: paymentsRes.data });
           }
         } catch (err) {
           console.error('Error syncing Supabase data to Zustand:', err);
@@ -1642,7 +1583,11 @@ export const useLmsStore = create(
       }
     }),
     {
-      name: 'lms-store-storage'
+      name: 'lms-store-storage',
+      // Only persist non-database configuration preferences so database is always primary
+      partialize: (state) => ({
+        systemSettings: state.systemSettings
+      })
     }
   )
 );

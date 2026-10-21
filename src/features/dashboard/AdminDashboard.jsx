@@ -75,47 +75,21 @@ export const AdminDashboard = () => {
     } catch (_) {}
   }, [syncFromSupabase, subscribeToRealtime]);
 
-  // Compute Total Unique Members (Live Non-Deleted Users)
+  // Compute Total Unique Members directly from Supabase DB profiles
   useEffect(() => {
     let active = true;
     const computeTotalMembers = async () => {
-      const deletedUserIds = new Set(JSON.parse(localStorage.getItem('_lms_deleted_user_ids') || '[]'));
-      const uniqueLiveIds = new Set();
-      const uniqueLiveEmails = new Set();
       let liveUsersList = [];
-
       try {
         const fetched = await fetchUsers();
-        if (Array.isArray(fetched) && fetched.length > 0) {
+        if (Array.isArray(fetched)) {
           liveUsersList = fetched;
-          fetched.forEach((u) => {
-            if (u.id && !deletedUserIds.has(u.id) && u.status !== 'deleted') {
-              uniqueLiveIds.add(u.id);
-              if (u.email) uniqueLiveEmails.add(u.email.toLowerCase().trim());
-            }
-          });
         }
       } catch (_) {}
 
-      // Count genuine enrollments matching non-deleted user IDs
-      (enrollments || []).forEach((e) => {
-        const uid = e.userId || e.user_id;
-        if (uid && !deletedUserIds.has(uid)) {
-          uniqueLiveIds.add(uid);
-        }
-      });
-
-      // Count genuine payments matching non-deleted user IDs
-      (payments || []).forEach((p) => {
-        const uid = p.userId || p.user_id;
-        if (uid && !deletedUserIds.has(uid)) {
-          uniqueLiveIds.add(uid);
-        }
-      });
-
       if (active) {
         setDashboardUsers(liveUsersList);
-        setTotalMembers(uniqueLiveIds.size);
+        setTotalMembers(liveUsersList.length);
       }
     };
 
@@ -123,24 +97,19 @@ export const AdminDashboard = () => {
 
     const handleUpdate = () => { computeTotalMembers(); };
     window.addEventListener('lms_users_updated', handleUpdate);
-    window.addEventListener('storage', handleUpdate);
 
     return () => {
       active = false;
       window.removeEventListener('lms_users_updated', handleUpdate);
-      window.removeEventListener('storage', handleUpdate);
     };
-  }, [enrollments, payments, courses]);
+  }, []);
 
   // ─── 1. CORE 4 KPI CALCULATIONS ─────────────────────────────────────────
   const successfulPayments = useMemo(() => {
-    const deletedUserIds = new Set(JSON.parse(localStorage.getItem('_lms_deleted_user_ids') || '[]'));
     return payments.filter((p) => {
       if (!p || !p.id) return false;
-      if (p.id === 'PAY-1001' || p.studentEmail === 'student@lms.com' || p.studentEmail === 'admin@lms.com') return false;
-      if (deletedUserIds.has(p.userId || p.user_id)) return false;
       const st = (p.status || '').toLowerCase();
-      return st === 'successful' || st === 'paid';
+      return st === 'successful' || st === 'paid' || st === 'completed';
     });
   }, [payments]);
 

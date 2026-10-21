@@ -43,15 +43,7 @@ export const CoursesStudent = () => {
     };
 
     if (enrollments.some((e) => matchesCourse(e.courseId || e.course_id) && matchesUser(e))) return true;
-    if (payments.some((p) => matchesCourse(p.courseId || p.course_id) && matchesUser(p) && ['successful', 'paid'].includes((p.status || '').toLowerCase()))) return true;
-
-    try {
-      const raw = localStorage.getItem('_lms_enrollments');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.some(e => matchesCourse(e.courseId || e.course_id) && matchesUser(e))) return true;
-      }
-    } catch (_) {}
+    if (payments.some((p) => matchesCourse(p.courseId || p.course_id) && matchesUser(p) && ['successful', 'paid', 'completed'].includes((p.status || '').toLowerCase()))) return true;
 
     return false;
   };
