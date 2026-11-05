@@ -50,7 +50,10 @@ import {
   Globe,
   Award,
   BookOpen,
-  Menu
+  Menu,
+  Clock,
+  PhoneCall,
+  MessageSquare
 } from 'lucide-react';
 
 export const LandingPage = () => {
@@ -96,6 +99,17 @@ export const LandingPage = () => {
   const [isContactModalOpen, setIsContactModalOpen] = useState(false);
   const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
   const [directorySearch, setDirectorySearch] = useState('');
+
+  // Prevent background page from scrolling whenever About or Contact modal is open
+  useEffect(() => {
+    if (isContactModalOpen || isAboutModalOpen || isDirectoryModalOpen) {
+      const originalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = originalOverflow;
+      };
+    }
+  }, [isContactModalOpen, isAboutModalOpen, isDirectoryModalOpen]);
 
   // Enquiry Form State
   const [enquiryForm, setEnquiryForm] = useState({ name: '', email: '', message: '' });
@@ -1056,7 +1070,7 @@ export const LandingPage = () => {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 12 }}
               transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-              className="bg-white rounded-3xl p-6 sm:p-8 max-w-lg w-full border border-slate-200/80 shadow-2xl relative space-y-4 font-sans text-[#202124]"
+              className="bg-white rounded-3xl p-6 sm:p-8 max-w-xl w-full border border-slate-200/80 shadow-2xl relative space-y-5 font-sans text-[#202124] max-h-[90vh] overflow-y-auto"
             >
               {/* Top Accent Gradient Bar */}
               <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-[#2563EB] via-[#60A5FA] to-[#2E9B68] rounded-t-3xl" />
@@ -1069,84 +1083,119 @@ export const LandingPage = () => {
                 <X className="h-4.5 w-4.5" />
               </button>
 
-              <div className="space-y-4 pt-1">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-[#2563EB]/10 text-[#2563EB] flex items-center justify-center shrink-0">
-                    <Mail className="h-4.5 w-4.5" />
+              <div className="space-y-3 pt-1">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-[#2563EB]/10 text-[#2563EB] flex items-center justify-center shrink-0">
+                    <PhoneCall className="h-5 w-5" />
                   </div>
                   <div>
-                    <h3 className="text-xl font-black text-slate-900 tracking-tight">ACFIT Support & Inquiries</h3>
-                    <p className="text-[11px] text-slate-500 font-medium">We respond within 24 business hours</p>
+                    <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">Contact ACFIT Academy</h3>
+                    <p className="text-xs text-slate-500 font-medium">Contact us for more details, syllabus, fees & admissions</p>
                   </div>
                 </div>
 
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  Have questions about NASM certifications, upcoming practical workshops, or corporate partnerships? Get in touch with our admissions team.
+                  Have questions about our NASM CPT certifications, nutrition masterclasses, or workshop schedules? Reach out directly to our admissions & counseling desk below:
                 </p>
 
-                {enquirySuccess ? (
-                  <div className="p-6 text-center space-y-3 bg-emerald-50 rounded-2xl border border-emerald-200">
-                    <div className="w-12 h-12 rounded-full bg-emerald-500 text-white flex items-center justify-center mx-auto shadow-md">
-                      <Check className="h-6 w-6" />
+                {/* Direct Contact Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
+                  
+                  {/* Phone Support */}
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2 hover:border-[#2563EB]/40 transition-all">
+                    <div className="flex items-center gap-2 text-[#2563EB]">
+                      <Phone className="h-4 w-4" />
+                      <span className="text-[11px] font-black uppercase tracking-wider">Admissions Hotline</span>
                     </div>
-                    <h4 className="text-base font-extrabold text-slate-900">Inquiry Received!</h4>
-                    <p className="text-xs text-slate-600 max-w-xs mx-auto">
-                      Thank you for reaching out to ACFIT Academy. Our admissions representative will be in touch shortly.
+                    <div className="space-y-0.5">
+                      <a href="tel:+918005552234" className="text-xs font-bold text-slate-900 hover:text-[#2563EB] block">
+                        +91 (800) 555-ACFIT
+                      </a>
+                      <a href="tel:+919840012345" className="text-xs font-bold text-slate-900 hover:text-[#2563EB] block">
+                        +91 98400 12345
+                      </a>
+                    </div>
+                    <span className="text-[10px] text-slate-500 block">Toll-free across India</span>
+                  </div>
+
+                  {/* WhatsApp Support */}
+                  <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200/80 space-y-2 hover:border-emerald-400 transition-all">
+                    <div className="flex items-center gap-2 text-emerald-600">
+                      <MessageSquare className="h-4 w-4" />
+                      <span className="text-[11px] font-black uppercase tracking-wider">WhatsApp Chat</span>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-bold text-slate-900 block">+91 98400 12345</span>
+                      <span className="text-[10px] text-slate-500 block">Instant course brochures & syllabus</span>
+                    </div>
+                    <a
+                      href="https://wa.me/919840012345?text=Hello%20ACFIT%20Academy%2C%20I%20would%20like%20more%20details%20about%20your%20courses%20and%20certifications."
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 hover:underline pt-1"
+                    >
+                      <span>Chat on WhatsApp →</span>
+                    </a>
+                  </div>
+
+                  {/* Email Desk */}
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2 hover:border-[#2563EB]/40 transition-all">
+                    <div className="flex items-center gap-2 text-[#2563EB]">
+                      <Mail className="h-4 w-4" />
+                      <span className="text-[11px] font-black uppercase tracking-wider">Official Email</span>
+                    </div>
+                    <div className="space-y-0.5">
+                      <a href="mailto:support@acfitacademy.in" className="text-xs font-bold text-slate-900 hover:text-[#2563EB] block truncate">
+                        support@acfitacademy.in
+                      </a>
+                      <a href="mailto:admissions@acfitacademy.in" className="text-xs font-bold text-slate-900 hover:text-[#2563EB] block truncate">
+                        admissions@acfitacademy.in
+                      </a>
+                    </div>
+                    <span className="text-[10px] text-slate-500 block">Replies within 12 business hours</span>
+                  </div>
+
+                  {/* Advisory Hours */}
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
+                    <div className="flex items-center gap-2 text-amber-600">
+                      <Clock className="h-4 w-4" />
+                      <span className="text-[11px] font-black uppercase tracking-wider">Counseling Hours</span>
+                    </div>
+                    <div className="space-y-0.5 text-xs text-slate-900 font-semibold">
+                      <p>Mon – Sat: 9:00 AM – 7:00 PM IST</p>
+                      <p className="text-[10px] text-slate-500 font-medium">Sunday: Scheduled Workshop Batches</p>
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* Academy Headquarters Address */}
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-slate-50 to-blue-50/40 border border-slate-200/80 space-y-1.5">
+                  <div className="flex items-center gap-2 text-[#2563EB]">
+                    <MapPin className="h-4 w-4" />
+                    <span className="text-[11px] font-black uppercase tracking-wider">ACFIT Training Campus & Headquarters</span>
+                  </div>
+                  <p className="text-xs text-slate-700 font-medium leading-relaxed">
+                    ACFIT Academy of Fitness Science, 14/2, Anna Salai, Guindy, Chennai, Tamil Nadu 600032, India
+                  </p>
+                </div>
+
+                {/* Warm Invitation Banner */}
+                <div className="p-3.5 bg-blue-50/80 rounded-2xl border border-blue-100 flex items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <span className="text-xs font-extrabold text-[#2563EB] block">Contact us for more details!</span>
+                    <p className="text-[11px] text-slate-600">
+                      Feel free to call or WhatsApp anytime. Our counselors will help guide your fitness education journey.
                     </p>
                   </div>
-                ) : (
-                  <form onSubmit={handleEnquirySubmit} className="space-y-3 pt-1">
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">Your Name</label>
-                      <input
-                        required
-                        type="text"
-                        placeholder="e.g. Rahul Sharma"
-                        value={enquiryForm.name}
-                        onChange={(e) => setEnquiryForm({ ...enquiryForm, name: e.target.value })}
-                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 bg-slate-50/50 transition-all text-[#202124]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">Email Address</label>
-                      <input
-                        required
-                        type="email"
-                        placeholder="e.g. rahul@example.com"
-                        value={enquiryForm.email}
-                        onChange={(e) => setEnquiryForm({ ...enquiryForm, email: e.target.value })}
-                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 bg-slate-50/50 transition-all text-[#202124]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">Message / Query</label>
-                      <textarea
-                        required
-                        rows={3}
-                        placeholder="Ask us anything about courses, fees, or workshop dates..."
-                        value={enquiryForm.message}
-                        onChange={(e) => setEnquiryForm({ ...enquiryForm, message: e.target.value })}
-                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 bg-slate-50/50 transition-all text-[#202124]"
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={isSubmittingEnquiry}
-                      className="w-full bg-[#2563EB] hover:bg-[#1D4ED8] text-white py-3.5 rounded-xl font-bold text-xs uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#2563EB]/25 hover:shadow-xl hover:shadow-[#2563EB]/35 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <Send className="h-3.5 w-3.5" />
-                      <span>{isSubmittingEnquiry ? 'Submitting Inquiry...' : 'Submit Inquiry'}</span>
-                    </button>
-                  </form>
-                )}
-
-                <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 sm:gap-0 text-[11px] text-slate-500 font-mono">
-                  <span className="flex items-center gap-1"><Phone className="h-3 w-3 text-[#2563EB]" /> +91 (800) 555-ACFIT</span>
-                  <span>support@acfitacademy.in</span>
+                  <a
+                    href="tel:+918005552234"
+                    className="px-4 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white rounded-xl text-xs font-bold shrink-0 transition-all shadow-xs"
+                  >
+                    Call Now
+                  </a>
                 </div>
+
               </div>
             </motion.div>
           </div>

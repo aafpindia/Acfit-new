@@ -27,11 +27,12 @@ import { fetchUsers } from '../../services/userService';
 
 export const BroadcastModal = ({ isOpen, onClose, initialTarget = '' }) => {
   const { success, error: toastError } = useToast();
-  const { addAnnouncement, syncFromSupabase } = useLmsStore();
+  const { courses = [], addAnnouncement, syncFromSupabase } = useLmsStore();
 
   const [title, setTitle] = useState('');
-  const [targetType, setTargetType] = useState('all'); // 'all' | 'user'
+  const [targetType, setTargetType] = useState('all'); // 'all' | 'course' | 'user'
   const [selectedUser, setSelectedUser] = useState('');
+  const [selectedCourse, setSelectedCourse] = useState('');
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [priority, setPriority] = useState('NORMAL');
   const [body, setBody] = useState('');
@@ -48,9 +49,10 @@ export const BroadcastModal = ({ isOpen, onClose, initialTarget = '' }) => {
       if (!initialTarget) {
         setTargetType('all');
         setSelectedUser('');
+        setSelectedCourse(courses[0]?.id || '');
       }
     }
-  }, [isOpen, initialTarget]);
+  }, [isOpen, initialTarget, courses]);
 
   // Async load available DB & local registered users
   useEffect(() => {
@@ -114,10 +116,20 @@ export const BroadcastModal = ({ isOpen, onClose, initialTarget = '' }) => {
       return;
     }
 
+    if (targetType === 'course' && !selectedCourse) {
+      toastError('Please select a specific target program.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      // Determine final target string: 'All Athletes' or 'User: <selectedUser>'
-      const finalTarget = targetType === 'user' ? `User: ${selectedUser}` : 'All Athletes';
+      // Determine final target string: 'All Athletes' | 'Course: <CourseTitle>' | 'User: <selectedUser>'
+      const finalTarget =
+        targetType === 'user'
+          ? `User: ${selectedUser}`
+          : targetType === 'course'
+          ? `Course: ${selectedCourse}`
+          : 'All Athletes';
       const fullTitle = priority !== 'NORMAL' ? `[${priority}] ${title}` : title;
 
       // Store action handles DB + Zustand + Realtime WebSocket sync!
@@ -213,6 +225,34 @@ export const BroadcastModal = ({ isOpen, onClose, initialTarget = '' }) => {
 
                   <button
                     type="button"
+                    onClick={() => {
+                      setTargetType('course');
+                      if (!selectedCourse && courses.length > 0) setSelectedCourse(courses[0].title);
+                    }}
+                    className={`p-4 rounded-xl border text-left transition-all flex items-start gap-3 cursor-pointer ${
+                      targetType === 'course'
+                        ? 'border-[#2563EB] bg-[#EFF6FF]/60 ring-2 ring-[#2563EB]/20'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                      targetType === 'course' ? 'bg-[#2563EB] text-white' : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      <Users className="h-4 w-4" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-xs text-[#202124]">Program / Course Cohort</span>
+                        {targetType === 'course' && <CheckCircle2 className="h-4 w-4 text-[#2563EB]" />}
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                        Broadcasts to learners enrolled in a specific certification program.
+                      </p>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => setTargetType('user')}
                     className={`p-4 rounded-xl border text-left transition-all flex items-start gap-3 cursor-pointer ${
                       targetType === 'user'
@@ -237,6 +277,29 @@ export const BroadcastModal = ({ isOpen, onClose, initialTarget = '' }) => {
                   </button>
                 </div>
               </div>
+
+              {/* COURSE COHORT SELECTOR (WHEN TARGET IS 'COURSE') */}
+              {targetType === 'course' && (
+                <div className="bg-white p-6 rounded-2xl border border-blue-200 shadow-xs space-y-4">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-black uppercase tracking-wider text-[#2563EB] flex items-center gap-2">
+                      <Users className="h-4 w-4 text-[#2563EB]" />
+                      <span>Select Target Program</span>
+                    </label>
+                  </div>
+                  <select
+                    value={selectedCourse}
+                    onChange={(e) => setSelectedCourse(e.target.value)}
+                    className="w-full h-11 px-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:border-[#2563EB] focus:bg-white transition-all"
+                  >
+                    {courses.map((c) => (
+                      <option key={c.id} value={c.title}>
+                        {c.title} ({c.category || 'General'})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* SEARCHABLE STUDENT RECIPIENT SELECTOR (WHEN TARGET IS 'USER') */}
               {targetType === 'user' && (

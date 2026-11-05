@@ -729,6 +729,27 @@ export const Users = () => {
                         {new Date(selectedUser.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                       </span>
                     </div>
+
+                    <div className="space-y-1">
+                      <span className="text-[#5F6368] font-semibold block">Phone Number</span>
+                      <span className="text-[#202124] font-bold block">
+                        {selectedUser.phone || <span className="text-slate-400 font-normal italic">Not provided</span>}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1">
+                      <span className="text-[#5F6368] font-semibold block">Location / City</span>
+                      <span className="text-[#202124] font-bold block">
+                        {selectedUser.location || <span className="text-slate-400 font-normal italic">Not provided</span>}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1 md:col-span-2">
+                      <span className="text-[#5F6368] font-semibold block">Profile Bio & Training Goals</span>
+                      <p className="text-[#202124] bg-slate-50 border border-slate-200 rounded-xl p-3 leading-relaxed">
+                        {selectedUser.bio || <span className="text-slate-400 italic">No biography provided.</span>}
+                      </p>
+                    </div>
                   </div>
                 </div>
               )}

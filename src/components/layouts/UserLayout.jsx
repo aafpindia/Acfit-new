@@ -37,7 +37,7 @@ import {
 export const UserLayout = () => {
   const { user, signOut } = useAuth();
   const { theme, setTheme } = useTheme();
-  const { courses, announcements = [] } = useLmsStore();
+  const { courses, enrollments = [], announcements = [] } = useLmsStore();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -48,10 +48,33 @@ export const UserLayout = () => {
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const searchRef = useRef(null);
 
-  // Notifications state with live DB announcements integration
-  const [readNotificationIds, setReadNotificationIds] = useState([]);
+  // Notifications state with live DB announcements integration & localStorage persistence
+  const readStorageKey = user?.id ? `_lms_read_notifications_${user.id}` : '_lms_read_notifications';
+  const [readNotificationIds, setReadNotificationIds] = useState(() => {
+    try {
+      const saved = localStorage.getItem(readStorageKey);
+      return saved ? JSON.parse(saved) : [];
+    } catch (_) {
+      return [];
+    }
+  });
+
   const userEmail = (user?.email || '').toLowerCase();
   const userName = (user?.fullName || '').toLowerCase();
+
+  const userEnrolled = useMemo(() => {
+    return enrollments.filter(e => {
+      const uid = e.userId || e.user_id;
+      return uid === user?.id || (userEmail && (e.studentEmail || '').toLowerCase() === userEmail);
+    });
+  }, [enrollments, user?.id, userEmail]);
+
+  const userEnrolledCourseIds = useMemo(() => userEnrolled.map(e => e.courseId || e.course_id), [userEnrolled]);
+  const userEnrolledCourseTitles = useMemo(() => {
+    return courses
+      .filter(c => userEnrolledCourseIds.includes(c.id))
+      .map(c => (c.title || '').toLowerCase());
+  }, [courses, userEnrolledCourseIds]);
 
   const displayNotifications = useMemo(() => {
     const matched = announcements.filter((ann) => {
@@ -59,24 +82,23 @@ export const UserLayout = () => {
       if (!t || t === 'all' || t === 'all athletes' || t.includes('all registered athletes')) return true;
       if (userEmail && t.includes(userEmail)) return true;
       if (userName && t.includes(userName)) return true;
+      if (t.includes('course:')) {
+        const cTarget = t.replace('course:', '').trim();
+        return userEnrolledCourseIds.includes(cTarget) || userEnrolledCourseTitles.some(title => t.includes(title));
+      }
       return false;
     });
 
-    if (matched.length > 0) {
-      return matched.map((ann) => ({
+    return matched.map((ann) => {
+      const dateVal = ann.date || ann.created_at || ann.createdAt;
+      return {
         id: ann.id,
         text: `${ann.title}: ${ann.body}`,
-        time: ann.created_at ? new Date(ann.created_at).toLocaleDateString() : 'Recent',
+        time: dateVal ? new Date(dateVal).toLocaleDateString() : 'Recent',
         read: readNotificationIds.includes(ann.id)
-      }));
-    }
-
-    return [
-      { id: 1, text: 'Welcome to ACFIT Academy! Your enrollment is active.', time: 'Just now', read: readNotificationIds.includes(1) },
-      { id: 2, text: 'New Workout Blueprint added: 30-Day Lean Muscle & Strength', time: '1h ago', read: readNotificationIds.includes(2) },
-      { id: 3, text: 'Keep up your daily training streak!', time: '1d ago', read: true }
-    ];
-  }, [announcements, userEmail, userName, readNotificationIds]);
+      };
+    });
+  }, [announcements, userEmail, userName, userEnrolledCourseIds, userEnrolledCourseTitles, readNotificationIds]);
 
   const navItems = [
     {
@@ -175,6 +197,19 @@ export const UserLayout = () => {
   const markAllRead = () => {
     const allIds = displayNotifications.map(n => n.id);
     setReadNotificationIds(allIds);
+    try {
+      localStorage.setItem(readStorageKey, JSON.stringify(allIds));
+    } catch (_) {}
+  };
+
+  const toggleReadNotification = (id) => {
+    setReadNotificationIds(prev => {
+      const updated = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+      try {
+        localStorage.setItem(readStorageKey, JSON.stringify(updated));
+      } catch (_) {}
+      return updated;
+    });
   };
 
   const unreadCount = displayNotifications.filter((n) => !n.read).length;
@@ -303,20 +338,28 @@ export const UserLayout = () => {
                   )}
                 </div>
                 <div className="max-h-72 overflow-y-auto divide-y divide-[#E4E7EB]">
-                  {displayNotifications.map((item) => (
-                    <div
-                      key={item.id}
-                      className={`p-3 text-xs flex items-start gap-2.5 transition-colors ${
-                        item.read ? 'bg-white text-[#5F6368]' : 'bg-[#EFF6FF]/50 text-[#202124] font-medium'
-                      }`}
-                    >
-                      <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${item.read ? 'bg-[#8A8F98]' : 'bg-[#2563EB]'}`} />
-                      <div className="flex-1">
-                        <p className="leading-snug">{item.text}</p>
-                        <span className="text-[9px] text-[#8A8F98] block mt-1">{item.time}</span>
-                      </div>
+                  {displayNotifications.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-[#5F6368] space-y-1">
+                      <p className="font-semibold text-slate-700">No new notifications</p>
+                      <p className="text-[11px] text-slate-400">You're up to date with ACFIT broadcasts.</p>
                     </div>
-                  ))}
+                  ) : (
+                    displayNotifications.map((item) => (
+                      <div
+                        key={item.id}
+                        onClick={() => toggleReadNotification(item.id)}
+                        className={`p-3 text-xs flex items-start gap-2.5 transition-colors cursor-pointer hover:bg-slate-50 ${
+                          item.read ? 'bg-white text-[#5F6368]' : 'bg-[#EFF6FF]/50 text-[#202124] font-medium'
+                        }`}
+                      >
+                        <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${item.read ? 'bg-[#8A8F98]' : 'bg-[#2563EB]'}`} />
+                        <div className="flex-1">
+                          <p className="leading-snug">{item.text}</p>
+                          <span className="text-[9px] text-[#8A8F98] block mt-1">{item.time}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </DropdownMenuContent>
             </DropdownMenu>

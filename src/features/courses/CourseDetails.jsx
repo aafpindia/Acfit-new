@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useLmsStore } from '../../stores/lmsStore';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../hooks/useToast';
 import { useCourse } from '../../hooks/useCourses';
@@ -26,7 +26,10 @@ import {
   Globe,
   Sparkles,
   PlayCircle,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Phone,
+  MapPin,
+  X
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
@@ -36,12 +39,30 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/ta
 export const CourseDetails = () => {
   const { courseId } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, updateProfile } = useAuth();
   const { success, error } = useToast();
   const { enrollments, payments = [] } = useLmsStore();
   const { data: course } = useCourse(courseId);
   const enrollMutation = useEnroll();
   const [enrollLoading, setEnrollLoading] = useState(false);
+
+  // Profile completion enforcement before enrollment/payment
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    fullName: user?.fullName || '',
+    phone: user?.phone || '',
+    location: user?.location || '',
+    bio: user?.bio || '',
+  });
+
+  const isProfileComplete = Boolean(
+    user?.fullName &&
+    user?.fullName.trim().length >= 2 &&
+    user?.phone &&
+    user?.phone.trim().length >= 7 &&
+    user?.location &&
+    user?.location.trim().length >= 2
+  );
 
   if (!course) {
     return (
@@ -91,6 +112,54 @@ export const CourseDetails = () => {
       return;
     }
 
+    // Require complete real profile details before enabling payment/enrollment
+    if (!isProfileComplete) {
+      setProfileForm({
+        fullName: user.fullName || '',
+        phone: user.phone || '',
+        location: user.location || '',
+        bio: user.bio || '',
+      });
+      setIsProfileModalOpen(true);
+      return;
+    }
+
+    await proceedWithEnrollment(user);
+  };
+
+  const handleProfileCompletionSubmit = async (e) => {
+    e.preventDefault();
+    if (!profileForm.fullName.trim() || !profileForm.phone.trim() || !profileForm.location.trim()) {
+      error('Please provide Full Name, Phone Number, and Location.');
+      return;
+    }
+
+    setEnrollLoading(true);
+    try {
+      const res = await updateProfile({
+        fullName: profileForm.fullName.trim(),
+        phone: profileForm.phone.trim(),
+        location: profileForm.location.trim(),
+        bio: profileForm.bio.trim(),
+      });
+
+      if (!res.success) {
+        error(res.error || 'Failed to update profile credentials.');
+        setEnrollLoading(false);
+        return;
+      }
+
+      success('Profile details saved! Proceeding to checkout...');
+      setIsProfileModalOpen(false);
+      const updatedUser = res.user || { ...user, ...profileForm };
+      await proceedWithEnrollment(updatedUser);
+    } catch (err) {
+      error('Error saving profile details.');
+      setEnrollLoading(false);
+    }
+  };
+
+  const proceedWithEnrollment = async (activeUser) => {
     setEnrollLoading(true);
 
     try {
@@ -101,8 +170,8 @@ export const CourseDetails = () => {
           courseName: course.title,
           amount: course.price,
           currency: 'INR',
-          userEmail: user.email,
-          userName: user.fullName,
+          userEmail: activeUser.email,
+          userName: activeUser.fullName,
           platformName: 'ACFIT Academy LMS',
         });
 
@@ -114,8 +183,8 @@ export const CourseDetails = () => {
 
         const paymentPayload = {
           courseId: course.id,
-          studentName: user.fullName || user.name || 'Student',
-          studentEmail: user.email,
+          studentName: activeUser.fullName || activeUser.name || 'Student',
+          studentEmail: activeUser.email,
           courseTitle: course.title,
           amount: course.price,
           status: 'successful',
@@ -128,7 +197,7 @@ export const CourseDetails = () => {
         // Enroll with payment data (useEnroll atomically delegates to store & Supabase)
         await enrollMutation.mutateAsync({
           courseId: course.id,
-          userId: user.id,
+          userId: activeUser.id,
           paymentData: paymentPayload,
         });
 
@@ -136,8 +205,8 @@ export const CourseDetails = () => {
       } else {
         const freePaymentPayload = {
           courseId: course.id,
-          studentName: user.fullName || user.name || 'Student',
-          studentEmail: user.email,
+          studentName: activeUser.fullName || activeUser.name || 'Student',
+          studentEmail: activeUser.email,
           courseTitle: course.title,
           amount: 0,
           status: 'successful',
@@ -147,7 +216,7 @@ export const CourseDetails = () => {
         // Free enrollment
         await enrollMutation.mutateAsync({
           courseId: course.id,
-          userId: user.id,
+          userId: activeUser.id,
           paymentData: freePaymentPayload,
         });
 
@@ -451,6 +520,119 @@ export const CourseDetails = () => {
         </div>
 
       </div>
+
+      {/* ─── MANDATORY PROFILE DETAILS COMPLETION MODAL ─── */}
+      <AnimatePresence>
+        {isProfileModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/60 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              className="bg-white rounded-3xl p-6 sm:p-8 max-w-lg w-full border border-slate-200 shadow-2xl relative space-y-5 font-sans text-[#202124]"
+            >
+              <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-[#2563EB] to-[#2E9B68] rounded-t-3xl" />
+
+              <button
+                type="button"
+                onClick={() => setIsProfileModalOpen(false)}
+                className="absolute top-5 right-5 p-2 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all cursor-pointer"
+              >
+                <X className="h-4.5 w-4.5" />
+              </button>
+
+              <div className="space-y-1 pt-1">
+                <div className="flex items-center gap-2 text-[#2563EB]">
+                  <Shield className="h-5 w-5" />
+                  <span className="text-[11px] font-black uppercase tracking-wider">Required Enrollment Credentials</span>
+                </div>
+                <h3 className="text-xl font-black text-slate-900 tracking-tight">Complete Your Profile</h3>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Please provide your real contact details before registering for <strong className="text-slate-800">{course.title}</strong>. These credentials are synced with your student record and official accreditation certificate.
+                </p>
+              </div>
+
+              <form onSubmit={handleProfileCompletionSubmit} className="space-y-4 pt-1">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
+                    Full Legal Name <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="e.g. Rahul Sharma"
+                    value={profileForm.fullName}
+                    onChange={(e) => setProfileForm({ ...profileForm, fullName: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold focus:outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 bg-slate-50 transition-all text-[#202124]"
+                  />
+                  <span className="text-[10px] text-slate-400">Must match your government ID for certificate verification.</span>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
+                    Phone / WhatsApp Number <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    required
+                    type="tel"
+                    placeholder="e.g. +91 98765 43210"
+                    value={profileForm.phone}
+                    onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold focus:outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 bg-slate-50 transition-all text-[#202124]"
+                  />
+                  <span className="text-[10px] text-slate-400">Used for admission alerts & batch schedule notifications.</span>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
+                    City & State <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="e.g. Chennai, Tamil Nadu"
+                    value={profileForm.location}
+                    onChange={(e) => setProfileForm({ ...profileForm, location: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold focus:outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 bg-slate-50 transition-all text-[#202124]"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
+                    Fitness Goal / Athletic Focus <span className="text-slate-400">(Optional)</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="e.g. Preparing for CPT certification / Strength training focus..."
+                    value={profileForm.bio}
+                    onChange={(e) => setProfileForm({ ...profileForm, bio: e.target.value })}
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-medium focus:outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 bg-slate-50 transition-all text-[#202124]"
+                  />
+                </div>
+
+                <div className="pt-2 flex items-center justify-end gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setIsProfileModalOpen(false)}
+                    className="rounded-xl text-xs h-10 px-4"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    isLoading={enrollLoading}
+                    className="rounded-xl text-xs h-10 px-6 font-bold shadow-md shadow-[#2563EB]/20"
+                  >
+                    Save Profile & Proceed to {course.price === 0 ? 'Access' : 'Payment'} →
+                  </Button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

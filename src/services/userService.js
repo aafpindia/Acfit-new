@@ -1,40 +1,86 @@
 import { supabase, isSupabaseConfigured, handleSupabaseError, handleSuccess } from './supabaseService';
 
 /**
- * Fetch all registered users directly from Supabase DB `profiles` table
+ * Fetch all registered users directly from Supabase DB `profiles` table with local cache fallback
  */
 export const fetchUsers = async () => {
-  if (!isSupabaseConfigured) {
-    return [];
-  }
+  let dbUsers = [];
 
-  try {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .order('created_at', { ascending: false });
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-    if (error) {
-      handleSupabaseError(error, 'fetchUsers profiles');
-      return [];
+      if (!error && Array.isArray(data)) {
+        dbUsers = data.map((p) => ({
+          id: p.id,
+          fullName: p.full_name || p.fullName || (p.email ? p.email.split('@')[0] : 'Member'),
+          email: p.email,
+          phone: p.phone || '',
+          location: p.location || '',
+          bio: p.bio || '',
+          role: (p.role || 'user').toLowerCase(),
+          status: p.status || 'active',
+          avatarUrl: p.avatar_url || null,
+          createdAt: p.created_at || new Date().toISOString(),
+          source: 'database'
+        }));
+      } else if (error) {
+        handleSupabaseError(error, 'fetchUsers profiles');
+      }
+    } catch (err) {
+      handleSupabaseError(err, 'fetchUsers profiles exception');
     }
-
-    const userList = (data || []).map((p) => ({
-      id: p.id,
-      fullName: p.full_name || p.fullName || (p.email ? p.email.split('@')[0] : 'Member'),
-      email: p.email,
-      role: (p.role || 'user').toLowerCase(),
-      status: p.status || 'active',
-      avatarUrl: p.avatar_url || null,
-      createdAt: p.created_at,
-      source: 'database'
-    }));
-
-    return userList;
-  } catch (err) {
-    handleSupabaseError(err, 'fetchUsers profiles exception');
-    return [];
   }
+
+  // Read local registered users cache to merge any newly signed up / signed in users
+  let localUsers = [];
+  try {
+    const raw = localStorage.getItem('_lms_registered_users');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        localUsers = parsed
+          .filter(u => (u.email || '').toLowerCase() !== 'user@gmail.com')
+          .map(u => ({
+            id: u.id,
+            fullName: u.fullName || (u.email ? u.email.split('@')[0] : 'Member'),
+            email: u.email,
+            phone: u.phone || '',
+            location: u.location || '',
+            bio: u.bio || '',
+            role: (u.role || 'user').toLowerCase(),
+            status: u.status || 'active',
+            avatarUrl: u.avatarUrl || null,
+            createdAt: u.createdAt || new Date().toISOString(),
+            source: 'local'
+          }));
+      }
+    }
+  } catch (_) {}
+
+  // Merge database users with local registered users by email
+  const mergedMap = new Map();
+  dbUsers.forEach(u => mergedMap.set((u.email || '').toLowerCase(), u));
+  localUsers.forEach(u => {
+    const key = (u.email || '').toLowerCase();
+    if (!mergedMap.has(key)) {
+      mergedMap.set(key, u);
+    } else {
+      // Merge extra details (like phone or location) if local has newer data
+      const existing = mergedMap.get(key);
+      mergedMap.set(key, {
+        ...existing,
+        phone: existing.phone || u.phone || '',
+        location: existing.location || u.location || '',
+        bio: existing.bio || u.bio || ''
+      });
+    }
+  });
+
+  return Array.from(mergedMap.values());
 };
 
 /**

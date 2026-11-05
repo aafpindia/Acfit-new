@@ -20,18 +20,24 @@ import {
   Mail,
   Sparkles,
   Upload,
-  Trash2
+  Trash2,
+  Phone,
+  MapPin
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
+import { Textarea } from '../../components/ui/textarea';
 import { Button } from '../../components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Badge } from '../../components/ui/badge';
 
 const profileSchema = z.object({
   fullName: z.string().min(2, 'Name must be at least 2 characters'),
-  avatarUrl: z.string().optional()
+  avatarUrl: z.string().optional(),
+  phone: z.string().optional(),
+  location: z.string().optional(),
+  bio: z.string().optional()
 });
 
 const passwordSchema = z
@@ -73,7 +79,10 @@ export const Settings = () => {
     resolver: zodResolver(profileSchema),
     defaultValues: {
       fullName: user?.fullName || '',
-      avatarUrl: user?.avatarUrl || storedAvatar || ''
+      avatarUrl: user?.avatarUrl || storedAvatar || '',
+      phone: user?.phone || '',
+      location: user?.location || '',
+      bio: user?.bio || ''
     }
   });
 
@@ -124,7 +133,13 @@ export const Settings = () => {
 
   const onProfileSubmit = async (values) => {
     setProfileLoading(true);
-    const res = await updateProfile(values.fullName, values.avatarUrl || undefined);
+    const res = await updateProfile({
+      fullName: values.fullName,
+      avatarUrl: values.avatarUrl || undefined,
+      phone: values.phone || '',
+      location: values.location || '',
+      bio: values.bio || ''
+    });
     setProfileLoading(false);
 
     if (res.success) {
@@ -202,11 +217,41 @@ export const Settings = () => {
             <form onSubmit={handleProfileSubmit(onProfileSubmit)} className="space-y-5 font-sans">
               <Input
                 label="Full Name"
-                placeholder="Alex Admin"
+                placeholder="e.g. Rahul Sharma"
                 leftIcon={<User className="h-4.5 w-4.5" />}
                 error={profileErrors.fullName?.message}
                 {...registerProfile('fullName')}
               />
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Input
+                  label="Phone Number"
+                  placeholder="e.g. +91 98765 43210"
+                  leftIcon={<Phone className="h-4.5 w-4.5" />}
+                  error={profileErrors.phone?.message}
+                  {...registerProfile('phone')}
+                />
+
+                <Input
+                  label="Location / City"
+                  placeholder="e.g. Chennai, Tamil Nadu"
+                  leftIcon={<MapPin className="h-4.5 w-4.5" />}
+                  error={profileErrors.location?.message}
+                  {...registerProfile('location')}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-[#202124]">
+                  Profile Bio & Training Background
+                </label>
+                <Textarea
+                  rows={3}
+                  placeholder="Share your athletic goals or personal fitness experience..."
+                  {...registerProfile('bio')}
+                  className="rounded-xl border-slate-300 text-xs font-medium"
+                />
+              </div>
 
               {/* Avatar Section with File Upload + URL Fallback */}
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">

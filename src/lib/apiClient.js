@@ -76,10 +76,10 @@ const initLocalUserDatabase = () => {
     });
   }
 
-  // Filter out any legacy dummy seed users like admin@lms.com or student@lms.com
+  // Filter out any legacy dummy seed users like admin@lms.com, student@lms.com, or user@gmail.com
   seedUsers = seedUsers.filter(u => {
     const em = (u.email || '').toLowerCase();
-    return em !== 'admin@lms.com' && em !== 'student@lms.com';
+    return em !== 'user@gmail.com' && em !== 'admin@lms.com' && em !== 'student@lms.com';
   });
 
   localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(seedUsers));
@@ -135,6 +135,10 @@ export const apiClient = {
             role: (profile?.role || session.user.user_metadata?.role || 'USER').toUpperCase(),
             status: profile?.status || 'active',
             avatarUrl: profile?.avatar_url || storedAvatar || session.user.user_metadata?.avatar_url || null,
+            phone: profile?.phone || session.user.user_metadata?.phone || '',
+            location: profile?.location || session.user.user_metadata?.location || '',
+            bio: profile?.bio || session.user.user_metadata?.bio || '',
+            learningGoal: profile?.learning_goal || session.user.user_metadata?.learning_goal || '',
             createdAt: session.user.created_at
           };
 
@@ -211,6 +215,23 @@ export const apiClient = {
               profile = profileRes?.data;
             } catch (_) {}
 
+            if (!profile) {
+              try {
+                const { data: newProf } = await supabase
+                  .from('profiles')
+                  .upsert({
+                    id: data.user.id,
+                    email: data.user.email,
+                    full_name: data.user.user_metadata?.full_name || 'Member',
+                    role: (data.user.user_metadata?.role || 'user').toLowerCase(),
+                    status: 'active'
+                  }, { onConflict: 'id' })
+                  .select()
+                  .maybeSingle();
+                profile = newProf;
+              } catch (_) {}
+            }
+
             const user = {
               id: data.user.id,
               email: data.user.email,
@@ -218,6 +239,9 @@ export const apiClient = {
               role: (profile?.role || data.user.user_metadata?.role || 'USER').toUpperCase(),
               status: profile?.status || 'active',
               avatarUrl: profile?.avatar_url || null,
+              phone: profile?.phone || data.user.user_metadata?.phone || '',
+              location: profile?.location || data.user.user_metadata?.location || '',
+              bio: profile?.bio || data.user.user_metadata?.bio || '',
               createdAt: data.user.created_at
             };
 
@@ -225,6 +249,19 @@ export const apiClient = {
               await supabase.auth.signOut();
               return { data: null, error: 'Account suspended. Please contact support.' };
             }
+
+            // Sync with local registered database so Admin User Management updates immediately
+            try {
+              const users = JSON.parse(localStorage.getItem(REGISTERED_USERS_KEY) || '[]');
+              const existingIdx = users.findIndex(u => u.id === user.id || u.email?.toLowerCase() === cleanEmail);
+              if (existingIdx >= 0) {
+                users[existingIdx] = { ...users[existingIdx], ...user };
+              } else {
+                users.unshift(user);
+              }
+              localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(users));
+              window.dispatchEvent(new Event('lms_users_updated'));
+            } catch (_) {}
 
             localStorage.setItem(CURRENT_SESSION_KEY, JSON.stringify(user));
             return { data: { user, session: data.session }, error: null };

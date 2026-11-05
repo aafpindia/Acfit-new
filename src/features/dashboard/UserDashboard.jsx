@@ -506,7 +506,7 @@ export const UserDashboard = () => {
                       <span className="text-xs font-bold text-[#202124]">{ann.title}</span>
                       <span className="font-mono text-[9px] text-slate-500 shrink-0 flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
-                        {formatDate(ann.date)}
+                        {formatDate(ann.date || ann.created_at || ann.createdAt)}
                       </span>
                     </div>
                     <p className="font-mono text-xs text-slate-600 leading-relaxed">{ann.body}</p>

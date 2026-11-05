@@ -230,8 +230,21 @@ ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_settings ENABLE ROW LEVEL SECURITY;
 
 -- PROFILES
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS location TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS bio TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS learning_goal TEXT;
+
 DROP POLICY IF EXISTS "Users can view all profiles" ON profiles;
 CREATE POLICY "Users can view all profiles" ON profiles FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Users can insert own profile" ON profiles;
+CREATE POLICY "Users can insert own profile" ON profiles FOR INSERT WITH CHECK (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Admins can insert any profile" ON profiles;
+CREATE POLICY "Admins can insert any profile" ON profiles FOR INSERT WITH CHECK (
+  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+);
 
 DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
 CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE USING (auth.uid() = id);

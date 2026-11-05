@@ -249,6 +249,7 @@ export const AdminDashboard = () => {
     let highRisk = 0;
     let notStarted = 0;
     let lowProgress = 0;
+    const learnersList = [];
 
     enrollments.forEach((e) => {
       const uid = e.userId || e.user_id;
@@ -262,17 +263,56 @@ export const AdminDashboard = () => {
       const userAttempts = attempts.filter((a) => (a.userId === uid || a.user_id === uid) && (a.courseId === cid || a.course_id === cid));
       const failed = userAttempts.filter((a) => !a.passed).length;
 
-      if (failed >= 2) highRisk++;
-      else if (pct === 0) notStarted++;
-      else if (pct < 30) lowProgress++;
+      const learnerUser = dashboardUsers.find((u) => u.id === uid || u.email?.toLowerCase() === (e.studentEmail || '').toLowerCase());
+      const learnerName = learnerUser?.fullName || e.studentName || 'Student';
+      const learnerEmail = learnerUser?.email || e.studentEmail || uid;
+
+      if (failed >= 2) {
+        highRisk++;
+        learnersList.push({
+          id: `risk-${uid}-${cid}`,
+          userId: uid,
+          name: learnerName,
+          email: learnerEmail,
+          courseTitle: course?.title || 'Program',
+          level: 'high',
+          label: `${failed} Quiz Failures`,
+          pct
+        });
+      } else if (pct === 0) {
+        notStarted++;
+        learnersList.push({
+          id: `notstart-${uid}-${cid}`,
+          userId: uid,
+          name: learnerName,
+          email: learnerEmail,
+          courseTitle: course?.title || 'Program',
+          level: 'pending',
+          label: '0% Started',
+          pct: 0
+        });
+      } else if (pct < 30) {
+        lowProgress++;
+        learnersList.push({
+          id: `low-${uid}-${cid}`,
+          userId: uid,
+          name: learnerName,
+          email: learnerEmail,
+          courseTitle: course?.title || 'Program',
+          level: 'low',
+          label: `${pct}% Progress`,
+          pct
+        });
+      }
     });
 
     return {
       highRisk,
       notStarted,
-      lowProgress
+      lowProgress,
+      atRiskLearners: learnersList.slice(0, 4)
     };
-  }, [enrollments, courses, progress, attempts]);
+  }, [enrollments, courses, progress, attempts, dashboardUsers]);
 
   // ─── 6. RECENT ACTIVITY FEED ───────────────────────────────────────────
   const recentActivities = useMemo(() => {
@@ -291,15 +331,28 @@ export const AdminDashboard = () => {
       });
     });
 
-    // Recent member registrations
+    // Recent member registrations & sign-ins
     (dashboardUsers || []).forEach((u) => {
       const dateStr = u.createdAt || u.created_at;
       const timeAgo = dateStr ? new Date(dateStr).toLocaleDateString() : 'Recent';
       liveLogs.push({
         id: `u-${u.id}`,
-        text: `New member registered: ${u.fullName || u.email}`,
+        text: `Member active: ${u.fullName || u.email}`,
         sub: `${(u.role || 'user').toUpperCase()} Account · ${timeAgo}`,
         type: 'user',
+        timestamp: dateStr ? new Date(dateStr).getTime() : 0
+      });
+    });
+
+    // Recent announcements
+    (useLmsStore.getState().announcements || []).forEach((ann) => {
+      const dateStr = ann.date || ann.created_at;
+      const timeAgo = dateStr ? new Date(dateStr).toLocaleDateString() : 'Recent';
+      liveLogs.push({
+        id: `ann-${ann.id}`,
+        text: `Broadcast: ${ann.title}`,
+        sub: `Target: ${ann.target || 'All Athletes'} · ${timeAgo}`,
+        type: 'announcement',
         timestamp: dateStr ? new Date(dateStr).getTime() : 0
       });
     });
@@ -683,6 +736,34 @@ export const AdminDashboard = () => {
                 </div>
               </div>
 
+              {/* Specific At-Risk Learners Preview */}
+              {atRiskBreakdown.atRiskLearners && atRiskBreakdown.atRiskLearners.length > 0 && (
+                <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
+                    Learners Requiring Follow-up ({atRiskBreakdown.atRiskLearners.length})
+                  </span>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {atRiskBreakdown.atRiskLearners.map((lr) => (
+                      <div
+                        key={lr.id}
+                        onClick={() => navigate('/admin/users')}
+                        className="p-2 rounded-lg bg-slate-50 hover:bg-blue-50 border border-slate-200/80 flex items-center justify-between gap-2 cursor-pointer transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <span className="font-bold text-[11px] text-[#202124] block truncate">{lr.name}</span>
+                          <span className="text-[10px] text-slate-500 block truncate">{lr.courseTitle}</span>
+                        </div>
+                        <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded shrink-0 ${
+                          lr.level === 'high' ? 'bg-rose-100 text-rose-700' : lr.level === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-700'
+                        }`}>
+                          {lr.label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="pt-2 border-t border-slate-100">
                 <Button
                   onClick={() => navigate('/admin/users')}
@@ -711,7 +792,7 @@ export const AdminDashboard = () => {
                 ) : (
                   recentActivities.map((act) => (
                     <div key={act.id} className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition-colors">
-                      <div className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${act.type === 'payment' ? 'bg-emerald-500' : act.type === 'cert' ? 'bg-amber-500' : 'bg-[#2563EB]'}`} />
+                      <div className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${act.type === 'payment' ? 'bg-emerald-500' : act.type === 'cert' ? 'bg-amber-500' : act.type === 'announcement' ? 'bg-purple-500' : 'bg-[#2563EB]'}`} />
                       <div className="min-w-0 flex-1 space-y-0.5">
                         <span className="font-bold text-[#202124] block truncate">{act.text}</span>
                         <span className="text-[11px] text-[#5F6368] block">{act.sub}</span>

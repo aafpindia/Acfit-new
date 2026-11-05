@@ -44,9 +44,9 @@ export const UserProfile = () => {
   const [formData, setFormData] = useState({
     fullName: user?.fullName || '',
     email: user?.email || '',
-    phone: user?.phone || '+91 98765 43210',
-    location: user?.location || 'Chennai, Tamil Nadu',
-    bio: user?.bio || 'Dedicated fitness enthusiast focusing on compound lifts, athletic conditioning circuits, and healthy nutrition plans.',
+    phone: user?.phone || '',
+    location: user?.location || '',
+    bio: user?.bio || '',
     avatarUrl: user?.avatarUrl || storedAvatar || ''
   });
 
@@ -59,9 +59,9 @@ export const UserProfile = () => {
       setFormData({
         fullName: user.fullName || '',
         email: user.email || '',
-        phone: user.phone || '+91 98765 43210',
-        location: user.location || 'Chennai, Tamil Nadu',
-        bio: user.bio || 'Dedicated fitness enthusiast focusing on compound lifts, athletic conditioning circuits, and healthy nutrition plans.',
+        phone: user.phone || '',
+        location: user.location || '',
+        bio: user.bio || '',
         avatarUrl: persistentAvatar
       });
     }
@@ -183,14 +183,14 @@ export const UserProfile = () => {
               </div>
 
               <p className="text-xs sm:text-sm text-slate-600 font-medium max-w-xl line-clamp-2">
-                {formData.bio}
+                {formData.bio || <span className="text-slate-400 italic">No biography provided yet. Click "Edit Settings" to add your bio.</span>}
               </p>
 
               <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4 text-xs font-semibold text-slate-500 pt-1">
                 <span className="flex items-center gap-1.5"><Mail className="h-4 w-4 text-[#2563EB]" /> {formData.email}</span>
-                <span className="flex items-center gap-1.5"><Phone className="h-4 w-4 text-emerald-600" /> {formData.phone}</span>
-                <span className="flex items-center gap-1.5"><MapPin className="h-4 w-4 text-rose-500" /> {formData.location}</span>
-                <span className="flex items-center gap-1.5"><Calendar className="h-4 w-4 text-amber-500" /> Joined {user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'Aug 2026'}</span>
+                <span className="flex items-center gap-1.5"><Phone className="h-4 w-4 text-emerald-600" /> {formData.phone || <span className="text-slate-400 font-normal italic">No phone added</span>}</span>
+                <span className="flex items-center gap-1.5"><MapPin className="h-4 w-4 text-rose-500" /> {formData.location || <span className="text-slate-400 font-normal italic">No location added</span>}</span>
+                <span className="flex items-center gap-1.5"><Calendar className="h-4 w-4 text-amber-500" /> Joined {user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'Recent'}</span>
               </div>
             </div>
 
