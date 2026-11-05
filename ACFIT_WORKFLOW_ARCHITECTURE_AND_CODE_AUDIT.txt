@@ -1,0 +1,914 @@
+====================================================================================================
+ACFIT ACADEMY LMS: COMPREHENSIVE ARCHITECTURAL, WORKFLOW, CODEWISE LOGIC & LACK-OF-LOGIC AUDIT REPORT
+====================================================================================================
+Document Version: 1.0.0
+Classification: Deep Engineering & Security Analysis
+Workspace: s:\acfit-main
+Platform: ACFIT LMS (Fitness Professional Certification & Learning Management Platform)
+Stack: React 19, Vite 8, Zustand 5, TanStack Query 5, Supabase (PostgreSQL + RLS), Bunny Stream, Razorpay
+====================================================================================================
+
+TABLE OF CONTENTS
+----------------------------------------------------------------------------------------------------
+1. EXECUTIVE SUMMARY & DUAL-ENGINE ARCHITECTURE OVERVIEW
+2. COMPLETE END-TO-END WORKFLOW: USER (STUDENT) PORTAL
+   2.1. Landing Page & Course Discovery
+   2.2. Authentication, Session Security & Idle Enforcement
+   2.3. Course Details & Curriculum Inspection
+   2.4. Checkout, Razorpay Payment Gateway & Seat Enrollment
+   2.5. Learning Experience: Course Player Workspace & 9 Player Engines
+   2.6. Assessment, Quiz Knowledge Checks & Final Certification Exam
+   2.7. Accreditation, Credential Generation & Certificate Verification
+   2.8. Student Dashboard, Payment Invoices & Progress Audits
+3. COMPLETE END-TO-END WORKFLOW: ADMIN PORTAL
+   3.1. Admin Authentication & RBAC Guard
+   3.2. Executive Dashboard & Live Financial/Learning KPIs
+   3.3. Program Studio Modal & Course Builder Workflow
+   3.4. Bunny Stream Video Ingestion (TUS Protocol, Chunking & CDN Delivery)
+   3.5. Assessments Management & Question Bank
+   3.6. Enrollment Administration & Manual Seat Allocation
+   3.7. Financial Ledger, Transaction Management & Invoice Inspector
+   3.8. User Management, RBAC Escalation & Policy Suspension
+   3.9. Priority Announcements & Realtime WebSocket Broadcasts
+   3.10. Business Reports & Data Export (CSV)
+   3.11. Student Testimonials & Inquiries Desk
+4. SYSTEMIC FLOW LAGS, BOTTLENECKS & ARCHITECTURAL FRICTION
+   4.1. Heavy State Synchronization Loop (Zustand + Supabase Resync)
+   4.2. Unpaginated Database Queries & Memory Bloat
+   4.3. Realtime Postgres Changes & Broadcast Storms
+   4.4. Video Streaming Latency & Player Blinking
+   4.5. Layout Thrashing & UI State Inconsistencies
+5. MODULE-BY-MODULE AUDIT: WORKFLOW, CODEWISE LOGIC, PROS, CONS & LACK OF LOGIC
+   5.1. Authentication & Security Middleware
+   5.2. Course Catalog & Public Landing Page
+   5.3. Payments & Razorpay Integration
+   5.4. Course Enrollment Pipeline
+   5.5. Course Player & Media Delivery Modalities
+   5.6. Assessment Engine & Grading Pipeline
+   5.7. Certification & Credential Verification
+   5.8. Program Studio & Course Management
+   5.9. User Management & Directory Service
+   5.10. Announcements & Realtime Messaging
+   5.11. Question Bank System
+   5.12. Business Reports & Data Analytics
+   5.13. Global State Management (lmsStore)
+6. CRITICAL ARCHITECTURAL BUGS & SECURITY VULNERABILITIES (THE "LACK OF LOGIC")
+   6.1. Fatal Cascade Deletion of Student Progress on Course Edit
+   6.2. Client-Side Exam Grading & Plaintext Answer Key Exposure
+   6.3. Unverified Public Certificate Page Failure
+   6.4. Triple Payment & Duplicate Enrollment Creation Bug
+   6.5. Unauthenticated Guest Treated as Administrator
+   6.6. Client-Side Exposure of Bunny Stream Admin API Key
+   6.7. Unverified Client-Side Razorpay Payment Processing
+   6.8. Broken Admin User Creation via Client-Side Auth SignUp
+   6.9. Non-Atomic Student Counter Lost Updates
+   6.10. LocalStorage-Only Question Bank (Multi-Admin Data Desync)
+   6.11. Missing Video End Events on Iframe Embeds
+   6.12. Phantom Password Reset Mechanism
+7. STRATEGIC REMEDIATION ROADMAP
+====================================================================================================
+
+
+====================================================================================================
+1. EXECUTIVE SUMMARY & DUAL-ENGINE ARCHITECTURE OVERVIEW
+====================================================================================================
+ACFIT Academy LMS is a modern web application engineered to deliver certification programs for fitness
+professionals (e.g., NASM Certified Personal Trainer - CPT, Certified Nutrition Coach - CNC, Certified
+Fitness Trainer - CFR PRO, and specialized workshops).
+
+The application is architected around a "Dual-Engine Hybrid Pattern":
+1. Live Database Mode (Supabase PostgreSQL): Activated when VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
+   are supplied. Data is persisted to normalized relational tables (profiles, courses, modules, lessons,
+   assessments, enrollments, progress, attempts, certificates, payments, announcements, system_settings).
+2. Offline / Mock Simulation Mode (LocalStorage + Zustand): Activated when Supabase is not configured or
+   when network calls time out. State is held in Zustand memory and partially serialized to LocalStorage.
+
+System Bootup Sequence:
+- main.jsx boots the React 19 tree inside BrowserRouter and QueryClientProvider.
+- AuthProvider (src/contexts/AuthContext.jsx) initiates apiClient.auth.me().
+- If a Supabase session exists, it queries the `profiles` table for user role ('user' vs 'admin').
+- Immediately calls `useLmsStore.getState().syncFromSupabase(user)` and `subscribeToRealtime(user)`.
+- Global routes (src/routes/index.jsx) mount with code splitting via React.lazy() and Suspense.
+- Route Guards: ProtectedRoute enforces valid session; AdminRoute enforces role === 'ADMIN'.
+
+
+====================================================================================================
+2. COMPLETE END-TO-END WORKFLOW: USER (STUDENT) PORTAL
+====================================================================================================
+
+2.1. Landing Page & Course Discovery
+------------------------------------
+- The visitor arrives at `/` (LandingPage.jsx).
+- The hero section displays ACFIT accreditation badges (NASM, CFR PRO), partner gym logos (Gold's Gym,
+  Slam Fitness, Anytime Fitness), and an animated counter (CountUp.jsx).
+- The "CFR PRO Certifications" section features a horizontal scrolling catalog of courses pulled directly
+  from `courses` state.
+- Interactive features:
+  - "Inquire Now" modal triggers `submitEnquiry` in `enquiryService.js`, writing to `enquiries` table or
+    localStorage fallback.
+  - "Explore Course" links route to `/courses/:courseId` (CourseDetails.jsx).
+  - Floating CTA buttons guide users to `/signup` or `/login`.
+
+2.2. Authentication, Session Security & Idle Enforcement
+--------------------------------------------------------
+- Public auth routes: `/login`, `/signup`, `/forgot-password`, `/reset-password`.
+- Login Flow:
+  1. Student enters email and password into `Login.jsx`.
+  2. Dispatches `signIn(email, password)` via `AuthContext.jsx` -> `apiClient.auth.login`.
+  3. Supabase validates credentials with `supabase.auth.signInWithPassword`.
+  4. Profile data is fetched from `profiles` table to determine user role.
+  5. Session timing starts: `initSessionSecurity()` writes `{ startTime, lastActive }` to localStorage.
+  6. Inactivity timer starts: 3600 seconds (60 minutes). Mousemove, keydown, and scroll events throttled
+     to 10-second intervals reset the inactivity clock. If 0 seconds remain, `signOut()` is enforced.
+  7. On success, user is redirected to `/app/courses` (or previous route stored in `location.state.from`).
+
+2.3. Course Details & Curriculum Inspection
+-------------------------------------------
+- Route: `/courses/:courseId` or `/app/courses/:courseId` (CourseDetails.jsx).
+- Fetches course data via `useCourse(courseId)` from TanStack Query and `lmsStore`.
+- Displays:
+  - Hero banner with title, instructor, level, duration, and price in INR (e.g., ₹0 for free or ₹14,999).
+  - Syllabus accordion: Full breakdown of Modules and Lessons with lesson type badges (Video, Rich Text,
+    PDF, PPT, Live Class, Quiz).
+  - Accreditation benefits (NASM CEU points, lifetime valid digital certificate).
+- Dynamic CTA:
+  - If already enrolled -> "Resume Learning" button leading to `/app/learning/:courseId`.
+  - If course is Free (price === 0) -> "Enroll for Free" button.
+  - If course is Paid -> "Enroll Now — ₹[Price]" button triggering Razorpay payment modal.
+
+2.4. Checkout, Razorpay Payment Gateway & Seat Enrollment
+---------------------------------------------------------
+- Free Enrollment Flow:
+  - Dispatches `enrollInCourse(course.id, user.id, freePaymentPayload)`.
+  - Also dispatches `enrollMutation.mutateAsync(...)`.
+  - Writes enrollment to `enrollments` table and ₹0 record to `payments` table.
+  - Navigates immediately to `/app/learning/:courseId`.
+- Paid Enrollment Flow:
+  1. Student clicks "Enroll Now".
+  2. `CourseDetails.jsx` calls `openCheckout(...)` from `src/services/razorpayService.js`.
+  3. Dynamically injects `https://checkout.razorpay.com/v1/checkout.js` if not already loaded.
+  4. Opens Razorpay standard checkout popup with amount = `price * 100` (in paise).
+  5. If Razorpay keys are absent in environment, launches the built-in high-fidelity interactive
+     simulation modal (`#rzp-simulator-backdrop`) allowing test card/UPI payment.
+  6. Upon completion handler callback, receives `razorpay_payment_id`.
+  7. Client dispatches `enrollInCourse(course.id, user.id, paymentPayload)` and `enrollMutation.mutateAsync(...)`.
+  8. Enters student into `enrollments` table and payment entry into `payments` table.
+
+2.5. Learning Experience: Course Player Workspace & 9 Player Engines
+-------------------------------------------------------------------
+- Route: `/app/learning/:courseId` (CoursePlayer.jsx).
+- Guard logic verifies enrollment via 4 checks:
+  1. Admin role bypass.
+  2. Course price === 0.
+  3. `enrollments` store/database match.
+  4. `payments` table match with status in ['successful', 'paid', 'completed'].
+- Player Workspace Layout:
+  - Collapsible Sidebar (left): Progress bar, Module list, Lessons list, Module Quizzes, Final Exam button,
+    and Certificate access card. Automatically closes on mobile screens (< 1024px).
+  - Main Media Stage (center/right): Renders the active syllabus item based on `item.type`.
+  - Footer Navigation: "Previous Lesson" and "Mark as Complete & Next" controls.
+  - Tabbed Workbench below player: "Overview & Notes", "Action Checklist", "Discussion", "Resources".
+- The 9 Specialized Player Modalities:
+  1. VideoPlayer (video):
+     - Plays Bunny Stream HLS manifests (`playlist.m3u8`) via Hls.js library with worker threads.
+     - Falls back to native video element for direct MP4 URLs.
+     - Detects YouTube links and Bunny iframe embeds, rendering responsive iframes.
+     - Dispatches `onComplete` callback when video triggers HTML5 `ended` event.
+  2. RichTextPlayer (rich-text / text):
+     - Renders rich HTML content, formatted typography, workout blueprints, and exercise instructions.
+  3. PdfPlayer (pdf):
+     - Renders embedded PDF document viewer with fullscreen toggle, page navigation, and download button.
+  4. PptPlayer (ppt):
+     - Renders interactive slide presentation carousel with next/previous slide controls.
+  5. ImagePlayer (image):
+     - Displays high-resolution anatomical charts, muscle diagrams, and infographics with lightbox zoom.
+  6. DownloadPlayer (download):
+     - Provides clickable file asset download cards (Excel workout templates, PDF diet charts).
+  7. ExternalLinkPlayer (external-link):
+     - Clean external launchpad card with button to open reference URLs in a new tab.
+  8. LiveClassPlayer (live-class):
+     - Shows schedule banner, countdown, and direct link to Zoom / Google Meet training sessions.
+  9. AssessmentPlayer (quiz):
+     - Full interactive quiz engine embedded directly inside the lesson syllabus.
+
+2.6. Assessment, Quiz Knowledge Checks & Final Certification Exam
+-----------------------------------------------------------------
+- Route: Inside CoursePlayer syllabus (`activeItem = { type: 'quiz' | 'final', id, moduleId }`).
+- Component: `src/features/courses/players/AssessmentPlayer.jsx`.
+- 3 Internal States:
+  - `intro`: Displays quiz title, total question count, timer duration, passing score percentage.
+  - `quizzing`: Question cards with single/multiple option radio selections, countdown timer ticking down
+    each second, question navigation stepper.
+  - `result`: Score summary card, passed/failed badge, correct answer count, time elapsed, and "Review Answers"
+    toggle displaying question explanations.
+- Final Exam Unlocking:
+  - `isFinalUnlocked`: Evaluates whether all syllabus lessons are marked completed in `progress`.
+  - If all lessons completed, unlocks the Final Certification Exam.
+  - If final exam score >= passing percentage (e.g., 70%), triggers `submitFinalAssessmentAttempt`.
+
+2.7. Accreditation, Credential Generation & Certificate Verification
+-------------------------------------------------------------------
+- When student passes the final exam:
+  1. `submitFinalAssessmentAttempt` records passing score to `attempts` table.
+  2. Generates unique credential ID (e.g., `CERT-[RANDOM]` or DB UUID).
+  3. Writes to `certificates` table: user_id, course_id, full_name, course_title, issued_at.
+  4. Triggers navigation to `/certificates/:certId` (CertificatePage.jsx).
+- Certificate Page features:
+  - Official blueprint styling, high-resolution ACFIT seal, student name, course title, exam score.
+  - Dedicated print stylesheet `@media print` with background overrides for 1-click "Print / Save PDF".
+  - Shareable seal ID for public credential verification.
+
+2.8. Student Dashboard, Payment Invoices & Progress Audits
+---------------------------------------------------------
+- Dashboard (`/app/dashboard` - UserDashboard.jsx):
+  - Metric Cards: Enrolled Programs count, Completed Lessons count, Certificates Earned count.
+  - Gauge Chart: Global curriculum completion percentage.
+  - "Continue Learning" active course cards with progress bars.
+  - Live Announcements feed broadcasted by gym administrators.
+- Progress Tracker (`/app/progress` - UserProgress.jsx):
+  - Per-course module completion breakdown.
+  - Lesson checklist showing completed vs remaining sessions.
+- Invoices & Billing (`/app/payments` - UserPayments.jsx):
+  - Historical payment table (Course title, amount paid, payment method, transaction ID, date).
+  - "View Invoice" modal with printable GST/receipt invoice layout.
+
+
+====================================================================================================
+3. COMPLETE END-TO-END WORKFLOW: ADMIN PORTAL
+====================================================================================================
+
+3.1. Admin Authentication & RBAC Guard
+--------------------------------------
+- Admins sign in via standard login with credentials possessing `role === 'admin'`.
+- All routes prefixed with `/admin/*` are wrapped by `AdminRoute.jsx`.
+- `AdminRoute` reads `role` from `AuthContext`. If user role is NOT 'ADMIN', immediately redirects to
+  `/unauthorized` or `/login`.
+- Sidebar navigation displays administrative modules: Dashboard, Programs (Studio), Enrollments,
+  Payments, Analytics, Announcements, Testimonials, Business Reports, Users, and Settings.
+
+3.2. Executive Dashboard & Live Financial/Learning KPIs
+-------------------------------------------------------
+- Route: `/admin/dashboard` (AdminDashboard.jsx).
+- Realtime KPI Banner:
+  - Total Active Members (queried live from `profiles` table).
+  - Total Published Courses.
+  - Total System Enrollments.
+  - Gross Revenue in INR (summed from `payments` where status is successful/paid).
+- Data Visualizations:
+  - Revenue Trend Line Area Chart (configurable 7-day, 30-day, 90-day filters).
+  - Enrollment Growth Column Chart.
+  - Category Distribution Donut Chart (Strength, Cardio, Nutrition, Functional).
+  - Completion Rate Gauge Chart.
+- Recent Platform Activity Ledger: Live table of latest student enrollments and certificate completions.
+
+3.3. Program Studio Modal & Course Builder Workflow
+---------------------------------------------------
+- Route: `/admin/courses` (CourseBuilder.jsx -> ProgramStudioModal.jsx).
+- Allows administrators to create, edit, structure, and publish courses.
+- 3 Integrated Studio Tabs:
+  1. OVERVIEW Tab:
+     - Program Title, Category selection, Difficulty level, Duration, Instructor name.
+     - Price input (₹0 = Free, > ₹0 = Paid).
+     - Thumbnail image URL / preview.
+     - Featured program toggle and Published status toggle.
+  2. MODULE Tab (Curriculum Tree Builder):
+     - Add Module, reorder modules, rename module title.
+     - Add Lesson to module: opens content modal supporting all 9 media types.
+     - Video lesson editor integrates Bunny Stream upload dropzone or YouTube URL input.
+     - Rich text editor with HTML body support.
+     - Module Assessment editor: configure quiz title, passing score %, timer duration, and questions.
+  3. FINAL EXAM Tab:
+     - Final Certification Exam configuration.
+     - Question editor: MCQ questions, options builder, correct option radio toggle, explanation text.
+- Save and Publish Pipeline:
+  - Clicking "Save as Draft" or "Publish Live" executes `updateCourse` or `createCourse` in `lmsStore`.
+
+3.4. Bunny Stream Video Ingestion (TUS Protocol, Chunking & CDN Delivery)
+------------------------------------------------------------------------
+- Component: `src/components/ui/VideoUploadDropzone.jsx` and `src/services/bunnyService.js`.
+- Implements 6-step Bunny Stream pipeline:
+  1. Admin drops a video file (MP4, MOV, MKV) onto the dropzone.
+  2. Calls Bunny REST API (`POST https://video.bunnycdn.com/library/{libId}/videos`) with title to create
+     a Bunny Video GUID.
+  3. Generates SHA-256 authorization signature: `SHA256(LibraryId + ApiKey + ExpirationTimestamp + VideoId)`.
+  4. Initiates resumable TUS upload (`tus-js-client`) to `https://video.bunnycdn.com/tusupload` with 5MB chunks.
+  5. UI displays real-time animated upload percentage and upload speed.
+  6. Upon TUS completion, Bunny transcodes video into adaptive HLS bitrates (360p, 720p, 1080p).
+  7. Video GUID and HLS URL are automatically linked to the lesson's content object.
+
+3.5. Assessments Management & Question Bank
+-------------------------------------------
+- Route: `/admin/courses` -> Assessments tab / QuestionBankDialog.jsx.
+- Standalone Question Bank allows admins to manage reusable test questions categorized by topic (Strength,
+  Nutrition, Biomechanics, First Aid).
+- Allows exporting questions and importing them directly into module quizzes or final exams.
+
+3.6. Enrollment Administration & Manual Seat Allocation
+-------------------------------------------------------
+- Route: `/admin/enrollments` (EnrollmentsAdmin.jsx).
+- Displays global student enrollment table: Student Name, Email, Course Title, Enrollment Date, and
+  Course Completion percentage.
+- Features:
+  - Search filter by student name, email, or course title.
+  - "Allocate Student Seat" modal: Select student from roster, select course, and manually enroll without
+    requiring payment.
+  - "Revoke Seat" (Trash icon): Deletes enrollment from database and revokes course access.
+
+3.7. Financial Ledger, Transaction Management & Invoice Inspector
+-----------------------------------------------------------------
+- Route: `/admin/payments` (Payments.jsx).
+- Live financial transaction register:
+  - Payment ID, Student Name, Email, Course Title, Amount (INR), Gateway Method, Payment Date, Status.
+- Invoice Inspector: Opens detailed tax invoice modal with ACFIT branding, customer details, and print button.
+- Delete Transaction: Permanently removes payment entry and adjusts live gross revenue KPIs.
+- Export CSV: Generates downloadable spreadsheet of filtered financial records.
+
+3.8. User Management, RBAC Escalation & Policy Suspension
+---------------------------------------------------------
+- Route: `/admin/users` (Users.jsx) and `/admin/users/:userId` (AdminUserDetails.jsx).
+- Administrative directory of all registered accounts.
+- Actions:
+  - Role Escalation: Toggle user between 'USER' and 'ADMIN'.
+  - Account Suspension: Toggle status between 'active' and 'suspended' (blocks login access).
+  - Add User Modal: Create new user with email, name, role, and temporary password.
+  - Reset Password Action: Dispatches reset notification.
+  - Delete User: Permanently deletes user profile and cascading records from Supabase.
+  - User Details Workspace: Deep dive into an individual student's enrolled courses, payment receipts,
+    exam attempts, and progress percentage.
+
+3.9. Priority Announcements & Realtime WebSocket Broadcasts
+-----------------------------------------------------------
+- Route: `/admin/announcements` (Announcements.jsx -> BroadcastModal.jsx).
+- Allows admins to broadcast bulletins with priority levels (NORMAL, URGENT, SYSTEM UPDATE, NEW FEATURE).
+- Targeting Options:
+  - "All Athletes": Broadcasts to entire platform student body.
+  - "Specific Student": Targets an individual user by email/ID.
+- Supabase Realtime Integration:
+  - Subscribes to Postgres change events on `announcements` and `enquiries` tables via WebSocket channel.
+  - When admin creates an announcement, student dashboards update automatically via debounced sync.
+
+3.10. Business Reports & Data Export (CSV)
+------------------------------------------
+- Route: `/admin/reports` (Reports.jsx).
+- Configurable report generator with 4 report domains:
+  1. Users Audit Report (User ID, name, email, role, status, enrollment count, certificate count, created date).
+  2. Course Catalog Audit (Title, category, instructor, price, lesson count, active student count, rating).
+  3. Revenue & Transaction Report (Payment ID, student name, email, course, amount, method, status, date).
+  4. Credential Accreditation Report (Certificate ID, student name, course title, issue date).
+- One-click "Export CSV Spreadsheet" downloads data formatted with CSV escaping.
+
+3.11. Student Testimonials & Inquiries Desk
+-------------------------------------------
+- Testimonials Admin (`/admin/testimonials` - Testimonials.jsx):
+  - Create, edit, toggle visibility, and delete student reviews displayed on public landing page.
+- Inquiries Desk (`/admin/announcements` -> Enquiries Tab):
+  - View contact queries submitted through landing page.
+  - Filter by status (Pending, Contacted, Resolved).
+  - "Broadcast Reply" action pre-fills user email in Broadcast Modal to send direct responses.
+
+
+====================================================================================================
+4. SYSTEMIC FLOW LAGS, BOTTLENECKS & ARCHITECTURAL FRICTION
+====================================================================================================
+
+4.1. Heavy State Synchronization Loop (Zustand + Supabase Resync)
+-----------------------------------------------------------------
+- Issue: Every single state mutation across the app triggers a complete global resync:
+  `await get().syncFromSupabase()`.
+- What happens: When a user completes ONE lesson, `markLessonComplete` executes:
+  1. Writes to Supabase `progress` table.
+  2. Calls `syncFromSupabase()`.
+  3. `syncFromSupabase` issues 8 sequential network requests:
+     - `fetchCourses()` (all courses, modules, lessons)
+     - `fetchAnnouncements()`
+     - `fetchEnquiriesDb()`
+     - `fetchSettings()`
+     - `fetchTestimonialsDb()`
+     - `fetchUsersDb()`
+     - `fetchAllEnrollments()`
+     - `fetchAllProgress()` (EVERY lesson progress record for EVERY user in the database!)
+     - `fetchAllAttempts()`
+     - `fetchAllCertificates()`
+     - `fetchAllPayments()`
+- Flow Lag Impact: Each lesson click produces 1-3 seconds of network congestion and heavy JSON parsing.
+  On high-latency or mobile connections, this causes noticeable UI freeze and spinner stutter.
+
+4.2. Unpaginated Database Queries & Memory Bloat
+------------------------------------------------
+- In `src/services/progressService.js`:
+  `fetchAllProgress` performs `supabase.from('progress').select('user_id, course_id, lesson_id, completed')`
+  with ZERO pagination, limit, or user scoping.
+- In `src/services/paymentService.js`: `fetchAllPayments` fetches the entire table.
+- In `src/services/assessmentService.js`: `fetchAllAttempts` fetches every quiz attempt ever recorded.
+- Flow Lag Impact: As the platform grows to thousands of users, downloading tens of thousands of rows on
+  every page transition will exhaust mobile browser memory and crash the JavaScript thread.
+
+4.3. Realtime Postgres Changes & Broadcast Storms
+-------------------------------------------------
+- In `src/stores/lmsStore.js` (lines 1308-1360):
+  Supabase Realtime listens to `postgres_changes` on `enquiries`, `announcements`, and `enrollments`.
+- When an event occurs, it executes `debouncedSync()` with a 300ms timer.
+- Flow Lag Impact: If 10 students enroll simultaneously during a workshop launch, 10 realtime events fire
+  in rapid succession, triggering multiple concurrent `syncFromSupabase()` cycles that race against each
+  other and overwrite React component states mid-render.
+
+4.4. Video Streaming Latency & Player Blinking
+----------------------------------------------
+- In `src/features/courses/players/VideoPlayer.jsx`:
+  When a student navigates between lessons, the player unmounts and remounts `Hls.js`.
+- If Bunny CDN transcode is in progress or experiencing edge replication delay, Hls.js triggers
+  `manifestLoadError` (HTTP 403 / 404). The player enters an error state requiring manual "Retry Connection".
+- Flow Lag Impact: For external video embeds (YouTube / Bunny iframe), `onComplete` is never fired because
+  there is no `postMessage` event listener attached to the iframe window. Students must manually realize
+  they need to find and click "Mark Complete".
+
+4.5. Layout Thrashing & UI State Inconsistencies
+------------------------------------------------
+- Duplicate Route Definition: In `src/routes/index.jsx`, `/app/learning/:courseId` is defined BOTH inside
+  the `<UserLayout>` route hierarchy (line 95) AND as a standalone route outside `<UserLayout>` (line 104).
+  Depending on React Router's internal route ranking, this causes conflicting layout mounting and redundant
+  component renders.
+- Mobile Sidebar Glitch: On viewports < 1024px, the sidebar closes whenever `selectItem` is called. If a
+  student taps a lesson to inspect its duration, the sidebar immediately disappears, requiring repeated taps
+  on the hamburger icon to navigate.
+
+
+====================================================================================================
+5. MODULE-BY-MODULE AUDIT: WORKFLOW, CODEWISE LOGIC, PROS, CONS & LACK OF LOGIC
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+5.1. Authentication & Security Middleware
+----------------------------------------------------------------------------------------------------
+- Files: `src/contexts/AuthContext.jsx`, `src/routes/ProtectedRoute.jsx`, `src/routes/AdminRoute.jsx`,
+  `src/lib/apiClient.js`.
+- Workflow:
+  1. Boot check via `apiClient.auth.me()` against Supabase session.
+  2. Subscribes to `supabase.auth.onAuthStateChange`.
+  3. Tracks 3600-second idle inactivity timer with document interaction listeners.
+  4. Role validation: `AdminRoute` verifies `user.role === 'ADMIN'`.
+- Codewise Logic:
+  - `lastActivityRef` records `Date.now()`. Event listeners on `mousemove`, `keydown`, `mousedown`,
+    `touchstart`, and `scroll` update `lastActivityRef` throttled to 10 seconds.
+  - Interval timer checks remaining seconds: if `<= 300`, sets warning flag; if `<= 0`, invokes `signOut()`.
+- Pros:
+  - Strict idle session timeout prevents unauthorized access on shared gym workstation computers.
+  - Smooth integration of `onAuthStateChange` keeps auth state synchronized across browser tabs.
+  - Throttled event listeners prevent scroll-jacking performance degradation.
+- Cons:
+  - Hardcoded admin email credentials (`admin@gmail.com` / `admin@123`) seeded directly into localStorage
+    by `initLocalUserDatabase()`.
+- Lack of Logic:
+  - IN `lmsStore.js` (line 1528):
+    `const isAdmin = !user || (user.role && user.role.toString().toLowerCase() === 'admin');`
+    CRITICAL FLAW: `!user` evaluates to `TRUE`! An unauthenticated guest browsing the site is evaluated
+    as an administrator during initial sync, triggering admin-level data fetching routines (`fetchAllEnrollments`,
+    `fetchAllCertificates`, `fetchAllPayments`)!
+
+----------------------------------------------------------------------------------------------------
+5.2. Course Catalog & Public Landing Page
+----------------------------------------------------------------------------------------------------
+- Files: `src/features/landing/LandingPage.jsx`, `src/features/courses/CourseDetails.jsx`.
+- Workflow:
+  - Public visitors browse certified programs, filter by category, view pricing, and submit inquiries.
+- Codewise Logic:
+  - Live courses are fetched from `courseService.fetchCourses()`. Testimonials are loaded from
+    `testimonialService.fetchTestimonials()`.
+  - Inquiries submit via `enquiryService.submitEnquiry` writing to `enquiries` table with fallback to
+    `_lms_mock_enquiries`.
+- Pros:
+  - High conversion design with authoritative fitness certifications (NASM, CFR PRO).
+  - Smooth horizontal course card carousel with custom navigation buttons.
+  - Responsive inquiry modal with auto-resetting form fields.
+- Cons:
+  - Heavy image assets directly in bundle without responsive `srcset` or dynamic CDN resizing.
+- Lack of Logic:
+  - In `LandingPage.jsx`, courses are filtered by `c.published !== false`. If an admin creates a course
+    and forgets to set published = true, it still displays in some views because default is inconsistent
+    between mock (`published: true`) and SQL (`published: false`).
+
+----------------------------------------------------------------------------------------------------
+5.3. Payments & Razorpay Integration
+----------------------------------------------------------------------------------------------------
+- Files: `src/services/razorpayService.js`, `src/services/paymentService.js`, `src/features/courses/CourseDetails.jsx`.
+- Workflow:
+  1. Student initiates enrollment on paid course.
+  2. `openCheckout()` loads Razorpay SDK and opens checkout modal.
+  3. Client receives payment ID upon successful card/UPI transaction.
+  4. Client writes record to `payments` table and `enrollments` table.
+- Codewise Logic:
+  - Razorpay standard checkout initialized with amount converted to paise (`price * 100`).
+  - Fallback simulator creates an in-DOM modal (`rzp-simulator-backdrop`) mimicking the Razorpay dialog.
+- Pros:
+  - Built-in interactive simulator enables complete functional testing without active bank credentials.
+  - Normalized payment data handling ensures consistent fields across mock and live Supabase.
+- Cons:
+  - Complete absence of server-side payment verification.
+- Lack of Logic:
+  - NO SERVER-SIDE ORDER CREATION: Standard Razorpay production flows require creating an Order via
+    backend API (`/v1/orders`), receiving `order_id`, and verifying HMAC-SHA256 signature
+    (`order_id + "|" + payment_id`) using the secret key.
+  - In this codebase, the payment is executed entirely on the client, and the frontend directly tells
+    Supabase "payment succeeded". Any user can inspect network traffic or dispatch `createPayment` with
+    arbitrary course IDs to obtain free access to paid courses.
+
+----------------------------------------------------------------------------------------------------
+5.4. Course Enrollment Pipeline
+----------------------------------------------------------------------------------------------------
+- Files: `src/services/enrollmentService.js`, `src/hooks/useEnrollments.js`, `src/features/courses/CourseDetails.jsx`.
+- Workflow:
+  - On checkout success, student is enrolled and assigned course seat.
+- Codewise Logic:
+  - `enrollUser()` performs `supabase.from('enrollments').upsert({ user_id, course_id })`.
+  - Increments course student count: `course.students + 1`.
+- Pros:
+  - Upsert on conflict `(user_id, course_id)` prevents duplicate database rows in `enrollments`.
+- Cons:
+  - Lost update race condition on course student count increment.
+- Lack of Logic:
+  - TRIPLE INSERTION EXECUTION BUG:
+    When a user enrolls in `CourseDetails.jsx`:
+    1. Line 127 calls `enrollInCourse(course.id, user.id, paymentPayload)` which calls `createPaymentDb`
+       and `enrollUserDb`.
+    2. Line 130 immediately calls `await enrollMutation.mutateAsync(...)`.
+    3. Inside `useEnrollments.js` (line 54), `mutationFn` calls `storeEnroll(...)` A SECOND TIME.
+    4. Inside `useEnrollments.js` (lines 58 & 66), `mutationFn` calls `enrollUser` and `createPayment`
+       A THIRD TIME.
+    Result: Every single payment and enrollment is dispatched 3 times to the database! Because `payments`
+    table uses `gen_random_uuid()` with no unique constraint, 3 duplicate payment records are created
+    for a single purchase, tripling recorded revenue!
+
+----------------------------------------------------------------------------------------------------
+5.5. Course Player & Media Delivery Modalities
+----------------------------------------------------------------------------------------------------
+- Files: `src/features/courses/CoursePlayer.jsx`, `src/features/courses/players/*`.
+- Workflow:
+  - Student selects syllabus item; player validates access and mounts corresponding media renderer.
+- Codewise Logic:
+  - Validates enrollment via 4 tiers: Admin role, Price === 0, Enrollment record, or Paid payment record.
+  - `loadNextItem` advances to next item or opens Final Certification Exam when all lessons are completed.
+- Pros:
+  - Rich variety of 9 specialized player engines covering every educational media format.
+  - Clean HLS adaptive bitrate streaming via Bunny CDN edge network.
+  - Comprehensive action checklist, overview notes, and discussion tabs below player.
+- Cons:
+  - Mobile drawer closes prematurely on navigation.
+- Lack of Logic:
+  - YouTube embeds and Bunny iframe embeds do not communicate playback completion to React. `onComplete`
+    is only bound to native HTML5 video `<video onEnded={...}>`. As a result, students watching YouTube
+    or iframe videos never trigger automatic progression.
+
+----------------------------------------------------------------------------------------------------
+5.6. Assessment Engine & Grading Pipeline
+----------------------------------------------------------------------------------------------------
+- Files: `src/features/courses/players/AssessmentPlayer.jsx`, `src/services/assessmentService.js`.
+- Workflow:
+  - Student takes module quiz or final exam; questions render with timer countdown.
+- Codewise Logic:
+  - Iterates over questions: compares `selectedOptions[q.id]` with `q.options[chosenIdx]?.isCorrect`.
+  - Calculates percentage: `(correctCount / questions.length) * 100`.
+  - Dispatches `submitAssessmentAttempt` or `submitFinalAssessmentAttempt`.
+- Pros:
+  - Clean UI with countdown timer, question stepper, submit confirmation, and post-quiz answer reviews.
+- Cons:
+  - Client-side execution of educational grading.
+- Lack of Logic:
+  - PLAINTEXT ANSWER KEY EXPOSURE & CLIENT-SIDE GRADING:
+    In `AssessmentPlayer.jsx`, all questions are sent to the client with `isCorrect: true` on each option!
+    Any student can open Chrome DevTools, inspect the React component props or Redux/Zustand store, and
+    read all correct answers.
+  - Furthermore, the score calculation happens entirely in the browser. A student can open DevTools
+    console and execute:
+    `useLmsStore.getState().submitFinalAssessmentAttempt(courseId, 100, true, userId, "Name", quizId)`
+    and instantly pass any exam and receive an official certificate without answering a single question.
+
+----------------------------------------------------------------------------------------------------
+5.7. Certification & Credential Verification
+----------------------------------------------------------------------------------------------------
+- Files: `src/features/courses/CertificatePage.jsx`, `src/services/certificateService.js`.
+- Workflow:
+  - When exam is passed, certificate is generated and viewed at `/certificates/:certId`.
+- Codewise Logic:
+  - Generates credential ID, records to `certificates` table.
+  - Page renders printable certificate with ACFIT seal and credential seal ID.
+- Pros:
+  - Professional certificate layout with dedicated `@media print` CSS rules for crisp PDF generation.
+- Cons:
+  - Lack of dynamic SVG/Canvas vector generation.
+- Lack of Logic:
+  - PUBLIC VERIFICATION BREAKDOWN:
+    In `CertificatePage.jsx` (line 13):
+    `const { certificates } = useLmsStore();`
+    `const cert = certificates.find((c) => c.id === certId);`
+    `if (!cert) return <div>Certificate not found</div>;`
+    Although `verifyCertificate(certId)` was written in `certificateService.js` to query Supabase directly,
+    `CertificatePage.jsx` NEVER CALLS IT! It only searches the in-memory Zustand store.
+    When a graduate shares their certificate URL (`/certificates/CERT-12345`) to an employer or on LinkedIn,
+    the employer (who is not logged in as that student) opens the link and sees "Certificate not found"!
+    Public verification is completely broken.
+
+----------------------------------------------------------------------------------------------------
+5.8. Program Studio & Course Management
+----------------------------------------------------------------------------------------------------
+- Files: `src/features/admin/CourseBuilder.jsx`, `src/features/admin/ProgramStudioModal.jsx`,
+  `src/services/courseService.js`.
+- Workflow:
+  - Admin creates or modifies course syllabus, modules, lessons, and final exams.
+- Codewise Logic:
+  - Multi-tab modal managing draft state, lessons tree, Bunny video dropzone, and quiz editors.
+- Pros:
+  - Comprehensive, all-in-one course creator modeled after professional enterprise LMS studios.
+  - Direct Bunny Stream TUS resumable file uploader with chunking and live percentage tracking.
+- Cons:
+  - Huge monolithic component (2,059 lines) with complex nested state.
+- Lack of Logic:
+  - CATASTROPHIC PROGRESS DELETION ON COURSE UPDATE:
+    In `src/services/courseService.js` (lines 463-466):
+    `if (Array.isArray(courseData.modules)) {`
+    `  await supabase.from('modules').delete().eq('course_id', courseId);`
+    `  await supabase.from('assessments').delete().eq('course_id', courseId).eq('is_final', false);`
+    When an admin opens a course to fix a typo or add a lesson and clicks "Save":
+    The backend DELETES all modules for that course!
+    Because the database schema has `ON DELETE CASCADE`:
+    `modules` deletion cascades to DELETE all `lessons`.
+    `lessons` deletion cascades to DELETE all records in `progress` table!
+    `modules` deletion cascades to DELETE all records in `attempts` table!
+    Result: EVERY ENROLLED STUDENT'S COMPLETED LESSONS AND QUIZ ATTEMPTS ARE PERMANENTLY ERASED FROM
+    THE DATABASE whenever an admin saves the course!
+
+----------------------------------------------------------------------------------------------------
+5.9. User Management & Directory Service
+----------------------------------------------------------------------------------------------------
+- Files: `src/features/admin/Users.jsx`, `src/features/admin/AdminUserDetails.jsx`, `src/services/userService.js`.
+- Workflow:
+  - Admin audits user directory, promotes/demotes roles, suspends accounts, and views student history.
+- Codewise Logic:
+  - Queries `profiles` table. Updates role ('admin' vs 'user') and status ('active' vs 'suspended').
+- Pros:
+  - Detailed student profile inspector showing enrollments, transaction history, and syllabus progress.
+- Cons:
+  - Missing server-side pagination on user roster.
+- Lack of Logic:
+  - BROKEN CLIENT-SIDE USER CREATION:
+    In `src/services/userService.js` (line 56), when an admin clicks "Add User" and submits the modal:
+    `const { data: authData, error: authErr } = await supabase.auth.signUp({ ... });`
+    Calling `supabase.auth.signUp` from an active browser session either fails, mutates the admin's own
+    session, or attempts to log the admin in as the new user!
+    If `signUp` fails, it attempts to insert directly into `profiles` with `id: crypto.randomUUID()`.
+    Postgres rejects this with foreign key error `profiles_id_fkey` because the ID does not exist in
+    `auth.users`. Admin user creation fails completely in live Supabase environments.
+
+----------------------------------------------------------------------------------------------------
+5.10. Announcements & Realtime Messaging
+----------------------------------------------------------------------------------------------------
+- Files: `src/features/admin/Announcements.jsx`, `src/components/broadcast/BroadcastModal.jsx`,
+  `src/services/announcementService.js`.
+- Workflow:
+  - Admin creates announcements targeted to all athletes or specific users. Students see them in dashboard.
+- Codewise Logic:
+  - Inserts to `announcements` table. Supabase Realtime channel broadcasts event to connected clients.
+- Pros:
+  - Instant WebSocket notification updates without requiring page refresh.
+  - Priority badge labeling (URGENT, BULLETIN, UPDATE).
+- Cons:
+  - Broadcast debouncing triggers global store sync instead of targeted cache invalidation.
+- Lack of Logic:
+  - In `BroadcastModal.jsx`, targeting an individual student creates an announcement string `User: <email>`.
+    Filtering on the student dashboard is done via client-side string matching rather than a normalized
+    relational schema (`target_user_id UUID REFERENCES profiles(id)`).
+
+----------------------------------------------------------------------------------------------------
+5.11. Question Bank System
+----------------------------------------------------------------------------------------------------
+- Files: `src/features/admin/Assessments.jsx`, `src/features/admin/QuestionBankDialog.jsx`.
+- Workflow:
+  - Admins create repository of questions for reuse across assessments.
+- Codewise Logic:
+  - Reads and writes questions to `localStorage.getItem('_lms_questions_bank')`.
+- Pros:
+  - Convenient categorization by domain and difficulty level.
+- Cons:
+  - LocalStorage-only persistence.
+- Lack of Logic:
+  - MULTI-ADMIN DESYNCHRONIZATION & DATA LOSS:
+    The Question Bank is NOT saved in Supabase database! It exists solely in the individual browser's
+    `localStorage`. If Admin A creates 100 questions on their laptop, Admin B logging in from their PC
+    sees 0 questions. If Admin A clears browser cache, the entire question bank is destroyed.
+
+----------------------------------------------------------------------------------------------------
+5.12. Business Reports & Data Analytics
+----------------------------------------------------------------------------------------------------
+- Files: `src/features/admin/Reports.jsx`, `src/features/admin/Analytics.jsx`.
+- Workflow:
+  - Admin selects report type, previews aggregated data table, and clicks "Export CSV".
+- Codewise Logic:
+  - Formats records into comma-delimited strings with RFC-compliant quote escaping. Generates dynamic
+    `data:text/csv` blob URL and triggers simulated anchor download.
+- Pros:
+  - Fast, client-side CSV generation with proper quote escaping.
+  - Covers all essential business metrics: Users, Catalog, Revenue, and Accreditation.
+- Cons:
+  - Limited to in-memory datasets; large historical datasets will cause browser memory spikes.
+- Lack of Logic:
+  - Date formatting in CSV uses client locale (`toLocaleDateString()`), causing format discrepancies
+    (DD/MM/YYYY vs MM/DD/YYYY) depending on which administrator exports the file.
+
+----------------------------------------------------------------------------------------------------
+5.13. Global State Management (lmsStore)
+----------------------------------------------------------------------------------------------------
+- Files: `src/stores/lmsStore.js`.
+- Workflow:
+  - Centralized Zustand store holding courses, enrollments, progress, attempts, certificates, payments,
+    announcements, enquiries, and system settings.
+- Codewise Logic:
+  - Zustand `create` with `persist` middleware configured to only persist `systemSettings`.
+  - Optimistic updates on all mutations followed by database persistence and full resync.
+- Pros:
+  - Immediate tactile UI response through optimistic state updates before network requests complete.
+- Cons:
+  - Massive store file (1,593 lines) combining 10 distinct business domains into a single object.
+- Lack of Logic:
+  - Conflicting identity keys: Store alternates between `userId` (camelCase) and `user_id` (snake_case),
+    `courseId` and `course_id`. Multiple helper functions (`isUserMatch`, `matchesCourse`) exist solely
+    to reconcile inconsistent key naming across different store actions.
+
+
+====================================================================================================
+6. CRITICAL ARCHITECTURAL BUGS & SECURITY VULNERABILITIES (THE "LACK OF LOGIC")
+====================================================================================================
+
+Below is an executive summary of the 12 critical bugs, security vulnerabilities, and logic flaws
+identified during this audit:
+
+----------------------------------------------------------------------------------------------------
+6.1. Fatal Cascade Deletion of Student Progress on Course Edit [STATUS: RESOLVED / PATCHED]
+File: `src/services/courseService.js` (lines 462-550)
+Original Vulnerability: When an admin updated a course, it executed:
+`await supabase.from('modules').delete().eq('course_id', courseId);`
+`await supabase.from('assessments').delete().eq('course_id', courseId).eq('is_final', false);`
+Because `lessons`, `progress`, and `attempts` had foreign keys with `ON DELETE CASCADE`, this wiped out
+all student completion records and quiz attempt history for the entire course upon every course save.
+
+Remediation Applied:
+Implemented differential synchronization:
+1. Queries existing modules and lessons for `courseId`.
+2. Upserts all retained modules, lessons, and module quizzes by stable UUIDs (`onConflict: 'id'`).
+3. Retains lesson identity so foreign keys in `progress` and `attempts` remain completely undisturbed.
+4. Selectively deletes ONLY lessons, modules, and quizzes that were explicitly removed by the administrator.
+Result: Course updates, title edits, price adjustments, and lesson additions now preserve 100% of student
+progress records and quiz attempt histories.
+
+----------------------------------------------------------------------------------------------------
+6.2. Client-Side Exam Grading & Plaintext Answer Key Exposure [STATUS: RESOLVED / PATCHED]
+File: `src/features/courses/players/AssessmentPlayer.jsx`, `src/services/assessmentService.js`, `api/submit-assessment.js`, `supabase_migration.sql`, `vite.config.js`
+Mechanism: Previously, the question payload in client memory contained `isCorrect: true` on each option and model explanations before submission, allowing users to inspect answers via DevTools. In addition, grading math and pass/fail evaluation ran entirely on the client, trusting user-submitted scores.
+Remediation (Applied):
+1. Sanitized questions rendered during the quiz in `AssessmentPlayer.jsx`: stripped `isCorrect`, `correctIndex`, and `explanation` from client memory during examination.
+2. Created PostgreSQL stored procedure `submit_assessment(p_course_id, p_module_id, p_assessment_id, p_answers, p_is_final)` in `supabase_migration.sql` (`SECURITY DEFINER`) to calculate scores, record attempts, and release certificates at the database layer.
+3. Created serverless grading endpoint `api/submit-assessment.js` and wired it into Vite development middleware in `vite.config.js`.
+4. Updated `submitAssessment` in `src/services/assessmentService.js` to execute secure backend evaluation and return sanitized post-exam review only after final submission.
+5. Added submission loading states and disabled inputs during grading evaluation.
+
+----------------------------------------------------------------------------------------------------
+6.3. Unverified Public Certificate Page Failure [STATUS: RESOLVED / PATCHED]
+File: `src/features/courses/CertificatePage.jsx` (lines 8-80), `src/services/certificateService.js` (lines 98-135)
+Original Vulnerability: The certificate page only performed an in-memory lookup on `certificates` in `useLmsStore`.
+Because `syncFromSupabase` only syncs certificates for the currently logged-in student, any third-party verifier
+(e.g., prospective employers, HR personnel, or LinkedIn visitors) opening `/certificates/:certId` was not logged in
+as that student and received an immediate "Certificate not found" screen, breaking public accreditation verification.
+
+Remediation Applied:
+1. Integrated `verifyCertificate(certId)` in `CertificatePage.jsx` as an authoritative fallback when the certificate
+   is not present in the local Zustand store.
+2. Added an asynchronous verification lifecycle with an official credential loading state (`[ Verifying Official Accreditation Credential... ]`)
+   to prevent UI flashing.
+3. Enhanced `verifyCertificate` in `certificateService.js` to return complete credential metadata including exam score from
+   `attempts` and official timestamps.
+4. Added a `[PUBLICLY VERIFIED]` badge on the credential seal when verified directly through the Supabase public ledger.
+Result: External employers and verifiers can now publicly inspect, verify, and print official certificates without needing to log in.
+
+----------------------------------------------------------------------------------------------------
+6.4. Triple Payment & Duplicate Enrollment Creation Bug [STATUS: RESOLVED / PATCHED]
+File: `src/features/courses/CourseDetails.jsx` (lines 126-156), `src/hooks/useEnrollments.js` (lines 47-75)
+Original Vulnerability: When enrolling in a course, `CourseDetails.jsx` explicitly called `enrollInCourse(course.id, user.id, paymentPayload)`
+(which inserted payment and enrollment records into Supabase and updated local store), and then called
+`await enrollMutation.mutateAsync(...)`. Inside `useEnrollments.js`, the mutation re-executed `storeEnroll` a second time,
+and then directly called `createPayment` and `enrollUser` a third time. Because `payments` uses `gen_random_uuid()` with no
+unique constraints, this created 3 duplicate payment records per purchase, tripling recorded revenue.
+
+Remediation Applied:
+1. Updated `useEnroll` in `useEnrollments.js` to serve as the single atomic pipeline, delegating solely to `lmsStore.enrollInCourse`.
+2. Removed redundant `createPayment` and `enrollUser` side-effects from `useEnrollments.js`.
+3. Removed the duplicate direct `enrollInCourse` call in `CourseDetails.jsx`, leaving `enrollMutation.mutateAsync` as the single executor.
+Result: Each enrollment now triggers exactly one optimistic UI update, one Supabase payment insertion, and one Supabase enrollment upsert.
+
+----------------------------------------------------------------------------------------------------
+6.5. Unauthenticated Guest Treated as Administrator [STATUS: RESOLVED / PATCHED]
+File: `src/stores/lmsStore.js` (line 1528)
+Original Vulnerability: `const isAdmin = !user || (user.role && user.role.toString().toLowerCase() === 'admin');`
+When `user` was null or unauthenticated during bootup or public landing page browsing, `isAdmin` evaluated to `true`,
+triggering admin-level platform-wide fetches (`fetchAllEnrollments`, `fetchAllCertificates`, `fetchAllPayments`).
+
+Remediation Applied:
+Strictly validated that `user` is non-null and possesses an active role of 'admin':
+`const isAdmin = Boolean(user && user.role && user.role.toString().toLowerCase() === 'admin');`
+Result: Unauthenticated guests and standard students now execute only scoped user-level queries, preventing
+unauthorized data exposure and eliminating severe bootup query latency.
+
+----------------------------------------------------------------------------------------------------
+6.6. Client-Side Exposure of Bunny Stream Admin API Key [STATUS: RESOLVED / PATCHED]
+File: `src/services/bunnyService.js`, `api/bunny/create-video.js`, `api/bunny/tus-signature.js`, `api/bunny/video-status.js`, `supabase/functions/bunny/index.ts`, `vite.config.js`, `.env`
+Mechanism: Previously, `VITE_BUNNY_API_KEY` was imported directly into `src/services/bunnyService.js`, causing the secret master API key to be bundled directly into production client JavaScript.
+Remediation (Applied):
+1. Removed `BUNNY_API_KEY` and `VITE_BUNNY_API_KEY` completely from frontend bundle code.
+2. Moved master API key to server-side only environment variable `BUNNY_API_KEY` in `.env`.
+3. Created serverless backend endpoints:
+   - `/api/bunny/create-video`: Creates video entries in Bunny Stream with server-side authorization.
+   - `/api/bunny/tus-signature`: Generates pre-signed SHA-256 `AuthorizationSignature` (formula: SHA256(LibraryId + ApiKey + ExpirationTimestamp + VideoId)).
+   - `/api/bunny/video-status`: Queries transcoding and replication progress using backend credentials.
+4. Created turnkey Supabase Edge Function (`supabase/functions/bunny/index.ts`) for Deno/Cloudflare deployments.
+5. Configured Vite development and preview server middleware in `vite.config.js`.
+6. Verified through production bundle scan (`dist/assets/*.js`) that zero Bunny Stream API keys exist in client assets.
+
+----------------------------------------------------------------------------------------------------
+6.7. Unverified Client-Side Razorpay Payment Processing [STATUS: RESOLVED / PATCHED]
+File: `src/services/razorpayService.js`, `src/features/courses/CourseDetails.jsx`, `api/create-razorpay-order.js`, `api/verify-razorpay-payment.js`, `vite.config.js`
+Mechanism: Previously used standard frontend-only Razorpay checkout without server-side order generation or
+HMAC-SHA256 signature verification.
+Remediation (Applied):
+1. Created `/api/create-razorpay-order.js` to create authentic Razorpay orders via server-side API auth (with seamless fallback to simulated orders in dev/mock environments).
+2. Created `/api/verify-razorpay-payment.js` providing cryptographic HMAC-SHA256 signature verification (`crypto.timingSafeEqual`) to prevent client-side price tampering or spoofed payment IDs.
+3. Integrated dev/preview middleware in `vite.config.js` so endpoints function seamlessly both locally and on Vercel/serverless hosts.
+4. Updated `openCheckout` in `razorpayService.js` and `CourseDetails.jsx` to pre-create orders, bind course IDs, verify signatures via the backend, and store `razorpaySignature` in payment logs.
+
+----------------------------------------------------------------------------------------------------
+6.8. Broken Admin User Creation via Client-Side Auth SignUp [STATUS: RESOLVED / PATCHED]
+File: `src/services/userService.js`, `api/admin/create-user.js`, `supabase/functions/create-user/index.ts`, `vite.config.js`
+Mechanism: Admin user creation previously called `supabase.auth.signUp` from the frontend, which mutated the admin's active browser session (logging them out as the new user) and failed foreign key constraints (`profiles_id_fkey`) when attempting direct inserts into `profiles`.
+Remediation (Applied):
+1. Created administrative backend endpoint `api/admin/create-user.js` and Deno Edge Function `supabase/functions/create-user/index.ts` using `supabaseAdmin.auth.admin.createUser()` with the Service Role Key and `email_confirm: true`.
+2. Mounted `/api/admin/create-user` into local server middleware in `vite.config.js`.
+3. Updated `createUser` in `src/services/userService.js` to dispatch creation requests to the administrative backend endpoint/edge function, with safe database profile upsert fallback, completely eliminating client-side `supabase.auth.signUp()` invocation and preserving the administrator's active session.
+
+----------------------------------------------------------------------------------------------------
+6.9. Non-Atomic Student Counter Lost Updates [STATUS: RESOLVED / PATCHED]
+File: `src/services/enrollmentService.js`, `supabase_migration.sql`
+Mechanism: Previously performed non-atomic client-side read-modify-write (`select students` followed by `update courses set students = count + 1`), which was vulnerable to concurrent lost updates and blocked by RLS for non-admin students.
+Remediation (Applied):
+1. Implemented self-healing PostgreSQL trigger `trg_update_course_student_count` on `enrollments` table (`SECURITY DEFINER`), keeping `courses.students` atomically synchronized to `COUNT(*)` upon all inserts and deletes.
+2. Created atomic RPC function `increment_course_students(p_course_id)` in `supabase_migration.sql`.
+3. Updated `enrollUser` in `src/services/enrollmentService.js` to eliminate client-side read-modify-write queries, delegating student count tracking directly to the database.
+
+----------------------------------------------------------------------------------------------------
+6.10. LocalStorage-Only Question Bank (Multi-Admin Data Desync) [STATUS: RESOLVED / PATCHED]
+File: `src/features/admin/Assessments.jsx`, `src/services/questionBankService.js`, `supabase_migration.sql`
+Mechanism: The question bank was previously stored exclusively in browser `localStorage`, causing questions to be lost across devices, completely out-of-sync across multiple administrators, and unavailable across team workstations.
+Remediation (Applied):
+1. Created dedicated PostgreSQL table `question_bank` with RLS policies in `supabase_migration.sql` restricting insert, update, and delete operations to verified administrators.
+2. Built `src/services/questionBankService.js` with `fetchQuestionBank()`, `createQuestionInBank()`, and `deleteQuestionFromBank()` providing real-time PostgreSQL synchronization and seamless local caching fallback.
+3. Updated `src/features/admin/Assessments.jsx` to load questions directly from the database on mount, render cloud sync indicators (`Cloud Synced` vs `Local Draft`), and provided an on-demand database synchronization trigger ("Sync Database").
+
+----------------------------------------------------------------------------------------------------
+6.11. Missing Video End Events on Iframe Embeds [STATUS: RESOLVED / PATCHED]
+File: `src/features/courses/players/VideoPlayer.jsx`
+Mechanism: Embedded YouTube and Bunny iframes previously had no message bridge or API listener to trigger `onComplete`, preventing automatic lesson completion tracking.
+Remediation (Applied):
+1. Integrated YouTube IFrame Player API (`enablejsapi=1`, origin binding, script injection, and `onStateChange === YT.PlayerState.ENDED`).
+2. Implemented cross-origin `window.addEventListener('message')` event bridge capturing postMessage state signals from both YouTube (`onStateChange === 0`) and Bunny Stream (`{ event: 'ended' }`, `{ type: 'player:ended' }`).
+3. Added connection status badges with a direct manual completion action ("Mark Completed ✓") to ensure students are never blocked if aggressive browser privacy tools restrict postMessages.
+
+----------------------------------------------------------------------------------------------------
+6.12. Phantom Password Reset Mechanism [STATUS: RESOLVED / PATCHED]
+File: `src/features/admin/Users.jsx`, `src/services/userService.js`, `src/contexts/AuthContext.jsx`, `src/hooks/useAuth.js`
+Mechanism: Previously, `handleResetPassword` in the admin user panel displayed an alert toast `Password reset email sent` without invoking any backend API. In addition, `ForgotPassword.jsx` attempted to call `resetPasswordForEmail` from `useAuth()`, which was undefined.
+Remediation (Applied):
+1. Created `sendPasswordResetEmail(email)` in `src/services/userService.js` utilizing `supabase.auth.resetPasswordForEmail(cleanEmail, { redirectTo: `${origin}/reset-password` })`.
+2. Updated `handleResetPassword` in `src/features/admin/Users.jsx` to locate the target user's email, dispatch the password reset request, and provide authentic success/error feedback.
+3. Added `resetPasswordForEmail` to `AuthContext.jsx` and `useAuth.js` so user-facing password recovery operates reliably end-to-end.
+
+
+====================================================================================================
+7. STRATEGIC REMEDIATION ROADMAP
+====================================================================================================
+Phase 1: High-Severity Bug Fixes (Immediate)
+- Fix the `!user` admin check in `lmsStore.js`.
+- Remove `modules.delete().eq('course_id', courseId)` in `courseService.js` to prevent wiping student progress.
+- Deduplicate enrollment & payment mutations in `CourseDetails.jsx` and `useEnrollments.js`.
+- Connect `verifyCertificate(certId)` into `CertificatePage.jsx` for public verification.
+
+Phase 2: Security & Payment Integrity (Weeks 1-2)
+- Deploy Supabase Edge Functions for Razorpay Order Creation and HMAC Verification.
+- Migrate Bunny Stream video creation and TUS signature generation to a secure Edge Function.
+- Remove `VITE_BUNNY_API_KEY` from frontend environment.
+- Implement server-side assessment evaluation RPC function to hide answer keys.
+
+Phase 3: Performance & Scalability (Weeks 2-3)
+- Replace unpaginated `fetchAllProgress` with scoped queries: fetch only the active user's progress.
+- Remove redundant global `syncFromSupabase` calls following individual lesson completions.
+- Implement Postgres trigger for atomic course student counters.
+- Move Question Bank from `localStorage` to a Supabase database table.
+
+====================================================================================================
+END OF AUDIT REPORT
+====================================================================================================
+

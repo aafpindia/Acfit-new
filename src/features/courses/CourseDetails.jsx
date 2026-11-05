@@ -38,7 +38,7 @@ export const CourseDetails = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { success, error } = useToast();
-  const { enrollments, payments = [], enrollInCourse } = useLmsStore();
+  const { enrollments, payments = [] } = useLmsStore();
   const { data: course } = useCourse(courseId);
   const enrollMutation = useEnroll();
   const [enrollLoading, setEnrollLoading] = useState(false);
@@ -95,8 +95,9 @@ export const CourseDetails = () => {
 
     try {
       if (course.price > 0) {
-        // Razorpay checkout for paid courses
+        // Razorpay checkout for paid courses with server-side order and signature verification
         const payResult = await openCheckout({
+          courseId: course.id,
           courseName: course.title,
           amount: course.price,
           currency: 'INR',
@@ -121,12 +122,10 @@ export const CourseDetails = () => {
           method: payResult.method || 'Razorpay',
           razorpayOrderId: payResult.orderId,
           razorpayPaymentId: payResult.paymentId,
+          razorpaySignature: payResult.signature || null,
         };
 
-        // Register in local store immediately with payment data
-        enrollInCourse(course.id, user.id, paymentPayload);
-
-        // Payment succeeded — enroll with payment data in Supabase & invalidate queries
+        // Enroll with payment data (useEnroll atomically delegates to store & Supabase)
         await enrollMutation.mutateAsync({
           courseId: course.id,
           userId: user.id,
@@ -144,9 +143,6 @@ export const CourseDetails = () => {
           status: 'successful',
           method: 'Free Enrollment',
         };
-
-        // Register in local store immediately
-        enrollInCourse(course.id, user.id, freePaymentPayload);
 
         // Free enrollment
         await enrollMutation.mutateAsync({

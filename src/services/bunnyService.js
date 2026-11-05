@@ -18,14 +18,12 @@
 import * as tus from 'tus-js-client';
 
 const BUNNY_LIBRARY_ID = import.meta.env.VITE_BUNNY_LIBRARY_ID || '784894';
-const BUNNY_API_KEY = import.meta.env.VITE_BUNNY_API_KEY || '';
-const BUNNY_API_BASE = 'https://video.bunnycdn.com';
 const BUNNY_TUS_ENDPOINT = 'https://video.bunnycdn.com/tusupload';
 
 // CDN hostname for HLS/thumbnail delivery
 const BUNNY_CDN_HOSTNAME = import.meta.env.VITE_BUNNY_CDN_HOSTNAME || 'vz-49078c27-3d5.b-cdn.net';
 
-export const isBunnyConfigured = Boolean(BUNNY_LIBRARY_ID && BUNNY_API_KEY);
+export const isBunnyConfigured = Boolean(BUNNY_LIBRARY_ID);
 
 /**
  * Validate whether a string is a legitimate Bunny Stream video UUID.
@@ -110,70 +108,43 @@ export const getBunnyVideoId = (content) => {
 };
 
 /**
- * Generate SHA-256 signature for TUS upload authentication.
- * Formula: SHA256(LibraryId + ApiKey + ExpirationTimestamp + VideoId)
- */
-async function generateTusSignature(libraryId, apiKey, expirationTimestamp, videoId) {
-  const message = libraryId + apiKey + expirationTimestamp + videoId;
-  const encoder = new TextEncoder();
-  const data = encoder.encode(message);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-/**
- * Step 1: Create Video Entry on Bunny Stream REST API
- * Calls the Bunny API directly with AccessKey header.
+ * Step 1: Create Video Entry on Bunny Stream via secure backend endpoint.
+ * The master API key remains protected on the server side.
  */
 export const createBunnyVideo = async (title) => {
-  if (!BUNNY_API_KEY) {
-    // Generate fallback client-side Bunny GUID for demo environment
-    const generatedGuid = `bny-guid-${Date.now().toString(36)}-${Math.floor(Math.random() * 10000)}`;
-    return {
-      success: true,
-      data: {
-        videoId: generatedGuid,
-        libraryId: BUNNY_LIBRARY_ID,
-        isSimulated: true
-      }
-    };
-  }
-
   try {
-    const response = await fetch(`${BUNNY_API_BASE}/library/${BUNNY_LIBRARY_ID}/videos`, {
+    const response = await fetch('/api/bunny/create-video', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'AccessKey': BUNNY_API_KEY,
       },
       body: JSON.stringify({ title: title || 'Untitled Lesson Video' }),
     });
 
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`Bunny API returned HTTP ${response.status}: ${errText}`);
+      throw new Error(`Bunny backend API returned HTTP ${response.status}: ${errText}`);
     }
 
     const data = await response.json();
     return {
       success: true,
       data: {
-        videoId: data.guid,
-        libraryId: BUNNY_LIBRARY_ID,
-        isSimulated: false
+        videoId: data.videoId,
+        libraryId: data.libraryId || BUNNY_LIBRARY_ID,
+        isSimulated: Boolean(data.isSimulated),
       },
     };
   } catch (err) {
-    console.warn('Bunny API call failed, generating fallback GUID:', err.message);
+    console.warn('[bunnyService] Backend video creation failed, generating fallback GUID:', err.message);
     const generatedGuid = `bny-guid-${Date.now().toString(36)}-${Math.floor(Math.random() * 10000)}`;
     return {
       success: true,
       data: {
         videoId: generatedGuid,
         libraryId: BUNNY_LIBRARY_ID,
-        isSimulated: true
-      }
+        isSimulated: true,
+      },
     };
   }
 };
@@ -194,24 +165,57 @@ export const createBunnyVideo = async (title) => {
  */
 export const uploadVideoFileTus = (videoId, file, onProgress) => {
   return new Promise(async (resolve, reject) => {
-    if (!BUNNY_API_KEY || !videoId) {
-      console.warn('Bunny TUS upload skipped: no API key or video ID');
+    if (!videoId) {
+      console.warn('[bunnyService] Bunny TUS upload skipped: no video ID');
       resolve({ success: false, isSimulated: true });
       return;
     }
 
-    try {
-      // Generate TUS authentication signature
-      // Expiration: 24 hours from now
-      const expirationTimestamp = Math.floor(Date.now() / 1000) + 86400;
-      const signature = await generateTusSignature(
-        BUNNY_LIBRARY_ID,
-        BUNNY_API_KEY,
-        expirationTimestamp.toString(),
-        videoId
-      );
+    // If simulated video GUID, simulate progress and complete smoothly
+    if (videoId.startsWith('bny-guid-')) {
+      if (onProgress) onProgress(file.size, file.size, 100);
+      resolve({
+        success: true,
+        data: {
+          videoId,
+          fileSize: file.size,
+          fileName: file.name,
+          isSimulated: true,
+        },
+      });
+      return;
+    }
 
-      // Configure TUS upload with Bunny Stream settings
+    try {
+      // Obtain pre-signed TUS authorization signature from serverless endpoint
+      const sigResponse = await fetch('/api/bunny/tus-signature', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoId, libraryId: BUNNY_LIBRARY_ID }),
+      });
+
+      if (!sigResponse.ok) {
+        throw new Error(`Failed to obtain upload authorization (HTTP ${sigResponse.status})`);
+      }
+
+      const sigData = await sigResponse.json();
+      if (!sigData.success) {
+        throw new Error(sigData.error || 'Failed to authorize video upload');
+      }
+
+      if (sigData.isSimulated) {
+        console.warn('[bunnyService] Bunny upload running in simulated mode');
+        if (onProgress) onProgress(file.size, file.size, 100);
+        resolve({
+          success: true,
+          data: { videoId, fileSize: file.size, fileName: file.name, isSimulated: true },
+        });
+        return;
+      }
+
+      const { signature, expirationTimestamp, libraryId = BUNNY_LIBRARY_ID } = sigData;
+
+      // Configure TUS upload with Bunny Stream presigned headers
       const upload = new tus.Upload(file, {
         endpoint: BUNNY_TUS_ENDPOINT,
 
@@ -225,7 +229,7 @@ export const uploadVideoFileTus = (videoId, file, onProgress) => {
         headers: {
           'AuthorizationSignature': signature,
           'AuthorizationExpire': expirationTimestamp.toString(),
-          'LibraryId': BUNNY_LIBRARY_ID,
+          'LibraryId': String(libraryId),
           'VideoId': videoId,
         },
 
@@ -267,25 +271,7 @@ export const uploadVideoFileTus = (videoId, file, onProgress) => {
           });
         },
 
-        // Before each chunk request - refresh headers if needed
-        onBeforeRequest: (req) => {
-          // Log chunk upload for debugging
-          const xhr = req.getUnderlyingObject();
-          if (xhr && typeof xhr.upload !== 'undefined') {
-            // Track individual chunk progress for smoother UX
-          }
-        },
-
-        // After each chunk response - verify chunk was accepted
-        onAfterResponse: (_req, res) => {
-          const status = res.getStatus();
-          if (status >= 400) {
-            console.warn(`⚠️ Chunk response status: ${status}`);
-          }
-        },
-
         // Override upload if a previous partial upload exists
-        // This enables resume after browser crash/tab close
         removeFingerprintOnSuccess: true,
       });
 
@@ -299,123 +285,50 @@ export const uploadVideoFileTus = (videoId, file, onProgress) => {
       // Start the chunked upload
       upload.start();
     } catch (err) {
-      console.error('TUS upload setup error:', err);
+      console.error('[bunnyService] TUS upload setup error:', err);
       reject({ success: false, error: err.message });
     }
   });
 };
 
 /**
- * Legacy: Upload a video file using single PUT request.
- * DEPRECATED: Use uploadVideoFileTus() instead for reliable uploads.
- * Kept for backward compatibility with small files (<50MB).
+ * Upload a video file (delegates to secure chunked TUS upload).
  */
 export const uploadVideoFile = async (videoId, file, onProgress) => {
-  // For files larger than 50MB, always use TUS
-  if (file.size > 50 * 1024 * 1024) {
-    return uploadVideoFileTus(videoId, file, onProgress);
-  }
-
-  if (!BUNNY_API_KEY || !videoId) {
-    console.warn('Bunny upload skipped: no API key or video ID');
-    return { success: false, isSimulated: true };
-  }
-
-  try {
-    // Use XMLHttpRequest for progress tracking on small files
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('PUT', `${BUNNY_API_BASE}/library/${BUNNY_LIBRARY_ID}/videos/${videoId}`, true);
-      xhr.setRequestHeader('AccessKey', BUNNY_API_KEY);
-
-      // Track upload progress
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable && onProgress) {
-          const percent = Math.round((event.loaded / event.total) * 100);
-          onProgress(event.loaded, event.total, percent);
-        }
-      };
-
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          let data = {};
-          try { data = JSON.parse(xhr.responseText); } catch (_e) { /* empty response ok */ }
-          resolve({ success: true, data });
-        } else {
-          console.warn('Bunny upload returned non-OK status:', xhr.status, xhr.responseText);
-          // Fallback to TUS if PUT fails
-          console.log('Falling back to TUS upload...');
-          uploadVideoFileTus(videoId, file, onProgress).then(resolve).catch(reject);
-        }
-      };
-
-      xhr.onerror = () => {
-        console.warn('Bunny direct upload network error, falling back to TUS...');
-        uploadVideoFileTus(videoId, file, onProgress).then(resolve).catch(reject);
-      };
-
-      xhr.ontimeout = () => {
-        console.warn('Bunny direct upload timed out, falling back to TUS...');
-        uploadVideoFileTus(videoId, file, onProgress).then(resolve).catch(reject);
-      };
-
-      // 5 minute timeout for small file PUT uploads
-      xhr.timeout = 300000;
-
-      xhr.send(file);
-    });
-  } catch (err) {
-    console.warn('Bunny direct upload error, falling back to TUS:', err.message);
-    return uploadVideoFileTus(videoId, file, onProgress);
-  }
+  return uploadVideoFileTus(videoId, file, onProgress);
 };
 
 /**
- * Check video processing/transcoding status from Bunny API
+ * Check video processing/transcoding status via secure backend endpoint.
  */
 export const getVideoStatus = async (videoId) => {
-  if (!BUNNY_API_KEY || !videoId) {
+  if (!videoId) {
     return { status: 'unknown', isSimulated: true };
   }
 
-  try {
-    const response = await fetch(`${BUNNY_API_BASE}/library/${BUNNY_LIBRARY_ID}/videos/${videoId}`, {
-      headers: {
-        'AccessKey': BUNNY_API_KEY,
-      },
-    });
+  if (videoId.startsWith('bny-guid-')) {
+    return {
+      status: 'finished',
+      statusCode: 4,
+      encodeProgress: 100,
+      thumbnailUrl: getThumbnailUrl(videoId),
+      isSimulated: true,
+    };
+  }
 
+  try {
+    const response = await fetch(`/api/bunny/video-status?videoId=${encodeURIComponent(videoId)}`);
     if (!response.ok) {
       return { status: 'error', httpStatus: response.status };
     }
 
     const data = await response.json();
-    
-    // Bunny Stream status codes:
-    // 0 = Created, 1 = Uploaded, 2 = Processing, 3 = Transcoding, 
-    // 4 = Finished, 5 = Error, 6 = Upload Failed
-    const statusMap = {
-      0: 'created',
-      1: 'uploaded',
-      2: 'processing',
-      3: 'transcoding',
-      4: 'finished',
-      5: 'error',
-      6: 'upload_failed',
-    };
-
     return {
-      status: statusMap[data.status] || 'unknown',
-      statusCode: data.status,
-      encodeProgress: data.encodeProgress || 0,
-      width: data.width,
-      height: data.height,
-      duration: data.length,
-      availableResolutions: data.availableResolutions,
+      ...data,
       thumbnailUrl: getThumbnailUrl(videoId),
     };
   } catch (err) {
-    console.warn('Error fetching video status:', err.message);
+    console.warn('[bunnyService] Error fetching video status:', err.message);
     return { status: 'error', error: err.message };
   }
 };
@@ -437,7 +350,7 @@ export const processBunnyVideoWorkflow = async (file, title, onProgress) => {
   if (onProgress) onProgress({ step: 1, message: 'Video entry created ✓', pct: 10 });
 
   // Step 2: Upload Video via TUS Resumable Protocol (the main upload)
-  if (!createRes.data.isSimulated && BUNNY_API_KEY) {
+  if (!createRes.data.isSimulated) {
     try {
       await uploadVideoFileTus(videoId, file, (bytesUploaded, bytesTotal, percentComplete) => {
         // Map upload progress to 10-85% range for the overall workflow

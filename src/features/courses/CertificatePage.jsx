@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useLmsStore } from '../../stores/lmsStore';
-import { ArrowLeft, Printer, Award, ShieldCheck } from 'lucide-react';
+import { verifyCertificate } from '../../services/certificateService';
+import { ArrowLeft, Printer, Award, ShieldCheck, Loader2 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
 
@@ -10,22 +11,85 @@ export const CertificatePage = () => {
   const navigate = useNavigate();
   const { certificates } = useLmsStore();
 
-  const cert = certificates.find((c) => c.id === certId);
+  const storeCert = certificates.find(
+    (c) => c.id === certId || String(c.id).toLowerCase() === String(certId).toLowerCase()
+  );
 
-  if (!cert) {
-    return (
-      <div className="min-h-screen flex items-center justify-center flex-col gap-4 font-sans">
-        <h2 className="text-xl font-bold text-text-main">Certificate not found</h2>
-        <Link to="/" className="text-primary hover:underline text-sm font-semibold flex items-center gap-1">
-          <ArrowLeft className="h-4 w-4" /> Go to Catalog
-        </Link>
-      </div>
-    );
-  }
+  const [dbCert, setDbCert] = useState(null);
+  const [loading, setLoading] = useState(!storeCert);
+  const [isVerifiedFromDb, setIsVerifiedFromDb] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    if (storeCert) {
+      setLoading(false);
+      return;
+    }
+
+    if (certId) {
+      setLoading(true);
+      verifyCertificate(certId)
+        .then((res) => {
+          if (active) {
+            if (res?.success && res.data) {
+              setDbCert(res.data);
+              setIsVerifiedFromDb(true);
+            } else {
+              setDbCert(null);
+            }
+          }
+        })
+        .catch(() => {
+          if (active) setDbCert(null);
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+    } else {
+      setLoading(false);
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [certId, storeCert]);
+
+  const cert = storeCert || dbCert;
 
   const handlePrint = () => {
     window.print();
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center graph-paper-bg text-[#202124] font-sans space-y-4">
+        <div className="w-12 h-12 rounded-2xl bg-primary text-white flex items-center justify-center shadow-tactile-sm animate-pulse">
+          <Loader2 className="h-6 w-6 animate-spin text-white" />
+        </div>
+        <p className="font-mono text-xs font-bold text-slate-500 uppercase tracking-widest">
+          [ Verifying Official Accreditation Credential... ]
+        </p>
+      </div>
+    );
+  }
+
+  if (!cert) {
+    return (
+      <div className="min-h-screen flex items-center justify-center flex-col gap-4 font-sans graph-paper-bg text-[#202124] p-6 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center mb-2 shadow-sm">
+          <ShieldCheck className="h-7 w-7 text-rose-500" />
+        </div>
+        <h2 className="text-xl font-black text-[#202124]">Credential Not Found</h2>
+        <p className="font-mono text-xs text-slate-500 max-w-md leading-relaxed">
+          The requested certificate identifier <span className="font-bold text-slate-800 font-mono">[{certId}]</span> could not be verified in the ACFIT accreditation ledger. Please check the URL or contact academy administration.
+        </p>
+        <Link to="/" className="mt-2 text-primary hover:underline text-xs font-mono font-bold flex items-center gap-1.5 uppercase tracking-wider">
+          <ArrowLeft className="h-4 w-4" /> [ Return to Academy Catalog ]
+        </Link>
+      </div>
+    );
+  }
 
   const issueDate = cert.issuedAt || cert.date || cert.created_at || new Date().toISOString();
   const formattedDate = new Date(issueDate).toLocaleDateString('en-US', {
@@ -109,8 +173,13 @@ export const CertificatePage = () => {
               <span className="font-bold text-[#202124]">{formattedDate}</span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap justify-center sm:justify-start">
               <span className="sticker-tag-red text-[10px]">● 100% ACCREDITED</span>
+              {isVerifiedFromDb && (
+                <span className="bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-0.5 rounded-full font-bold text-[10px] flex items-center gap-1">
+                  <ShieldCheck className="h-3 w-3 text-blue-600" /> PUBLICLY VERIFIED
+                </span>
+              )}
               {cert.score && (
                 <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 rounded-full font-bold text-[10px]">
                   EXAM SCORE: {cert.score}%

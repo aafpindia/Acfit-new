@@ -15,7 +15,8 @@ export const useAuth = () => {
       logout: async () => {},
       signup: async () => ({ data: null, error: 'Auth context uninitialized' }),
       updateProfile: async () => ({ success: false, error: 'Auth context uninitialized' }),
-      updatePassword: async () => ({ success: false, error: 'Auth context uninitialized' })
+      updatePassword: async () => ({ success: false, error: 'Auth context uninitialized' }),
+      resetPasswordForEmail: async () => ({ success: false, error: 'Auth context uninitialized' })
     };
   }
   return context;

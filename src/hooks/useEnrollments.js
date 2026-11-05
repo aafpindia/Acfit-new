@@ -1,7 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { enrollUser, fetchUserEnrollments, fetchAllEnrollments } from '../services/enrollmentService';
-import { createPayment } from '../services/paymentService';
-import { isSupabaseConfigured } from '../config/supabase';
+import { fetchUserEnrollments, fetchAllEnrollments } from '../services/enrollmentService';
 import { useLmsStore } from '../stores/lmsStore';
 
 /**
@@ -41,8 +39,8 @@ export const useAllEnrollments = () => {
 
 /**
  * Enroll the current user in a course.
- * Also creates a payment record.
- * Falls back to local Zustand store if DB operations fail.
+ * Dispatches a single atomic enrollment & payment transaction through lmsStore.enrollInCourse,
+ * preventing duplicate payment insertions and duplicate enrollments.
  */
 export const useEnroll = () => {
   const queryClient = useQueryClient();
@@ -50,29 +48,10 @@ export const useEnroll = () => {
 
   return useMutation({
     mutationFn: async ({ courseId, userId, paymentData }) => {
-      // Always update the local Zustand store first so the UI reflects immediately
-      storeEnroll(courseId, userId, paymentData);
-
-      if (isSupabaseConfigured) {
-        // Try DB enrollment with explicit userId — don't throw on failure, just log
-        const enrollResult = await enrollUser(courseId, userId);
-        if (!enrollResult.success) {
-          console.warn('[useEnroll] DB enrollment notice, local store active:', enrollResult.error);
-        }
-
-        // Try recording payment — don't throw on failure
-        if (paymentData) {
-          try {
-            await createPayment(paymentData);
-          } catch (payErr) {
-            console.warn('[useEnroll] Payment record failed:', payErr.message);
-          }
-        }
-
-        return enrollResult?.data;
-      }
-
-      return null;
+      // Delegate atomically to lmsStore which handles both optimistic local updates
+      // and database persistence (enrollUserDb + createPaymentDb + syncFromSupabase)
+      await storeEnroll(courseId, userId, paymentData);
+      return { success: true };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['enrollments'] });

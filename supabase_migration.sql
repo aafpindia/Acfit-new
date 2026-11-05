@@ -774,4 +774,262 @@ INSERT INTO public.coupons (code, discount_percent, valid_until) VALUES
   ('WELCOME10', 10.00, NOW() + INTERVAL '60 days')
 ON CONFLICT (code) DO NOTHING;
 
+-- =====================================================
+-- SECURE SERVER-SIDE ASSESSMENT EVALUATION RPC
+-- =====================================================
+CREATE OR REPLACE FUNCTION submit_assessment(
+  p_course_id UUID,
+  p_module_id UUID DEFAULT NULL,
+  p_assessment_id UUID DEFAULT NULL,
+  p_answers JSONB DEFAULT '{}'::JSONB,
+  p_is_final BOOLEAN DEFAULT false
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_user_id UUID := auth.uid();
+  v_questions JSONB;
+  v_passing_percentage INTEGER := 60;
+  v_q JSONB;
+  v_q_id TEXT;
+  v_chosen_idx INTEGER;
+  v_correct_idx INTEGER;
+  v_total_questions INTEGER := 0;
+  v_correct_count INTEGER := 0;
+  v_score NUMERIC(5, 2) := 0;
+  v_passed BOOLEAN := false;
+  v_opt JSONB;
+  v_review JSONB := '[]'::JSONB;
+  v_review_item JSONB;
+  v_attempt_id UUID;
+  v_cert_id UUID;
+  v_user_name TEXT;
+  v_course_title TEXT;
+BEGIN
+  IF v_user_id IS NULL THEN
+    RAISE EXCEPTION 'Authentication required to submit assessment';
+  END IF;
+
+  -- 1. Lookup assessment from assessments table
+  IF p_assessment_id IS NOT NULL THEN
+    SELECT questions, passing_percentage 
+    INTO v_questions, v_passing_percentage
+    FROM assessments
+    WHERE id = p_assessment_id;
+  END IF;
+
+  -- 2. Fallbacks: module quiz or final exam lookup
+  IF (v_questions IS NULL OR jsonb_array_length(v_questions) = 0) AND p_module_id IS NOT NULL THEN
+    SELECT questions, passing_percentage 
+    INTO v_questions, v_passing_percentage
+    FROM assessments
+    WHERE module_id = p_module_id
+    LIMIT 1;
+  END IF;
+
+  IF (v_questions IS NULL OR jsonb_array_length(v_questions) = 0) AND p_is_final AND p_course_id IS NOT NULL THEN
+    SELECT questions, passing_percentage 
+    INTO v_questions, v_passing_percentage
+    FROM assessments
+    WHERE course_id = p_course_id AND is_final = true
+    LIMIT 1;
+  END IF;
+
+  IF v_questions IS NULL OR jsonb_array_length(v_questions) = 0 THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'Assessment questions not found on server'
+    );
+  END IF;
+
+  v_total_questions := jsonb_array_length(v_questions);
+
+  -- Evaluate each question securely on the server
+  FOR i IN 0..(v_total_questions - 1) LOOP
+    v_q := v_questions->i;
+    v_q_id := COALESCE(v_q->>'id', 'q-' || i::text);
+
+    IF p_answers ? v_q_id THEN
+      v_chosen_idx := (p_answers->>v_q_id)::INTEGER;
+    ELSE
+      v_chosen_idx := NULL;
+    END IF;
+
+    v_correct_idx := NULL;
+    IF v_q ? 'correctIndex' THEN
+      v_correct_idx := (v_q->>'correctIndex')::INTEGER;
+    ELSIF v_q ? 'options' THEN
+      FOR j IN 0..(jsonb_array_length(v_q->'options') - 1) LOOP
+        v_opt := (v_q->'options')->j;
+        IF (v_opt->>'isCorrect')::BOOLEAN = true THEN
+          v_correct_idx := j;
+          EXIT;
+        END IF;
+      END LOOP;
+    END IF;
+
+    IF v_correct_idx IS NULL THEN
+      v_correct_idx := 0;
+    END IF;
+
+    IF v_chosen_idx IS NOT NULL AND v_chosen_idx = v_correct_idx THEN
+      v_correct_count := v_correct_count + 1;
+    END IF;
+
+    v_review_item := jsonb_build_object(
+      'id', v_q_id,
+      'question', COALESCE(v_q->>'question', v_q->>'prompt', 'Question ' || (i + 1)::text),
+      'chosenIndex', v_chosen_idx,
+      'correctIndex', v_correct_idx,
+      'isCorrect', (v_chosen_idx IS NOT NULL AND v_chosen_idx = v_correct_idx),
+      'explanation', COALESCE(v_q->>'explanation', v_q->>'modelSolution', '')
+    );
+    v_review := v_review || jsonb_build_array(v_review_item);
+  END LOOP;
+
+  IF v_total_questions > 0 THEN
+    v_score := ROUND((v_correct_count::NUMERIC / v_total_questions::NUMERIC) * 100, 2);
+  ELSE
+    v_score := 0;
+  END IF;
+
+  v_passed := v_score >= v_passing_percentage;
+
+  -- Record attempt in attempts table
+  INSERT INTO attempts (
+    user_id,
+    course_id,
+    module_id,
+    assessment_id,
+    score,
+    passed,
+    submitted_at
+  ) VALUES (
+    v_user_id,
+    p_course_id,
+    p_module_id,
+    p_assessment_id,
+    v_score,
+    v_passed,
+    NOW()
+  )
+  RETURNING id INTO v_attempt_id;
+
+  -- If this is final exam and passed, issue certificate
+  IF p_is_final AND v_passed THEN
+    SELECT full_name INTO v_user_name FROM profiles WHERE id = v_user_id;
+    SELECT title INTO v_course_title FROM courses WHERE id = p_course_id;
+
+    INSERT INTO certificates (
+      user_id,
+      course_id,
+      full_name,
+      course_title,
+      score,
+      issued_at
+    ) VALUES (
+      v_user_id,
+      p_course_id,
+      COALESCE(v_user_name, 'Graduate Student'),
+      COALESCE(v_course_title, 'Certified Training Program'),
+      v_score,
+      NOW()
+    )
+    ON CONFLICT (user_id, course_id) 
+    DO UPDATE SET score = GREATEST(certificates.score, EXCLUDED.score)
+    RETURNING id INTO v_cert_id;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'score', v_score,
+    'passed', v_passed,
+    'correctCount', v_correct_count,
+    'totalQuestions', v_total_questions,
+    'passingScore', v_passing_percentage,
+    'attemptId', v_attempt_id,
+    'certificateId', v_cert_id,
+    'review', v_review
+  );
+END;
+$$;
+
+-- =====================================================
+-- ATOMIC COURSE STUDENT COUNTER TRIGGER & FUNCTION
+-- =====================================================
+CREATE OR REPLACE FUNCTION update_course_student_count()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE courses
+    SET students = (SELECT COUNT(*) FROM enrollments WHERE course_id = NEW.course_id)
+    WHERE id = NEW.course_id;
+    RETURN NEW;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE courses
+    SET students = (SELECT COUNT(*) FROM enrollments WHERE course_id = OLD.course_id)
+    WHERE id = OLD.course_id;
+    RETURN OLD;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_update_course_student_count ON enrollments;
+CREATE TRIGGER trg_update_course_student_count
+AFTER INSERT OR DELETE ON enrollments
+FOR EACH ROW
+EXECUTE FUNCTION update_course_student_count();
+
+CREATE OR REPLACE FUNCTION increment_course_students(p_course_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  UPDATE courses
+  SET students = (SELECT COUNT(*) FROM enrollments WHERE course_id = p_course_id)
+  WHERE id = p_course_id;
+END;
+$$;
+
+-- =====================================================
+-- CENTRALIZED QUESTION BANK (MULTI-ADMIN SYNCHRONIZATION)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS question_bank (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  question TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'General',
+  difficulty TEXT NOT NULL DEFAULT 'Medium',
+  type TEXT NOT NULL DEFAULT 'mcq',
+  options JSONB NOT NULL DEFAULT '[]'::jsonb,
+  explanation TEXT,
+  created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE question_bank ENABLE ROW LEVEL SECURITY;
+
+-- Read policy: Anyone authenticated or anonymous verifier can view questions if needed, or admins
+CREATE POLICY "Allow read question_bank" ON question_bank
+  FOR SELECT USING (true);
+
+-- Management policy: Only admins can insert, update, or delete questions in the central bank
+CREATE POLICY "Admins manage question_bank" ON question_bank
+  FOR ALL USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
+    )
+  );
+
 COMMIT;

@@ -1525,9 +1525,9 @@ export const useLmsStore = create(
           }
 
           const deletedUserIds = new Set(JSON.parse(localStorage.getItem('_lms_deleted_user_ids') || '[]'));
-          const isAdmin = !user || (user.role && user.role.toString().toLowerCase() === 'admin');
+          const isAdmin = Boolean(user && user.role && user.role.toString().toLowerCase() === 'admin');
 
-          // 1. Sync authoritative Users list from Supabase profiles
+          // 1. Sync authoritative Users list from Supabase profiles (Admin only)
           try {
             const allUsers = await fetchUsersDb();
             if (Array.isArray(allUsers)) {

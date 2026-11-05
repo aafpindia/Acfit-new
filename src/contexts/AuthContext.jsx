@@ -2,6 +2,7 @@ import React, { createContext, useState, useEffect, useRef, useCallback } from '
 import apiClient, { getStoredAvatar, setStoredAvatar } from '../lib/apiClient';
 import { useLmsStore } from '../stores/lmsStore';
 import { supabase, isSupabaseConfigured } from '../config/supabase';
+import { sendPasswordResetEmail } from '../services/userService';
 
 export const AuthContext = createContext(undefined);
 
@@ -333,7 +334,8 @@ export const AuthProvider = ({ children }) => {
         signIn,
         signUp,
         signOut,
-        updateProfile
+        updateProfile,
+        resetPasswordForEmail: (email) => sendPasswordResetEmail(email)
       }}
     >
       {children}

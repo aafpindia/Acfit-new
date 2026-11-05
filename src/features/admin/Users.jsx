@@ -3,7 +3,7 @@ import { useLmsStore } from '../../stores/lmsStore';
 import { useToast } from '../../hooks/useToast';
 import { supabase, isSupabaseConfigured } from '../../config/supabase';
 import { getUserCourseProgress } from '../../services/progressService';
-import { fetchUsers, createUser, updateUser, deleteUser } from '../../services/userService';
+import { fetchUsers, createUser, updateUser, deleteUser, sendPasswordResetEmail } from '../../services/userService';
 import {
   Shield,
   Ban,
@@ -235,9 +235,21 @@ export const Users = () => {
     }
   };
 
-  // Reset Password
-  const handleResetPassword = (userId) => {
-    success(`Password reset email sent to ${selectedUser?.email || 'user'}.`);
+  // Reset Password via Supabase Auth
+  const handleResetPassword = async (userId) => {
+    const targetUser = selectedUser?.id === userId ? selectedUser : users.find((u) => u.id === userId);
+    const targetEmail = targetUser?.email;
+    if (!targetEmail) {
+      toastError('No email address found for this user.');
+      return;
+    }
+
+    const res = await sendPasswordResetEmail(targetEmail);
+    if (res.success) {
+      success(`Password reset email sent to ${targetEmail}.`);
+    } else {
+      toastError(res.error || 'Failed to dispatch password reset email.');
+    }
   };
 
   // Delete User Permanently from Supabase DB
@@ -581,9 +593,7 @@ export const Users = () => {
                   </div>
 
                   <p className="text-xs text-[#5F6368] font-normal">{selectedUser.email}</p>
-                  <p className="text-xs text-[#5F6368] font-normal">
-                    {selectedUser.department && selectedUser.department !== 'Consultant, Finance' ? selectedUser.department : 'Operations Lead'}
-                  </p>
+                  
 
                   {/* Profile Action Buttons */}
                   <div className="flex items-center gap-2 pt-1">

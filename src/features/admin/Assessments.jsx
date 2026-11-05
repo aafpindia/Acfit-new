@@ -1,20 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { useLmsStore } from '../../stores/lmsStore';
 import { useToast } from '../../hooks/useToast';
-import { Award, Plus, Trash2, Shield, Settings, Copy, HelpCircle, CheckSquare, List, Clock, Check } from 'lucide-react';
+import { Award, Plus, Trash2, Shield, Settings, Copy, HelpCircle, CheckSquare, List, Clock, Check, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Select } from '../../components/ui/select';
+import { fetchQuestionBank, createQuestionInBank, deleteQuestionFromBank } from '../../services/questionBankService';
 
 export const Assessments = () => {
   const { success, error } = useToast();
   const { courses, createAssessment, deleteAssessment } = useLmsStore();
 
   const [activeTab, setActiveTab] = useState('assessments'); // 'assessments' | 'questions'
+  const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
 
-  // Question Bank list state (persisted to localStorage)
+  // Question Bank list state (persisted to Supabase PostgreSQL with local cache)
   const [questionsBank, setQuestionsBank] = useState(() => {
     const cached = localStorage.getItem('_lms_questions_bank');
     if (cached) {
@@ -24,38 +26,28 @@ export const Assessments = () => {
         return [];
       }
     }
-    return [
-      {
-        id: 'q-bank-1',
-        question: 'What is the primary role of protein in workout recovery?',
-        category: 'Nutrition',
-        difficulty: 'Easy',
-        type: 'mcq',
-        options: [
-          { text: 'Muscle repair and synthesis', isCorrect: true },
-          { text: 'Glycogen replenishment only', isCorrect: false },
-          { text: 'Hydration enhancement', isCorrect: false }
-        ],
-        explanation: 'Protein provides the essential amino acids required to repair and rebuild muscle tissues damaged during workouts.'
-      },
-      {
-        id: 'q-bank-2',
-        question: 'True or False: Isometric muscle contractions involve zero joint movement.',
-        category: 'Fitness',
-        difficulty: 'Medium',
-        type: 'boolean',
-        options: [
-          { text: 'True', isCorrect: true },
-          { text: 'False', isCorrect: false }
-        ],
-        explanation: 'True. In isometric contractions, the muscle tension increases but the muscle length does not change and joint angle remains static.'
-      }
-    ];
+    return [];
   });
 
+  // Synchronize Question Bank with Supabase database on mount
+  const loadQuestionsFromDb = async (showToast = false) => {
+    setIsLoadingQuestions(true);
+    try {
+      const res = await fetchQuestionBank();
+      if (res.success && Array.isArray(res.data)) {
+        setQuestionsBank(res.data);
+        if (showToast) success(`Synced ${res.data.length} questions from database.`);
+      }
+    } catch (err) {
+      console.warn('[Assessments] Failed to sync questions:', err);
+    } finally {
+      setIsLoadingQuestions(false);
+    }
+  };
+
   useEffect(() => {
-    localStorage.setItem('_lms_questions_bank', JSON.stringify(questionsBank));
-  }, [questionsBank]);
+    loadQuestionsFromDb();
+  }, []);
 
   // Question creator state
   const [newQuestionData, setNewQuestionData] = useState({
@@ -148,7 +140,7 @@ export const Assessments = () => {
     });
   });
 
-  const handleAddQuestion = () => {
+  const handleAddQuestion = async () => {
     if (!newQuestionData.question) {
       error('Question text is required!');
       return;
@@ -178,7 +170,6 @@ export const Assessments = () => {
     }
 
     const newQ = {
-      id: `q-bank-${Date.now()}`,
       question: newQuestionData.question,
       category: newQuestionData.category,
       difficulty: newQuestionData.difficulty,
@@ -187,8 +178,18 @@ export const Assessments = () => {
       explanation: newQuestionData.explanation || 'No explanation provided.'
     };
 
-    setQuestionsBank([newQ, ...questionsBank]);
-    success('Question added to Bank!');
+    try {
+      const res = await createQuestionInBank(newQ);
+      if (res.success && res.data) {
+        setQuestionsBank(prev => [res.data, ...prev.filter(q => q.id !== res.data.id)]);
+        success('Question added to database Question Bank!');
+      } else {
+        error(res.error || 'Failed to save question.');
+      }
+    } catch (err) {
+      error('Failed to create question.');
+    }
+
     setNewQuestionData({
       question: '',
       category: 'General',
@@ -203,9 +204,14 @@ export const Assessments = () => {
     });
   };
 
-  const handleDeleteQuestion = (id) => {
-    setQuestionsBank(questionsBank.filter(q => q.id !== id));
-    success('Question removed from Bank.');
+  const handleDeleteQuestion = async (id) => {
+    try {
+      await deleteQuestionFromBank(id);
+      setQuestionsBank(prev => prev.filter(q => q.id !== id));
+      success('Question removed from Question Bank.');
+    } catch (err) {
+      error('Failed to delete question.');
+    }
   };
 
   const handleToggleQuestionSelection = (qId) => {
@@ -594,15 +600,29 @@ export const Assessments = () => {
           {/* Question Bank list */}
           <div className="lg:col-span-2 space-y-4">
             <Card className="border-border bg-white shadow-premium">
-              <CardHeader>
-                <CardTitle className="text-sm font-bold flex items-center gap-2">
-                  <Shield className="h-4.5 w-4.5 text-primary" /> Active Question Bank
-                </CardTitle>
-                <CardDescription>Auditing questions in system directories</CardDescription>
+              <CardHeader className="flex flex-row items-center justify-between pb-3">
+                <div>
+                  <CardTitle className="text-sm font-bold flex items-center gap-2">
+                    <Shield className="h-4.5 w-4.5 text-primary" /> Active Question Bank
+                  </CardTitle>
+                  <CardDescription>Centralized multi-admin question repository synced with Supabase</CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => loadQuestionsFromDb(true)}
+                  disabled={isLoadingQuestions}
+                  className="h-8 gap-1.5 text-xs font-semibold"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${isLoadingQuestions ? 'animate-spin text-primary' : ''}`} />
+                  Sync Database
+                </Button>
               </CardHeader>
               <CardContent className="pt-1">
-                {questionsBank.length === 0 ? (
-                  <p className="text-xs text-text-secondary py-8 text-center">No questions in bank.</p>
+                {isLoadingQuestions && questionsBank.length === 0 ? (
+                  <p className="text-xs text-text-secondary py-8 text-center">Loading questions from database...</p>
+                ) : questionsBank.length === 0 ? (
+                  <p className="text-xs text-text-secondary py-8 text-center">No questions in bank. Create one to begin.</p>
                 ) : (
                   <div className="space-y-3">
                     {questionsBank.map((q) => (
@@ -611,10 +631,13 @@ export const Assessments = () => {
                           <span className="font-bold text-xs sm:text-sm text-text-main leading-tight block">
                             {q.question}
                           </span>
-                          <div className="flex gap-2 items-center">
+                          <div className="flex gap-2 items-center flex-wrap">
                             <Badge variant="outline">{q.category}</Badge>
                             <Badge variant="primary">{q.difficulty}</Badge>
                             <span className="text-[10px] text-text-secondary font-bold uppercase">{q.type}</span>
+                            <Badge variant={q.source === 'database' ? 'success' : 'outline'} className="text-[9px] py-0 px-1.5">
+                              {q.source === 'database' ? 'Cloud Synced' : 'Local Draft'}
+                            </Badge>
                           </div>
                           
                           {/* Render Options Review in Bank */}

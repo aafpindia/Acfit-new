@@ -107,6 +107,25 @@ export const verifyCertificate = async (certId) => {
   if (error) return handleSupabaseError(error, 'verifyCertificate');
   if (!data) return { success: false, error: 'Certificate not found.' };
 
+  // Attempt to fetch score from final exam attempts if available
+  let examScore = data.score || null;
+  if (!examScore && data.user_id && data.course_id) {
+    try {
+      const { data: att } = await supabase
+        .from('attempts')
+        .select('score')
+        .eq('user_id', data.user_id)
+        .eq('course_id', data.course_id)
+        .is('module_id', null)
+        .order('submitted_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (att && att.score !== undefined) {
+        examScore = parseFloat(att.score);
+      }
+    } catch (_) {}
+  }
+
   return handleSuccess({
     id: data.id,
     userId: data.user_id,
@@ -114,5 +133,8 @@ export const verifyCertificate = async (certId) => {
     fullName: data.full_name,
     courseTitle: data.course_title,
     date: data.issued_at,
+    issuedAt: data.issued_at,
+    created_at: data.issued_at,
+    score: examScore,
   });
 };

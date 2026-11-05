@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { Play, Pause, Maximize, Volume2, VolumeX } from 'lucide-react';
+import { Play, Pause, Maximize, Volume2, VolumeX, AlertTriangle, RefreshCw } from 'lucide-react';
 import Hls from 'hls.js';
 import { Card } from '../../../components/ui/card';
 import {
@@ -17,23 +17,25 @@ const ytRegex = /^.*(youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
 function getYouTubeEmbedUrl(url) {
   if (!url || typeof url !== 'string') return null;
   const m = url.match(ytRegex);
-  return m && m[2].length === 11
-    ? `https://www.youtube.com/embed/${m[2]}?autoplay=0&rel=0`
-    : null;
+  if (!m || m[2].length !== 11) return null;
+  const origin = typeof window !== 'undefined' && window.location.origin ? encodeURIComponent(window.location.origin) : '';
+  return `https://www.youtube.com/embed/${m[2]}?autoplay=0&rel=0&enablejsapi=1&origin=${origin}`;
+}
+
+function getBunnyEmbedUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  const t = url.trim();
+  if (t.includes('iframe.mediadelivery.net/embed/')) {
+    return t;
+  }
+  return null;
 }
 
 function resolvePlayableUrl(rawUrl, rawBunnyId) {
   if (rawUrl) {
     const t = rawUrl.trim();
     if (t.includes('youtube.com') || t.includes('youtu.be')) return null;
-
-    // Convert Bunny embed iframes → direct HLS
-    if (t.includes('iframe.mediadelivery.net/embed/')) {
-      const parts = t.split('/');
-      const possibleGuid = parts[parts.length - 1]?.split('?')[0];
-      if (isValidBunnyVideoId(possibleGuid)) return getHlsUrl(possibleGuid);
-      return null;
-    }
+    if (t.includes('iframe.mediadelivery.net/embed/')) return null;
 
     if (
       t.startsWith('http://') ||
@@ -63,6 +65,8 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
   const hlsRef = useRef(null);
   const completedRef = useRef(false);
   const currentUrlRef = useRef(null);
+  const iframeRef = useRef(null);
+  const ytPlayerRef = useRef(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -70,6 +74,7 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
   const [duration, setDuration] = useState(0);
   const [progressPercent, setProgressPercent] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [playbackError, setPlaybackError] = useState(null);
 
   // ── Normalise content ──
   const mediaObj = useMemo(
@@ -102,9 +107,14 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
     [rawVideoUrl]
   );
 
+  const bunnyEmbedUrl = useMemo(
+    () => getBunnyEmbedUrl(rawVideoUrl),
+    [rawVideoUrl]
+  );
+
   const playableVideoUrl = useMemo(
-    () => (youtubeEmbedUrl ? null : resolvePlayableUrl(rawVideoUrl, rawBunnyId)),
-    [youtubeEmbedUrl, rawVideoUrl, rawBunnyId]
+    () => (youtubeEmbedUrl || bunnyEmbedUrl ? null : resolvePlayableUrl(rawVideoUrl, rawBunnyId)),
+    [youtubeEmbedUrl, bunnyEmbedUrl, rawVideoUrl, rawBunnyId]
   );
 
   const isHlsUrl = useMemo(
@@ -125,6 +135,9 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
     setIsPlaying(false);
     setCurrentTime(0);
     setProgressPercent(0);
+    setPlaybackError(null);
+
+    let retryAttempts = 0;
 
     // Destroy previous HLS instance
     if (hlsRef.current) {
@@ -148,15 +161,28 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
         hls.loadSource(playableVideoUrl);
         hls.attachMedia(video);
 
-        // Resilient error recovery (e.g. while Bunny is encoding or network hiccup)
+        // Resilient error recovery with capped retries
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
-                console.warn('HLS Network error, attempting recovery...', data.details);
-                setTimeout(() => {
-                  if (hlsRef.current) hlsRef.current.startLoad();
-                }, 2000);
+                retryAttempts += 1;
+                console.warn(`HLS Network error (attempt ${retryAttempts}/2):`, data.details);
+                if (retryAttempts <= 2) {
+                  setTimeout(() => {
+                    if (hlsRef.current) hlsRef.current.startLoad();
+                  }, 1500);
+                } else {
+                  console.error('Fatal HLS Network error, halting retry loop:', data.details, playableVideoUrl);
+                  setPlaybackError({
+                    title: 'Video Stream Unavailable',
+                    message: data.details === 'manifestLoadError'
+                      ? 'The video stream could not be loaded from Bunny CDN (HTTP 403 Forbidden / Domain suspended or CORS issue). Please verify your Bunny CDN library status and domain settings.'
+                      : 'A network error interrupted the video stream.',
+                    url: playableVideoUrl,
+                  });
+                  hls.destroy();
+                }
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
                 console.warn('HLS Media error, attempting recovery...', data.details);
@@ -164,6 +190,11 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
                 break;
               default:
                 console.error('Fatal unrecoverable HLS error:', data);
+                setPlaybackError({
+                  title: 'Playback Error',
+                  message: 'A fatal player error occurred while playing this video stream.',
+                  url: playableVideoUrl,
+                });
                 hls.destroy();
                 break;
             }
@@ -263,18 +294,222 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
     (video.requestFullscreen || video.webkitRequestFullscreen || (() => {})).call(video);
   }, []);
 
+  const handleVideoError = useCallback(() => {
+    const mediaError = videoRef.current?.error;
+    if (mediaError && !isHlsUrl) {
+      console.warn('HTML5 Video error event:', mediaError);
+      setPlaybackError({
+        title: 'Video Playback Error',
+        message: 'The media file could not be played. The video source may be unreachable or in an unsupported format.',
+        url: playableVideoUrl,
+      });
+    }
+  }, [isHlsUrl, playableVideoUrl]);
+
+  const handleRetry = useCallback(() => {
+    setPlaybackError(null);
+    currentUrlRef.current = null;
+    const video = videoRef.current;
+    if (video) {
+      video.removeAttribute('src');
+    }
+    setCurrentTime(0);
+  }, []);
+
+  // ── IFrame Message Bridge for YouTube & Bunny Stream ──
+  useEffect(() => {
+    if (!youtubeEmbedUrl && !bunnyEmbedUrl) return;
+
+    // Reset completion status for new embed video
+    completedRef.current = false;
+
+    // 1. Cross-origin message listener
+    const handleMessage = (event) => {
+      const origin = event.origin || '';
+      const isYouTube = origin.includes('youtube.com') || origin.includes('youtube-nocookie.com');
+      const isBunny = origin.includes('mediadelivery.net') || origin.includes('bunnycdn.com');
+
+      if (!isYouTube && !isBunny) return;
+
+      let data = event.data;
+      if (typeof data === 'string') {
+        try {
+          data = JSON.parse(data);
+        } catch (_) {
+          return;
+        }
+      }
+
+      if (!data) return;
+
+      // Handle YouTube postMessage state change (info === 0 is ended)
+      if (isYouTube) {
+        if (
+          (data.event === 'onStateChange' && data.info === 0) ||
+          (data.event === 'infoDelivery' && data.info?.playerState === 0)
+        ) {
+          handleEnded();
+        }
+      }
+
+      // Handle Bunny Stream postMessage events
+      if (isBunny) {
+        if (
+          data.event === 'ended' ||
+          data.event === 'complete' ||
+          data.type === 'ended' ||
+          data.type === 'player:ended' ||
+          data.action === 'ended'
+        ) {
+          handleEnded();
+        }
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+
+    // 2. YouTube IFrame Player API listener
+    let isCancelled = false;
+    if (youtubeEmbedUrl) {
+      const initYtPlayer = () => {
+        if (isCancelled || !window.YT || !window.YT.Player || !iframeRef.current) return;
+        try {
+          if (ytPlayerRef.current && typeof ytPlayerRef.current.destroy === 'function') {
+            ytPlayerRef.current.destroy();
+          }
+          ytPlayerRef.current = new window.YT.Player(iframeRef.current, {
+            events: {
+              onStateChange: (e) => {
+                if (e.data === 0) {
+                  handleEnded();
+                }
+              },
+            },
+          });
+        } catch (err) {
+          console.warn('[VideoPlayer] YT.Player initialization note:', err);
+        }
+      };
+
+      if (!window.YT) {
+        const existingScript = document.getElementById('youtube-iframe-api');
+        if (!existingScript) {
+          const script = document.createElement('script');
+          script.id = 'youtube-iframe-api';
+          script.src = 'https://www.youtube.com/iframe_api';
+          document.body.appendChild(script);
+        }
+
+        const prevOnReady = window.onYouTubeIframeAPIReady;
+        window.onYouTubeIframeAPIReady = () => {
+          if (typeof prevOnReady === 'function') prevOnReady();
+          initYtPlayer();
+        };
+      } else if (window.YT.Player) {
+        initYtPlayer();
+      }
+    }
+
+    return () => {
+      isCancelled = true;
+      window.removeEventListener('message', handleMessage);
+      if (ytPlayerRef.current && typeof ytPlayerRef.current.destroy === 'function') {
+        try {
+          ytPlayerRef.current.destroy();
+        } catch (_) {}
+        ytPlayerRef.current = null;
+      }
+    };
+  }, [youtubeEmbedUrl, bunnyEmbedUrl, handleEnded]);
+
   // ── YouTube embed ──
   if (youtubeEmbedUrl) {
     return (
       <Card className="border-border overflow-hidden bg-slate-950 relative select-none shadow-2xl rounded-2xl">
         <div className="aspect-video w-full relative">
           <iframe
+            id="youtube-player-iframe"
+            ref={iframeRef}
             src={youtubeEmbedUrl}
             className="w-full h-full border-0 absolute inset-0"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
             title={mediaObj.title || 'Workout Video'}
           />
         </div>
+        <div className="bg-slate-900/90 border-t border-slate-800 px-4 py-2 flex items-center justify-between text-xs text-slate-400">
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            YouTube Player Connected
+          </span>
+          {onComplete && (
+            <button
+              type="button"
+              onClick={handleEnded}
+              className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer flex items-center gap-1 hover:underline"
+            >
+              Mark Completed ✓
+            </button>
+          )}
+        </div>
+      </Card>
+    );
+  }
+
+  // ── Bunny Stream iframe embed ──
+  if (bunnyEmbedUrl) {
+    return (
+      <Card className="border-border overflow-hidden bg-slate-950 relative select-none shadow-2xl rounded-2xl">
+        <div className="aspect-video w-full relative">
+          <iframe
+            ref={iframeRef}
+            src={bunnyEmbedUrl}
+            className="w-full h-full border-0 absolute inset-0"
+            allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture; fullscreen"
+            title={mediaObj.title || 'Workout Video'}
+          />
+        </div>
+        <div className="bg-slate-900/90 border-t border-slate-800 px-4 py-2 flex items-center justify-between text-xs text-slate-400">
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+            Bunny Stream Player Connected
+          </span>
+          {onComplete && (
+            <button
+              type="button"
+              onClick={handleEnded}
+              className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer flex items-center gap-1 hover:underline"
+            >
+              Mark Completed ✓
+            </button>
+          )}
+        </div>
+      </Card>
+    );
+  }
+
+  // ── Playback / Network Error State ──
+  if (playbackError) {
+    return (
+      <Card className="border-border overflow-hidden bg-slate-950 relative select-none shadow-2xl rounded-2xl p-6 sm:p-8 flex flex-col items-center justify-center min-h-[300px] sm:min-h-[360px] text-center">
+        <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-500 flex items-center justify-center mb-4 shadow-inner">
+          <AlertTriangle className="h-7 w-7" />
+        </div>
+        <h3 className="text-base sm:text-lg font-bold text-white mb-2">{playbackError.title}</h3>
+        <p className="text-xs sm:text-sm text-slate-400 max-w-md mb-4 leading-relaxed">
+          {playbackError.message}
+        </p>
+        {playbackError.url && (
+          <div className="text-[11px] font-mono text-slate-400 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 max-w-full sm:max-w-md truncate mb-5">
+            {playbackError.url}
+          </div>
+        )}
+        <button
+          onClick={handleRetry}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-all cursor-pointer shadow-md"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          Retry Connection
+        </button>
       </Card>
     );
   }
@@ -305,6 +540,7 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
         onPlay={handlePlay}
         onPause={handlePause}
         onEnded={handleEnded}
+        onError={handleVideoError}
         onClick={handlePlayPause}
         className="w-full aspect-video object-contain bg-slate-950 cursor-pointer block"
         preload="auto"

@@ -31,6 +31,7 @@ const loadRazorpayScript = () => {
  * If not configured, opens a high-fidelity interactive simulation modal.
  */
 export const openCheckout = async ({
+  courseId,
   courseName,
   amount,
   currency = 'INR',
@@ -38,6 +39,29 @@ export const openCheckout = async ({
   userName,
   platformName = 'ACFIT Academy LMS',
 }) => {
+  // Pre-create server-side order to protect amount integrity and bind course
+  let serverOrderId = null;
+  try {
+    const orderRes = await fetch('/api/create-razorpay-order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount,
+        currency,
+        courseId,
+        receipt: `rcpt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      }),
+    });
+    if (orderRes.ok) {
+      const orderData = await orderRes.json();
+      if (orderData.success && orderData.orderId) {
+        serverOrderId = orderData.orderId;
+      }
+    }
+  } catch (err) {
+    console.warn('[razorpayService] Server order generation warning (falling back):', err);
+  }
+
   // ── Live mode ──
   if (isRazorpayConfigured) {
     const scriptLoaded = await loadRazorpayScript();
@@ -54,6 +78,7 @@ export const openCheckout = async ({
         currency,
         name: platformName,
         description: `Enrollment: ${courseName}`,
+        order_id: serverOrderId || undefined,
         prefill: {
           name: userName,
           email: userEmail,
@@ -61,11 +86,44 @@ export const openCheckout = async ({
         theme: {
           color: '#3b82f6',
         },
-        handler: (response) => {
+        handler: async (response) => {
+          const paymentId = response.razorpay_payment_id;
+          const orderId = response.razorpay_order_id || serverOrderId;
+          const signature = response.razorpay_signature;
+
+          // Server-side HMAC-SHA256 signature verification
+          try {
+            const verifyRes = await fetch('/api/verify-razorpay-payment', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                orderId,
+                paymentId,
+                signature,
+              }),
+            });
+            const verifyData = await verifyRes.json();
+            if (!verifyData.verified) {
+              resolve({
+                success: false,
+                error: verifyData.error || 'Payment signature verification failed. Possible tampering detected.',
+              });
+              return;
+            }
+          } catch (verifyErr) {
+            console.error('[razorpayService] Payment verification failed:', verifyErr);
+            resolve({
+              success: false,
+              error: 'Payment verification service unreachable. Please contact support.',
+            });
+            return;
+          }
+
           resolve({
             success: true,
-            paymentId: response.razorpay_payment_id,
-            orderId: response.razorpay_order_id || null,
+            paymentId,
+            orderId,
+            signature,
             method: 'Razorpay',
           });
         },
@@ -541,12 +599,30 @@ export const openCheckout = async ({
     });
 
     // Simulate Success response
-    successBtn.addEventListener('click', () => {
+    successBtn.addEventListener('click', async () => {
       cleanup();
+      const mockPaymentId = `pay_${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+      const mockOrderId = serverOrderId || `order_sim_${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+      const mockSignature = `sim_sig_${Math.random().toString(36).substr(2, 12)}`;
+
+      // Simulate verification roundtrip for testing
+      try {
+        await fetch('/api/verify-razorpay-payment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orderId: mockOrderId,
+            paymentId: mockPaymentId,
+            signature: mockSignature,
+          }),
+        });
+      } catch (_) {}
+
       resolve({
         success: true,
-        paymentId: `pay_${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
-        orderId: `order_${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
+        paymentId: mockPaymentId,
+        orderId: mockOrderId,
+        signature: mockSignature,
         method: activeMethod,
       });
     });

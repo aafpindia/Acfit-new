@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLmsStore } from '../../../stores/lmsStore';
 import { useAuth } from '../../../hooks/useAuth';
 import { useToast } from '../../../hooks/useToast';
-import { AlertCircle, Clock, CheckCircle2, XCircle, Award, RotateCcw, ChevronRight, Check, X, FileCheck, ExternalLink } from 'lucide-react';
+import { AlertCircle, Clock, CheckCircle2, XCircle, Award, RotateCcw, ChevronRight, Check, X, FileCheck, ExternalLink, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
+import { submitAssessment } from '../../../services/assessmentService';
 
 export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed, lessonId }) => {
   const navigate = useNavigate();
@@ -79,6 +80,8 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [scoreResult, setScoreResult] = useState(null); // { score, passed, correctCount, timeTaken }
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [reviewData, setReviewData] = useState([]);
   const timerRef = useRef(null);
 
   // Reset quiz states on module, lesson or quiz changes
@@ -89,6 +92,8 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
     setShowSubmitConfirm(false);
     setShowReview(false);
     setScoreResult(null);
+    setReviewData([]);
+    setIsSubmitting(false);
     if (timerRef.current) clearInterval(timerRef.current);
   }, [moduleId, courseId, isFinal, lessonId]);
 
@@ -98,6 +103,25 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
+
+  // Sanitized questions for client view:
+  // Answers (`isCorrect`, `correctIndex`) and explanations are completely stripped!
+  const questions = useMemo(() => {
+    const rawQuestions = quiz?.questions || [];
+    return rawQuestions.map((q, qIdx) => {
+      const rawOptions = q.options || [];
+      const sanitizedOptions = rawOptions.map((opt, oIdx) => ({
+        id: oIdx,
+        text: typeof opt === 'string' ? opt : (opt.text || opt.title || `Option ${oIdx + 1}`)
+      }));
+
+      return {
+        id: q.id || `q-${qIdx}`,
+        question: q.question || q.text || q.prompt || `Question ${qIdx + 1}`,
+        options: sanitizedOptions
+      };
+    });
+  }, [quiz?.questions]);
 
   if (!quiz) {
     return (
@@ -115,31 +139,6 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
     );
   }
 
-  const rawQuestions = quiz.questions || [];
-  const questions = rawQuestions.map((q, qIdx) => {
-    const rawOptions = q.options || [];
-    const formattedOptions = rawOptions.map((opt, oIdx) => {
-      if (typeof opt === 'string') {
-        return {
-          text: opt,
-          isCorrect: oIdx === (q.correctIndex !== undefined ? q.correctIndex : 0)
-        };
-      }
-      return {
-        text: opt.text || opt.title || `Option ${oIdx + 1}`,
-        isCorrect: Boolean(opt.isCorrect || (q.correctIndex !== undefined && q.correctIndex === oIdx))
-      };
-    });
-
-    return {
-      ...q,
-      id: q.id || `q-${qIdx}`,
-      question: q.question || q.text || q.prompt || `Question ${qIdx + 1}`,
-      options: formattedOptions,
-      explanation: q.explanation || q.modelSolution || q.rationale || ''
-    };
-  });
-
   const timeLimit = quiz.timerSeconds || 120;
   const passingScore = quiz.passingPercentage || 60;
 
@@ -149,6 +148,8 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
     setSelectedOptions({});
     setShowSubmitConfirm(false);
     setShowReview(false);
+    setIsSubmitting(false);
+    setReviewData([]);
     setTimeLeft(timeLimit);
 
     if (timerRef.current) clearInterval(timerRef.current);
@@ -166,13 +167,15 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
   };
 
   const handleSelectOption = (questionId, optionIdx) => {
+    if (isSubmitting) return;
     setSelectedOptions({
       ...selectedOptions,
       [questionId]: optionIdx
     });
   };
 
-  const handleSubmitQuiz = (isTimeout = false) => {
+  const handleSubmitQuiz = async (isTimeout = false) => {
+    if (isSubmitting) return;
     if (timerRef.current) clearInterval(timerRef.current);
     setShowSubmitConfirm(false);
 
@@ -180,38 +183,54 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
       error('Time has expired! Submitting assessment automatically.');
     }
 
-    let correctCount = 0;
-    questions.forEach((q) => {
-      const chosenIdx = selectedOptions[q.id];
-      if (chosenIdx !== undefined && q.options[chosenIdx]?.isCorrect) {
-        correctCount++;
-      }
-    });
-
-    const score = questions.length > 0 ? Math.round((correctCount / questions.length) * 100) : 0;
-    const passed = score >= passingScore;
+    setIsSubmitting(true);
     const timeTaken = Math.max(0, timeLimit - timeLeft);
 
-    setScoreResult({
-      score,
-      passed,
-      correctCount,
-      timeTaken
-    });
+    try {
+      // Secure server-side grading evaluation (answer keys never sent to browser)
+      const res = await submitAssessment({
+        courseId,
+        moduleId: resolvedModuleId || moduleId,
+        assessmentId: quiz?.id,
+        userAnswers: selectedOptions,
+        isFinal,
+        rawQuestions: quiz?.questions || [],
+        passingScore,
+        timeTaken,
+      });
 
-    setQuizState('result');
+      const evalData = res?.data || res || {};
+      const finalScore = evalData.score !== undefined ? evalData.score : 0;
+      const finalPassed = Boolean(evalData.passed);
+      const finalCorrectCount = evalData.correctCount !== undefined ? evalData.correctCount : 0;
 
-    if (isFinal) {
-      const studentName = user?.fullName || user?.name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Graduate Member');
-      submitFinalAssessmentAttempt(courseId, score, passed, user?.id, studentName, quiz.id);
-    } else {
-      submitAssessmentAttempt(courseId, resolvedModuleId || moduleId, score, passed, user?.id, quiz.id);
-    }
+      setScoreResult({
+        score: finalScore,
+        passed: finalPassed,
+        correctCount: finalCorrectCount,
+        timeTaken,
+      });
 
-    if (passed) {
-      success('Congratulations! You passed the assessment.');
-    } else {
-      error('Failed to meet passing score guidelines. Please review and try again.');
+      setReviewData(evalData.review || []);
+      setQuizState('result');
+
+      if (isFinal) {
+        const studentName = user?.fullName || user?.name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Graduate Member');
+        await submitFinalAssessmentAttempt(courseId, finalScore, finalPassed, user?.id, studentName, quiz?.id);
+      } else {
+        await submitAssessmentAttempt(courseId, resolvedModuleId || moduleId, finalScore, finalPassed, user?.id, quiz?.id);
+      }
+
+      if (finalPassed) {
+        success('Congratulations! You passed the assessment.');
+      } else {
+        error('Failed to meet passing score guidelines. Please review and try again.');
+      }
+    } catch (err) {
+      console.error('[AssessmentPlayer] Submit error:', err);
+      error(err.message || 'Error evaluating assessment. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -377,7 +396,7 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
                 <Button
                   variant="primary"
                   onClick={() => setCurrentQuestionIdx((p) => p + 1)}
-                  disabled={!hasChosen}
+                  disabled={!hasChosen || isSubmitting}
                   className="text-xs h-9 px-4 font-bold bg-[#1E65B8] text-white hover:bg-[#1976D2]"
                 >
                   Next Question
@@ -386,10 +405,17 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
                 <Button
                   variant="primary"
                   onClick={() => setShowSubmitConfirm(true)}
-                  disabled={!hasChosen}
+                  disabled={!hasChosen || isSubmitting}
                   className="text-xs h-9 px-5 font-extrabold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
                 >
-                  Submit Quiz
+                  {isSubmitting ? (
+                    <span className="flex items-center gap-1.5">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Grading...
+                    </span>
+                  ) : (
+                    'Submit Quiz'
+                  )}
                 </Button>
               )}
             </div>
@@ -408,13 +434,14 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
                 <h3 className="text-lg font-extrabold text-[#202124]">Submit Quiz?</h3>
                 <p className="text-xs text-slate-500 leading-relaxed">
                   You answered <span className="font-bold text-slate-800">{answeredCount} of {questions.length}</span> questions.
-                  Are you sure you want to finalize your submission?
+                  Your answers will be securely verified and graded.
                 </p>
               </div>
               <div className="flex gap-3 pt-2">
                 <Button
                   variant="outline"
                   onClick={() => setShowSubmitConfirm(false)}
+                  disabled={isSubmitting}
                   className="w-1/2 text-xs font-semibold h-9"
                 >
                   Go Back
@@ -422,9 +449,17 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
                 <Button
                   variant="primary"
                   onClick={() => handleSubmitQuiz(false)}
+                  disabled={isSubmitting}
                   className="w-1/2 text-xs font-extrabold h-9 bg-emerald-600 hover:bg-emerald-700 text-white"
                 >
-                  Submit Now
+                  {isSubmitting ? (
+                    <span className="flex items-center justify-center gap-1.5">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Evaluating...
+                    </span>
+                  ) : (
+                    'Submit Now'
+                  )}
                 </Button>
               </div>
             </div>
@@ -592,14 +627,16 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
           </CardContent>
         </Card>
 
-        {/* Detailed Questions Review Accordion */}
+        {/* Detailed Questions Review Accordion (populated with server-graded review data) */}
         {showReview && (
           <div className="space-y-3.5 pt-2">
             <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-500">Detailed Answer Review</h4>
             
-            {questions.map((q, idx) => {
-              const chosenOptIdx = selectedOptions[q.id];
-              const isCorrect = chosenOptIdx !== undefined && q.options[chosenOptIdx]?.isCorrect;
+            {(reviewData.length > 0 ? reviewData : questions).map((q, idx) => {
+              const chosenOptIdx = q.chosenIndex !== undefined ? q.chosenIndex : selectedOptions[q.id];
+              const isCorrect = q.isCorrect !== undefined
+                ? q.isCorrect
+                : (chosenOptIdx !== undefined && q.correctIndex !== undefined && chosenOptIdx === q.correctIndex);
 
               return (
                 <Card key={q.id || idx} className="border-border rounded-xl bg-white shadow-2xs">
@@ -618,7 +655,7 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
                     <div className="grid grid-cols-1 gap-2 pl-5 pt-1">
                       {q.options.map((opt, oIdx) => {
                         const selected = chosenOptIdx === oIdx;
-                        const correct = opt.isCorrect;
+                        const correct = q.correctIndex !== undefined ? (q.correctIndex === oIdx) : opt.isCorrect;
 
                         let optStyles = 'bg-slate-50 border-slate-200 text-slate-600';
                         if (selected && correct) optStyles = 'bg-emerald-50 border-emerald-300 text-emerald-800 font-bold';
@@ -627,7 +664,7 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
 
                         return (
                           <div key={oIdx} className={`p-2.5 rounded-lg border text-xs font-medium flex items-center justify-between ${optStyles}`}>
-                            <span>{opt.text}</span>
+                            <span>{typeof opt === 'string' ? opt : opt.text}</span>
                             <div className="shrink-0 flex items-center justify-center">
                               {correct && <Check className="h-4 w-4 text-emerald-600" />}
                               {selected && !correct && <X className="h-4 w-4 text-rose-600" />}

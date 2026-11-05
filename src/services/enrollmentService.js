@@ -95,13 +95,15 @@ export const enrollUser = async (courseId, explicitUserId = null) => {
       return handleSupabaseError(error, 'enrollUser');
     }
 
-    // Increment students count on course
+    // Atomic increment of course students counter:
+    // When the database trigger `trg_update_course_student_count` is active on `enrollments`,
+    // the count is automatically and atomically kept synchronized with actual enrollments.
+    // For environments where triggers are being applied, we also invoke the atomic RPC function:
     try {
-      const { data: course } = await supabase.from('courses').select('students').eq('id', validCourseId).maybeSingle();
-      if (course) {
-        await supabase.from('courses').update({ students: (course.students || 0) + 1 }).eq('id', validCourseId);
-      }
-    } catch (_) {}
+      await supabase.rpc('increment_course_students', { p_course_id: validCourseId });
+    } catch (_) {
+      // Trigger handles it automatically
+    }
 
     const record = {
       id: data?.id || `enr-${userId}-${validCourseId}`,

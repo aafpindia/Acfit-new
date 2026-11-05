@@ -459,75 +459,142 @@ export const updateCourse = async (courseId, courseData) => {
 
   if (error) return handleSupabaseError(error, 'updateCourse');
 
-  // If modules are provided, sync modules, lessons, and module assessments
+  // If modules are provided, perform differential update (upsert retained, remove deleted)
+  // CRITICAL: NEVER perform a blanket DELETE on all modules, as ON DELETE CASCADE would wipe
+  // all student completion records in the `progress` table and all quiz history in `attempts`!
   if (Array.isArray(courseData.modules)) {
-    // Clean up existing modules for this course (ON DELETE CASCADE handles lessons & assessments)
-    await supabase.from('modules').delete().eq('course_id', courseId);
-    await supabase.from('assessments').delete().eq('course_id', courseId).eq('is_final', false);
-
-    for (let mIdx = 0; mIdx < courseData.modules.length; mIdx++) {
-      const mod = courseData.modules[mIdx];
-      const modId = getOrGenerateUUID(mod.id);
-
-      const { error: modErr } = await supabase
+    try {
+      // 1. Fetch all existing module and lesson IDs currently in Supabase for this course
+      const { data: dbModules } = await supabase
         .from('modules')
-        .insert({
-          id: modId,
-          course_id: courseId,
-          title: mod.title || `Module ${mIdx + 1}`,
-          sort_order: mod.order || mod.sort_order || (mIdx + 1),
-        });
+        .select('id')
+        .eq('course_id', courseId);
+      const existingDbModuleIds = new Set((dbModules || []).map((m) => m.id));
 
-      if (modErr) console.warn('[updateCourse] module insert warning:', modErr);
+      let existingDbLessonIds = new Set();
+      if (existingDbModuleIds.size > 0) {
+        const { data: dbLessons } = await supabase
+          .from('lessons')
+          .select('id, module_id')
+          .in('module_id', Array.from(existingDbModuleIds));
+        existingDbLessonIds = new Set((dbLessons || []).map((l) => l.id));
+      }
 
-      if (Array.isArray(mod.lessons)) {
-        for (let lIdx = 0; lIdx < mod.lessons.length; lIdx++) {
-          const les = mod.lessons[lIdx];
-          const lessonId = getOrGenerateUUID(les.id);
-          const contentObj = {
-            duration: les.duration || '15 mins',
-            videoUrl: les.videoUrl || les.embedUrl || '',
-            videoId: les.videoId || les.bunnyVideoId || '',
-            bunnyVideoId: les.bunnyVideoId || les.videoId || '',
-            fileUrl: les.fileUrl || les.content?.fileUrl || les.url || '',
-            notes: les.notes || les.content?.notes || '',
-            body: les.body || les.content?.body || (typeof les.content === 'string' ? les.content : ''),
-            slides: Array.isArray(les.slides) ? les.slides : (Array.isArray(les.content?.slides) ? les.content.slides : []),
-            content: typeof les.content !== 'undefined' ? les.content : '',
-            items: Array.isArray(les.items) ? les.items : (Array.isArray(les.contentItems) ? les.contentItems : (les.content && Array.isArray(les.content.items) ? les.content.items : [])),
-            ...(typeof les.content === 'object' && !Array.isArray(les.content) ? les.content : {})
-          };
+      const retainedModuleIds = new Set();
+      const allRetainedLessonIds = new Set();
+      const retainedQuizIds = new Set();
 
-          const { error: lesErr } = await supabase
-            .from('lessons')
-            .insert({
-              id: lessonId,
+      // 2. Upsert retained modules and lessons with their stable UUIDs
+      for (let mIdx = 0; mIdx < courseData.modules.length; mIdx++) {
+        const mod = courseData.modules[mIdx];
+        const modId = getOrGenerateUUID(mod.id);
+        retainedModuleIds.add(modId);
+
+        const { error: modErr } = await supabase
+          .from('modules')
+          .upsert({
+            id: modId,
+            course_id: courseId,
+            title: mod.title || `Module ${mIdx + 1}`,
+            sort_order: mod.order || mod.sort_order || (mIdx + 1),
+          }, { onConflict: 'id' });
+
+        if (modErr) console.warn('[updateCourse] module upsert warning:', modErr);
+
+        if (Array.isArray(mod.lessons)) {
+          for (let lIdx = 0; lIdx < mod.lessons.length; lIdx++) {
+            const les = mod.lessons[lIdx];
+            const lessonId = getOrGenerateUUID(les.id);
+            allRetainedLessonIds.add(lessonId);
+
+            const contentObj = {
+              duration: les.duration || '15 mins',
+              videoUrl: les.videoUrl || les.embedUrl || '',
+              videoId: les.videoId || les.bunnyVideoId || '',
+              bunnyVideoId: les.bunnyVideoId || les.videoId || '',
+              fileUrl: les.fileUrl || les.content?.fileUrl || les.url || '',
+              notes: les.notes || les.content?.notes || '',
+              body: les.body || les.content?.body || (typeof les.content === 'string' ? les.content : ''),
+              slides: Array.isArray(les.slides) ? les.slides : (Array.isArray(les.content?.slides) ? les.content.slides : []),
+              content: typeof les.content !== 'undefined' ? les.content : '',
+              items: Array.isArray(les.items) ? les.items : (Array.isArray(les.contentItems) ? les.contentItems : (les.content && Array.isArray(les.content.items) ? les.content.items : [])),
+              ...(typeof les.content === 'object' && !Array.isArray(les.content) ? les.content : {})
+            };
+
+            const { error: lesErr } = await supabase
+              .from('lessons')
+              .upsert({
+                id: lessonId,
+                module_id: modId,
+                title: les.title || `Lesson ${lIdx + 1}`,
+                type: les.type || 'video',
+                sort_order: les.order || les.sort_order || (lIdx + 1),
+                content: contentObj,
+              }, { onConflict: 'id' });
+
+            if (lesErr) console.warn('[updateCourse] lesson upsert warning:', lesErr);
+          }
+        }
+
+        // Module assessment / quiz upsert
+        if (mod.assessment && (mod.assessment.title || (mod.assessment.questions && mod.assessment.questions.length > 0))) {
+          const quizId = getOrGenerateUUID(mod.assessment.id);
+          retainedQuizIds.add(quizId);
+          const { error: quizErr } = await supabase
+            .from('assessments')
+            .upsert({
+              id: quizId,
+              course_id: courseId,
               module_id: modId,
-              title: les.title || `Lesson ${lIdx + 1}`,
-              type: les.type || 'video',
-              sort_order: les.order || les.sort_order || (lIdx + 1),
-              content: contentObj,
-            });
+              title: mod.assessment.title || `${mod.title} Assessment`,
+              passing_percentage: mod.assessment.passingPercentage || mod.assessment.passing_percentage || 70,
+              timer_seconds: mod.assessment.timerSeconds || mod.assessment.timer_seconds || 600,
+              questions: mod.assessment.questions || [],
+              is_final: false,
+            }, { onConflict: 'id' });
 
-          if (lesErr) console.warn('[updateCourse] lesson insert warning:', lesErr);
+          if (quizErr) console.warn('[updateCourse] assessment upsert warning:', quizErr);
         }
       }
 
-      if (mod.assessment && (mod.assessment.title || (mod.assessment.questions && mod.assessment.questions.length > 0))) {
-        const quizId = getOrGenerateUUID(mod.assessment.id);
-        await supabase
-          .from('assessments')
-          .insert({
-            id: quizId,
-            course_id: courseId,
-            module_id: modId,
-            title: mod.assessment.title || `${mod.title} Assessment`,
-            passing_percentage: mod.assessment.passingPercentage || mod.assessment.passing_percentage || 70,
-            timer_seconds: mod.assessment.timerSeconds || mod.assessment.timer_seconds || 600,
-            questions: mod.assessment.questions || [],
-            is_final: false,
-          });
+      // 3. Delete ONLY lessons explicitly removed from the curriculum
+      const lessonIdsToDelete = Array.from(existingDbLessonIds).filter((id) => !allRetainedLessonIds.has(id));
+      if (lessonIdsToDelete.length > 0) {
+        const { error: delLesErr } = await supabase
+          .from('lessons')
+          .delete()
+          .in('id', lessonIdsToDelete);
+        if (delLesErr) console.warn('[updateCourse] lesson cleanup warning:', delLesErr);
       }
+
+      // 4. Delete ONLY modules explicitly removed from the curriculum
+      const moduleIdsToDelete = Array.from(existingDbModuleIds).filter((id) => !retainedModuleIds.has(id));
+      if (moduleIdsToDelete.length > 0) {
+        const { error: delModErr } = await supabase
+          .from('modules')
+          .delete()
+          .in('id', moduleIdsToDelete);
+        if (delModErr) console.warn('[updateCourse] module cleanup warning:', delModErr);
+      }
+
+      // 5. Clean up non-final assessments that were removed
+      const { data: dbQuizzes } = await supabase
+        .from('assessments')
+        .select('id')
+        .eq('course_id', courseId)
+        .eq('is_final', false);
+      const quizIdsToDelete = (dbQuizzes || [])
+        .map((q) => q.id)
+        .filter((id) => !retainedQuizIds.has(id));
+      if (quizIdsToDelete.length > 0) {
+        const { error: delQuizErr } = await supabase
+          .from('assessments')
+          .delete()
+          .in('id', quizIdsToDelete);
+        if (delQuizErr) console.warn('[updateCourse] orphan quiz cleanup warning:', delQuizErr);
+      }
+    } catch (diffErr) {
+      console.error('[updateCourse] Differential sync error:', diffErr);
     }
   }
 
