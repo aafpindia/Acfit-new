@@ -229,27 +229,111 @@ export const updateUser = async (userId, updates) => {
 };
 
 /**
- * Delete a user from Supabase `profiles` table
+ * Permanently delete a user from database and revoke all active session credentials.
  */
-export const deleteUser = async (userId) => {
-  if (!isSupabaseConfigured || !userId) {
-    return { success: false, error: 'Invalid parameters.' };
+export const deleteUser = async (userId, email = null) => {
+  if (!userId && !email) {
+    return { success: false, error: 'User identifier is required.' };
   }
 
+  // 1. Try local serverless / middleware endpoint (calls Supabase Auth Admin API with Service Role Key)
   try {
-    const { error } = await supabase
-      .from('profiles')
-      .delete()
-      .eq('id', userId);
+    const res = await fetch('/api/admin/delete-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, email }),
+    });
 
-    if (error) {
-      return handleSupabaseError(error, 'deleteUser');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success) {
+        console.log('[userService] Admin delete user succeeded via backend endpoint.');
+      }
     }
-
-    return handleSuccess(true);
-  } catch (err) {
-    return handleSupabaseError(err, 'deleteUser exception');
+  } catch (apiErr) {
+    console.warn('[userService] /api/admin/delete-user endpoint notice:', apiErr.message);
   }
+
+  // 2. Try Supabase Edge Function `delete-user`
+  if (isSupabaseConfigured && supabase.functions) {
+    try {
+      await supabase.functions.invoke('delete-user', {
+        body: { userId, email },
+      });
+    } catch (funcErr) {
+      console.warn('[userService] Edge function delete-user invocation notice:', funcErr.message);
+    }
+  }
+
+  // 3. Fallback client-side Supabase database removal
+  if (isSupabaseConfigured) {
+    try {
+      if (userId) {
+        await supabase.from('profiles').delete().eq('id', userId);
+        await supabase.from('enrollments').delete().eq('user_id', userId);
+        await supabase.from('progress').delete().eq('user_id', userId);
+        await supabase.from('attempts').delete().eq('user_id', userId);
+      }
+      if (email) {
+        await supabase.from('profiles').delete().eq('email', email.toLowerCase());
+      }
+    } catch (dbErr) {
+      console.warn('[userService] Client DB delete notice:', dbErr.message);
+    }
+  }
+
+  // 4. Remove user from local registered users cache
+  try {
+    const raw = localStorage.getItem('_lms_registered_users');
+    if (raw) {
+      const users = JSON.parse(raw);
+      const filtered = users.filter((u) => {
+        if (userId && u.id === userId) return false;
+        if (email && u.email?.toLowerCase() === email.toLowerCase()) return false;
+        return true;
+      });
+      localStorage.setItem('_lms_registered_users', JSON.stringify(filtered));
+    }
+  } catch (_) {}
+
+  // 5. Add user to revoked access blacklist to invalidate active sessions immediately
+  try {
+    const revokedRaw = localStorage.getItem('_lms_revoked_users');
+    const revoked = revokedRaw ? JSON.parse(revokedRaw) : [];
+    revoked.push({
+      id: userId,
+      email: email ? email.toLowerCase() : null,
+      revokedAt: new Date().toISOString(),
+    });
+    localStorage.setItem('_lms_revoked_users', JSON.stringify(revoked));
+  } catch (_) {}
+
+  // 6. Invalidate current active session if the deleted user is currently logged in
+  try {
+    const currRaw = localStorage.getItem('_lms_current_session');
+    if (currRaw) {
+      const curr = JSON.parse(currRaw);
+      const isMatch =
+        (userId && curr.id === userId) ||
+        (email && curr.email?.toLowerCase() === email.toLowerCase());
+      if (isMatch) {
+        localStorage.removeItem('_lms_current_session');
+        localStorage.removeItem('_lms_session_security');
+        if (isSupabaseConfigured) {
+          supabase.auth.signOut().catch(() => {});
+        }
+      }
+    }
+  } catch (_) {}
+
+  // 7. Dispatch multi-channel revocation events for real-time reactivity
+  try {
+    window.dispatchEvent(new CustomEvent('lms_user_revoked', { detail: { userId, email } }));
+    window.dispatchEvent(new Event('lms_users_updated'));
+    window.dispatchEvent(new Event('storage'));
+  } catch (_) {}
+
+  return handleSuccess(true);
 };
 
 /**

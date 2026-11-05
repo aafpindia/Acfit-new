@@ -184,6 +184,23 @@ export const AuthProvider = ({ children }) => {
       const elapsedSeconds = Math.max(0, Math.floor((now - start) / 1000));
       setSessionDurationSeconds(elapsedSeconds);
 
+      // 1. Check if user account was deleted or revoked by admin
+      try {
+        const revokedRaw = localStorage.getItem('_lms_revoked_users');
+        if (revokedRaw) {
+          const revokedUsers = JSON.parse(revokedRaw);
+          const isRevoked = revokedUsers.some(
+            (r) => (user.id && r.id === user.id) || (user.email && r.email?.toLowerCase() === user.email.toLowerCase())
+          );
+          if (isRevoked) {
+            console.warn('[Session Security] User account has been removed by admin. Forcing instant logout.');
+            signOut();
+            window.location.href = '/login?revoked=true';
+            return;
+          }
+        }
+      } catch (_) {}
+
       // Check idle inactivity
       const idleSeconds = Math.floor((now - lastActivityRef.current) / 1000);
       const remainingSeconds = Math.max(0, IDLE_TIMEOUT_SECONDS - idleSeconds);
@@ -198,6 +215,49 @@ export const AuthProvider = ({ children }) => {
         signOut();
       }
     }, 1000);
+
+    // Revocation event listeners for real-time multi-tab session termination
+    const handleRevocationEvent = (e) => {
+      const revokedId = e?.detail?.userId;
+      const revokedEmail = e?.detail?.email;
+      let isTarget = false;
+
+      if (revokedId && user?.id === revokedId) isTarget = true;
+      if (revokedEmail && user?.email?.toLowerCase() === revokedEmail.toLowerCase()) isTarget = true;
+
+      try {
+        const revokedRaw = localStorage.getItem('_lms_revoked_users');
+        if (revokedRaw) {
+          const revokedUsers = JSON.parse(revokedRaw);
+          if (revokedUsers.some((r) => (user?.id && r.id === user.id) || (user?.email && r.email?.toLowerCase() === user.email.toLowerCase()))) {
+            isTarget = true;
+          }
+        }
+      } catch (_) {}
+
+      if (isTarget) {
+        console.warn('[AuthContext] Active session revoked by administrator. Terminating session.');
+        signOut();
+        window.location.href = '/login?revoked=true';
+      }
+    };
+
+    // Re-verify session integrity on window focus (detects server-side deletion)
+    const handleFocusCheck = async () => {
+      if (!user) return;
+      try {
+        const meRes = await apiClient.auth.me();
+        if (!meRes.data?.user) {
+          console.warn('[AuthContext] Session verification failed on focus. User removed from database.');
+          signOut();
+          window.location.href = '/login?revoked=true';
+        }
+      } catch (_) {}
+    };
+
+    window.addEventListener('lms_user_revoked', handleRevocationEvent);
+    window.addEventListener('storage', handleRevocationEvent);
+    window.addEventListener('focus', handleFocusCheck);
 
     // Track user interactions (throttled to once every 10s)
     let lastThrottledTime = 0;
@@ -219,6 +279,9 @@ export const AuthProvider = ({ children }) => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
+      window.removeEventListener('lms_user_revoked', handleRevocationEvent);
+      window.removeEventListener('storage', handleRevocationEvent);
+      window.removeEventListener('focus', handleFocusCheck);
       window.removeEventListener('mousemove', handleUserActivity);
       window.removeEventListener('keydown', handleUserActivity);
       window.removeEventListener('mousedown', handleUserActivity);

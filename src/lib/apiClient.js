@@ -95,8 +95,20 @@ export const apiClient = {
     /**
      * GET /api/auth/me
      * Retrieves currently authenticated user session and role.
+     * Verifies that the user still exists in profiles and has not been removed by an admin.
      */
     async me() {
+      const isRevoked = (uid, uemail) => {
+        try {
+          const revokedUsers = JSON.parse(localStorage.getItem('_lms_revoked_users') || '[]');
+          return revokedUsers.some(
+            (r) => (uid && r.id === uid) || (uemail && r.email && r.email.toLowerCase() === uemail.toLowerCase())
+          );
+        } catch (_) {
+          return false;
+        }
+      };
+
       if (isSupabaseConfigured) {
         try {
           const sessionPromise = supabase.auth.getSession();
@@ -108,23 +120,61 @@ export const apiClient = {
             if (sessionRaw) {
               try {
                 const user = JSON.parse(sessionRaw);
+                if (isRevoked(user.id, user.email)) {
+                  localStorage.removeItem(CURRENT_SESSION_KEY);
+                  return { data: null, error: 'Account revoked.' };
+                }
+                const registeredUsers = JSON.parse(localStorage.getItem(REGISTERED_USERS_KEY) || '[]');
+                if (!registeredUsers.some(u => u.id === user.id || u.email?.toLowerCase() === user.email?.toLowerCase())) {
+                  localStorage.removeItem(CURRENT_SESSION_KEY);
+                  return { data: null, error: 'User removed.' };
+                }
                 return { data: { user, session: { token: 'local-token-' + user.id } }, error: null };
               } catch (_) {}
             }
             return { data: null, error: null };
           }
 
+          // Check if session user has been explicitly revoked
+          if (isRevoked(session.user.id, session.user.email)) {
+            console.warn('[apiClient.me] User ID in revoked blacklist. Clearing session.');
+            localStorage.removeItem(CURRENT_SESSION_KEY);
+            localStorage.removeItem('_lms_session_security');
+            await supabase.auth.signOut().catch(() => {});
+            return { data: null, error: 'Account revoked by administrator.' };
+          }
+
           let profile = null;
+          let profileQueryFailed = false;
           try {
             const profilePromise = supabase
               .from('profiles')
               .select('*')
               .eq('id', session.user.id)
               .maybeSingle();
-            const { data } = await withTimeout(profilePromise, 3000);
-            profile = data;
+            const { data, error } = await withTimeout(profilePromise, 3000);
+            if (!error) {
+              profile = data;
+            } else {
+              profileQueryFailed = true;
+            }
           } catch (_) {
-            // Profile query timed out or blocked by RLS - safe to ignore and fallback to metadata
+            profileQueryFailed = true;
+          }
+
+          // If database query succeeded and profile does not exist, user was DELETED by admin
+          if (!profile && !profileQueryFailed) {
+            console.warn('[apiClient.me] User not found in profiles table. User was removed by admin.');
+            localStorage.removeItem(CURRENT_SESSION_KEY);
+            localStorage.removeItem('_lms_session_security');
+            await supabase.auth.signOut().catch(() => {});
+            return { data: null, error: 'Account has been removed by administrator.' };
+          }
+
+          if (profile && profile.status === 'suspended') {
+            localStorage.removeItem(CURRENT_SESSION_KEY);
+            await supabase.auth.signOut().catch(() => {});
+            return { data: null, error: 'Account suspended. Please contact support.' };
           }
 
           const storedAvatar = getStoredAvatar(session.user.id, session.user.email);
@@ -150,6 +200,10 @@ export const apiClient = {
           if (sessionRaw) {
             try {
               const user = JSON.parse(sessionRaw);
+              if (isRevoked(user.id, user.email)) {
+                localStorage.removeItem(CURRENT_SESSION_KEY);
+                return { data: null, error: 'Account revoked.' };
+              }
               return { data: { user, session: { token: 'local-token-' + user.id } }, error: null };
             } catch (_) {}
           }
@@ -160,6 +214,15 @@ export const apiClient = {
         if (!sessionRaw) return { data: null, error: null };
         try {
           const user = JSON.parse(sessionRaw);
+          if (isRevoked(user.id, user.email)) {
+            localStorage.removeItem(CURRENT_SESSION_KEY);
+            return { data: null, error: 'Account revoked.' };
+          }
+          const registeredUsers = JSON.parse(localStorage.getItem(REGISTERED_USERS_KEY) || '[]');
+          if (!registeredUsers.some(u => u.id === user.id || u.email?.toLowerCase() === user.email?.toLowerCase())) {
+            localStorage.removeItem(CURRENT_SESSION_KEY);
+            return { data: null, error: 'User removed.' };
+          }
           return { data: { user, session: { token: 'local-token-' + user.id } }, error: null };
         } catch (e) {
           localStorage.removeItem(CURRENT_SESSION_KEY);
@@ -178,6 +241,14 @@ export const apiClient = {
       }
 
       const cleanEmail = email.toLowerCase().trim();
+
+      // Check revoked blacklist
+      try {
+        const revokedUsers = JSON.parse(localStorage.getItem('_lms_revoked_users') || '[]');
+        if (revokedUsers.some(r => r.email?.toLowerCase() === cleanEmail)) {
+          return { data: null, error: 'This account has been removed by the administrator. Access revoked.' };
+        }
+      } catch (_) {}
 
       // Check initial admin credential override (admin@gmail.com / admin@123)
       if (cleanEmail === 'admin@gmail.com' && (password === 'admin@123' || password === 'admin')) {

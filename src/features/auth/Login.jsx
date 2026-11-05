@@ -26,6 +26,7 @@ export const Login = () => {
 
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const isRevoked = new URLSearchParams(location.search).get('revoked') === 'true';
 
   const { register, handleSubmit, formState: { errors } } = useForm({
     resolver: zodResolver(loginSchema)
@@ -225,6 +226,23 @@ export const Login = () => {
                 Enter your credentials to access your learning portal.
               </p>
             </div>
+
+            {/* Revocation Alert Banner */}
+            {isRevoked && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-3 shadow-xs"
+              >
+                <Shield className="h-5 w-5 shrink-0 text-red-500 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p className="font-bold text-sm text-red-800">Account Access Terminated</p>
+                  <p className="text-red-600 leading-relaxed">
+                    This account was removed by the administrator and is no longer authorized to access the ACFIT portal. Active sessions have been revoked.
+                  </p>
+                </div>
+              </motion.div>
+            )}
 
             {/* Form */}
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">

@@ -4,7 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { Loader2 } from 'lucide-react';
 
 export const AdminRoute = ({ children }) => {
-  const { user, role, authenticated, loading } = useAuth();
+  const { user, role, authenticated, loading, signOut } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -18,6 +18,23 @@ export const AdminRoute = ({ children }) => {
         </p>
       </div>
     );
+  }
+
+  // Active check if current user was removed or revoked by administrator
+  if (user) {
+    try {
+      const revokedRaw = localStorage.getItem('_lms_revoked_users');
+      if (revokedRaw) {
+        const revokedList = JSON.parse(revokedRaw);
+        const isRevoked = revokedList.some(
+          (r) => (user.id && r.id === user.id) || (user.email && r.email?.toLowerCase() === user.email.toLowerCase())
+        );
+        if (isRevoked) {
+          signOut?.();
+          return <Navigate to="/login?revoked=true" replace />;
+        }
+      }
+    } catch (_) {}
   }
 
   if (!authenticated) {

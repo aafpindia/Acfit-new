@@ -9,6 +9,7 @@ import { handleBunnyTusSignature } from './api/bunny/tus-signature.js'
 import { handleBunnyVideoStatus } from './api/bunny/video-status.js'
 import { handleSubmitAssessment } from './api/submit-assessment.js'
 import { handleAdminCreateUser } from './api/admin/create-user.js'
+import { handleAdminDeleteUser } from './api/admin/delete-user.js'
 
 function localApiMiddleware() {
   const routeRequest = async (req, res, next) => {
@@ -19,9 +20,12 @@ function localApiMiddleware() {
       return handleSubmitAssessment(req, res);
     }
 
-    // Admin user management route
+    // Admin user management routes
     if (url === '/api/admin/create-user') {
       return handleAdminCreateUser(req, res);
+    }
+    if (url === '/api/admin/delete-user') {
+      return handleAdminDeleteUser(req, res);
     }
 
     // Razorpay routes

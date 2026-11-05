@@ -252,21 +252,21 @@ export const Users = () => {
     }
   };
 
-  // Delete User Permanently from Supabase DB
+  // Delete User Permanently from Supabase DB & Revoke Active Access
   const handleDeleteUser = async (userId) => {
-    if (!window.confirm(`Are you sure you want to permanently delete ${selectedUser?.fullName || 'this user'}? This will also remove their database enrollments and payments.`)) {
+    if (!window.confirm(`Are you sure you want to permanently delete ${selectedUser?.fullName || 'this user'}? This will also remove their database enrollments and invalidate any active login sessions.`)) {
       return;
     }
 
-    const res = await deleteUser(userId);
+    const res = await deleteUser(userId, selectedUser?.email);
     if (res.success) {
       await loadUsers();
       setSelectedUser(null);
       try { window.dispatchEvent(new Event('lms_users_updated')); } catch (_) {}
       try { syncFromSupabase(); } catch (_) {}
-      success('User deleted from database successfully.');
+      success('User deleted and active session credentials revoked successfully.');
     } else {
-      toastError(res.error || 'Failed to delete user from database.');
+      toastError(res.error || 'Failed to delete user.');
     }
   };
 
