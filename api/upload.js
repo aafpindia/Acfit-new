@@ -15,7 +15,7 @@ import { sendResponse, handleCors } from './_utils.js';
 /**
  * Finalize file upload: if the file is PPTX, auto-converts to PDF alongside it.
  */
-async function finalizeUploadedFileResponse(res, targetFilePath, uniqueFileName, originalFileName, mimeType, uploadsDir) {
+async function finalizeUploadedFileResponse(res, targetFilePath, uniqueFileName, originalFileName, mimeType, uploadsDir, isServerless = false) {
   const isPptx = /\.pptx$/i.test(uniqueFileName) || /\.pptx$/i.test(originalFileName);
 
   if (isPptx) {
@@ -24,30 +24,61 @@ async function finalizeUploadedFileResponse(res, targetFilePath, uniqueFileName,
       const pdfFilePath = path.join(uploadsDir, pdfFileName);
       const pptxBuffer = fs.readFileSync(targetFilePath);
 
-      // Convert PPTX buffer to PDF buffer
+      // Convert PPTX buffer to PDF buffer using pure-JS engine
       const pdfBuffer = await convertPptxToPdf(pptxBuffer);
 
       if (pdfBuffer && pdfBuffer.length > 0) {
-        fs.writeFileSync(pdfFilePath, Buffer.from(pdfBuffer));
-        const pdfStats = fs.statSync(pdfFilePath);
-        console.log(`[Upload] Successfully converted "${originalFileName}" to PDF viewbox format: ${pdfFileName}`);
+        if (!isServerless) {
+          fs.writeFileSync(pdfFilePath, Buffer.from(pdfBuffer));
+          const pdfStats = fs.statSync(pdfFilePath);
+          console.log(`[Upload] Successfully converted "${originalFileName}" to PDF viewbox format: ${pdfFileName}`);
 
-        return sendResponse(res, 200, {
-          success: true,
-          url: `/uploads/${pdfFileName}`, // Clean PDF URL for Canvas Viewbox
-          pdfUrl: `/uploads/${pdfFileName}`,
-          originalUrl: `/uploads/${uniqueFileName}`,
-          isConverted: true,
-          fileName: originalFileName.replace(/\.pptx$/i, '.pdf'),
-          originalFileName,
-          size: pdfStats.size,
-          mimeType: 'application/pdf',
-        });
+          return sendResponse(res, 200, {
+            success: true,
+            url: `/uploads/${pdfFileName}`, // Clean PDF URL for Canvas Viewbox
+            pdfUrl: `/uploads/${pdfFileName}`,
+            originalUrl: `/uploads/${uniqueFileName}`,
+            isConverted: true,
+            fileName: originalFileName.replace(/\.pptx$/i, '.pdf'),
+            originalFileName,
+            size: pdfStats.size,
+            mimeType: 'application/pdf',
+          });
+        } else {
+          // On serverless/Vercel: return self-contained base64 data URI
+          const pdfBase64 = Buffer.from(pdfBuffer).toString('base64');
+          const pdfDataUrl = `data:application/pdf;base64,${pdfBase64}`;
+          return sendResponse(res, 200, {
+            success: true,
+            url: pdfDataUrl,
+            pdfUrl: pdfDataUrl,
+            isConverted: true,
+            fileName: originalFileName.replace(/\.pptx$/i, '.pdf'),
+            originalFileName,
+            size: pdfBuffer.length,
+            mimeType: 'application/pdf',
+          });
+        }
       }
     } catch (convErr) {
       console.warn('[Upload PPTX to PDF Conversion Notice]', convErr?.message || convErr);
       // If conversion fails, continue and return the original uploaded file
     }
+  }
+
+  if (isServerless) {
+    const rawBuffer = fs.readFileSync(targetFilePath);
+    const base64Data = rawBuffer.toString('base64');
+    const dataUrl = `data:${mimeType || 'application/octet-stream'};base64,${base64Data}`;
+    return sendResponse(res, 200, {
+      success: true,
+      url: dataUrl,
+      pdfUrl: mimeType === 'application/pdf' ? dataUrl : null,
+      originalUrl: dataUrl,
+      fileName: originalFileName,
+      size: rawBuffer.length,
+      mimeType,
+    });
   }
 
   const stats = fs.statSync(targetFilePath);
@@ -69,9 +100,25 @@ export async function handleUpload(req, res) {
   }
 
   try {
-    const uploadsDir = path.resolve(process.cwd(), 'public', 'uploads');
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
+    let uploadsDir;
+    let isServerless = false;
+
+    try {
+      uploadsDir = path.resolve(process.cwd(), 'public', 'uploads');
+      if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      }
+    } catch (_) {
+      // Vercel / AWS Lambda environment where process.cwd() is read-only
+      isServerless = true;
+      try {
+        uploadsDir = path.resolve('/tmp', 'uploads');
+        if (!fs.existsSync(uploadsDir)) {
+          fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+      } catch {
+        uploadsDir = '/tmp';
+      }
     }
 
     const contentType = req.headers['content-type'] || '';
@@ -100,7 +147,8 @@ export async function handleUpload(req, res) {
         uniqueFileName,
         originalFileName,
         mimeType,
-        uploadsDir
+        uploadsDir,
+        isServerless
       );
     }
 
@@ -155,7 +203,8 @@ export async function handleUpload(req, res) {
         uniqueFileName,
         finalFileName,
         mimeType,
-        uploadsDir
+        uploadsDir,
+        isServerless
       );
     }
 
@@ -178,7 +227,8 @@ export async function handleUpload(req, res) {
         uniqueFileName,
         finalFileName,
         data.mimeType || 'application/octet-stream',
-        uploadsDir
+        uploadsDir,
+        isServerless
       );
     }
 
@@ -194,3 +244,5 @@ export async function handleUpload(req, res) {
     });
   }
 }
+
+export default handleUpload;

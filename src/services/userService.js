@@ -94,14 +94,22 @@ export const fetchUsers = async () => {
   });
 
   // Cross-check with revoked blacklist so revoked users are flagged as archived/suspended
+  // If the user's database status is active and not deleted, the database takes precedence (un-revoked / restored)
   try {
     const revokedRaw = localStorage.getItem('_lms_revoked_users');
     if (revokedRaw) {
-      const revoked = JSON.parse(revokedRaw);
-      revoked.forEach(r => {
+      let revoked = JSON.parse(revokedRaw);
+      let listChanged = false;
+      revoked = revoked.filter(r => {
         const revMail = (r.email || '').toLowerCase().trim();
-        if (revMail && revMail !== 'admin@gmail.com' && mergedMap.has(revMail)) {
+        if (!revMail || revMail === 'admin@gmail.com') return false; // Admin is never in revoked list
+        if (mergedMap.has(revMail)) {
           const usr = mergedMap.get(revMail);
+          // If Supabase DB marked this user as active & !is_deleted, the DB takes precedence: user was restored
+          if (usr.source === 'database' && usr.status === 'active' && !usr.is_deleted) {
+            listChanged = true;
+            return false; // remove from revoked list
+          }
           mergedMap.set(revMail, {
             ...usr,
             status: 'suspended',
@@ -109,7 +117,11 @@ export const fetchUsers = async () => {
             deleted_at: usr.deleted_at || r.revokedAt || new Date().toISOString()
           });
         }
+        return true;
       });
+      if (listChanged) {
+        localStorage.setItem('_lms_revoked_users', JSON.stringify(revoked));
+      }
     }
   } catch (_) {}
 
@@ -292,7 +304,13 @@ export const updateUser = async (userId, updates, targetEmail = null) => {
       const dbUpdates = {};
       if (updates.fullName !== undefined) dbUpdates.full_name = updates.fullName;
       if (updates.role !== undefined) dbUpdates.role = updates.role.toLowerCase();
-      if (updates.status !== undefined) dbUpdates.status = updates.status;
+      if (updates.status !== undefined) {
+        dbUpdates.status = updates.status;
+        if (updates.status === 'active') {
+          dbUpdates.is_deleted = false;
+          dbUpdates.deleted_at = null;
+        }
+      }
       if (updates.avatarUrl !== undefined) dbUpdates.avatar_url = updates.avatarUrl;
       if (updates.phone !== undefined) dbUpdates.phone = updates.phone;
       if (updates.location !== undefined) dbUpdates.location = updates.location;
@@ -342,6 +360,8 @@ export const updateUser = async (userId, updates, targetEmail = null) => {
             fullName: updates.fullName !== undefined ? updates.fullName : u.fullName,
             role: updates.role !== undefined ? updates.role.toLowerCase() : u.role,
             status: updates.status !== undefined ? updates.status : u.status,
+            is_deleted: updates.status === 'active' ? false : (updates.is_deleted !== undefined ? updates.is_deleted : u.is_deleted),
+            deleted_at: updates.status === 'active' ? null : (updates.deleted_at !== undefined ? updates.deleted_at : u.deleted_at),
             avatarUrl: updates.avatarUrl !== undefined ? updates.avatarUrl : u.avatarUrl,
             phone: updates.phone !== undefined ? updates.phone : u.phone,
             location: updates.location !== undefined ? updates.location : u.location,
@@ -404,6 +424,24 @@ export const updateUser = async (userId, updates, targetEmail = null) => {
         );
         localStorage.setItem('_lms_revoked_users', JSON.stringify(filtered));
       }
+    } catch (_) {}
+
+    try {
+      const delRaw = localStorage.getItem('_lms_deleted_user_ids');
+      if (delRaw) {
+        const delIds = JSON.parse(delRaw);
+        const filtered = delIds.filter(id => id !== userId);
+        localStorage.setItem('_lms_deleted_user_ids', JSON.stringify(filtered));
+      }
+    } catch (_) {}
+
+    // Unban via backend administrative endpoint
+    try {
+      fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, email: cleanEmail, action: 'restore' }),
+      }).catch(() => {});
     } catch (_) {}
   }
 

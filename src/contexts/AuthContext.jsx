@@ -208,7 +208,8 @@ export const AuthProvider = ({ children }) => {
           const isRevoked = revokedUsers.some(
             (r) => (user.id && r.id === user.id) || (userEmail && (r.email || '').toLowerCase().trim() === userEmail)
           );
-          if (isRevoked) {
+          // Only enforce local blacklist if user is not verified active in current session
+          if (isRevoked && user.status === 'suspended') {
             console.warn('[Session Security] User account has been removed by admin. Forcing instant logout.');
             signOut();
             window.location.href = '/login?revoked=true';
@@ -217,7 +218,7 @@ export const AuthProvider = ({ children }) => {
         }
       } catch (_) {}
 
-      // 3. Check if user was removed from registered users registry or suspended
+      // 3. Check if user was explicitly suspended or deleted in registered users registry
       try {
         const regRaw = localStorage.getItem('_lms_registered_users');
         if (regRaw) {
@@ -225,16 +226,17 @@ export const AuthProvider = ({ children }) => {
           const found = registered.find(
             (u) => (user.id && u.id === user.id) || (userEmail && (u.email || '').toLowerCase().trim() === userEmail)
           );
-          if (!found) {
-            console.warn('[Session Security] User no longer in registered users list. Forcing instant logout.');
-            signOut();
-            window.location.href = '/login?revoked=true';
-            return;
-          }
-          if (found.status === 'suspended') {
+          if (found && (found.status === 'suspended' || found.is_deleted)) {
             console.warn('[Session Security] User status changed to suspended in registry. Forcing instant logout.');
             signOut();
             window.location.href = '/login?suspended=true';
+            return;
+          }
+          // Only in mock offline mode without Supabase does absence from registered_users indicate removal
+          if (!isSupabaseConfigured && !found) {
+            console.warn('[Session Security] User no longer in mock registry. Forcing instant logout.');
+            signOut();
+            window.location.href = '/login?revoked=true';
             return;
           }
         }

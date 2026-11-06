@@ -171,3 +171,5 @@ export async function handleAdminDeleteUser(req, res) {
     return sendResponse(res, 500, { success: false, error: err.message || 'Internal Server Error' });
   }
 }
+
+export default handleAdminDeleteUser;

@@ -48,7 +48,7 @@ export const ProtectedRoute = ({ children }) => {
       } catch (_) {}
     }
 
-    // 3. For non-admin accounts, check if account was removed from registered users
+    // 3. For non-admin accounts, check if account was explicitly suspended
     if ((user.role || '').toLowerCase() !== 'admin') {
       try {
         const regRaw = localStorage.getItem('_lms_registered_users');
@@ -57,12 +57,7 @@ export const ProtectedRoute = ({ children }) => {
           const found = registered.find(
             (u) => (user.id && u.id === user.id) || (userEmail && (u.email || '').toLowerCase().trim() === userEmail)
           );
-          if (!found) {
-            console.warn('[ProtectedRoute] User removed from user management. Revoking session.');
-            signOut?.();
-            return <Navigate to="/login?revoked=true" replace />;
-          }
-          if (found.status === 'suspended') {
+          if (found && (found.status === 'suspended' || found.is_deleted)) {
             console.warn('[ProtectedRoute] User status is suspended. Revoking session.');
             signOut?.();
             return <Navigate to="/login?suspended=true" replace />;

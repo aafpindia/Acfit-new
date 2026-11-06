@@ -51,6 +51,21 @@ export async function persistBlobInIndexedDB(id, file) {
   }
 }
 
+export async function getBlobFromIndexedDB(id) {
+  try {
+    const db = await openIndexedDB();
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.get(id);
+    return new Promise((resolve) => {
+      request.onsuccess = () => resolve(request.result?.file || null);
+      request.onerror = () => resolve(null);
+    });
+  } catch (err) {
+    return null;
+  }
+}
+
 /**
  * Upload a document or presentation file with accurate progress reporting.
  *
@@ -70,6 +85,36 @@ export async function uploadDocumentFile(file, onProgress = () => {}) {
   }
 
   onProgress(5);
+
+  const fallbackToDataUrl = async () => {
+    return new Promise((resFallback) => {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const dataUrl = reader.result;
+        const cacheId = `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+        await persistBlobInIndexedDB(cacheId, file);
+        onProgress(100);
+        resFallback({
+          success: true,
+          url: dataUrl,
+          pdfUrl: file.type === 'application/pdf' ? dataUrl : null,
+          fileName: file.name,
+          size: file.size,
+          formattedSize: formatFileSize(file.size),
+          isLocal: true,
+          cacheId
+        });
+      };
+      reader.onerror = () => {
+        onProgress(100);
+        resFallback({
+          success: false,
+          error: 'Failed to read document into memory.'
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+  };
 
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
@@ -108,36 +153,16 @@ export async function uploadDocumentFile(file, onProgress = () => {}) {
         }
       }
 
-      // If backend responded with non-200 or unexpected payload, fallback to local Blob & IndexedDB
-      console.warn('[uploadDocumentFile] Backend upload unavailable or returned status', xhr.status, 'Falling back to persistent blob URL');
-      const blobUrl = URL.createObjectURL(file);
-      const cacheId = `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-      await persistBlobInIndexedDB(cacheId, file);
-      onProgress(100);
-      return resolve({
-        success: true,
-        url: blobUrl,
-        fileName: file.name,
-        size: file.size,
-        formattedSize: formatFileSize(file.size),
-        isLocal: true
-      });
+      // If backend responded with non-200 or unexpected payload, fallback to persistent self-contained Data URL
+      console.warn('[uploadDocumentFile] Backend upload unavailable (status', xhr.status, '). Falling back to self-contained document Data URL.');
+      const localResult = await fallbackToDataUrl();
+      resolve(localResult);
     };
 
     xhr.onerror = async () => {
-      console.warn('[uploadDocumentFile] Network error connecting to /api/upload. Falling back to persistent blob URL');
-      const blobUrl = URL.createObjectURL(file);
-      const cacheId = `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-      await persistBlobInIndexedDB(cacheId, file);
-      onProgress(100);
-      return resolve({
-        success: true,
-        url: blobUrl,
-        fileName: file.name,
-        size: file.size,
-        formattedSize: formatFileSize(file.size),
-        isLocal: true
-      });
+      console.warn('[uploadDocumentFile] Network error connecting to /api/upload. Falling back to self-contained document Data URL.');
+      const localResult = await fallbackToDataUrl();
+      resolve(localResult);
     };
 
     xhr.send(file);

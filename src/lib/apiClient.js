@@ -171,15 +171,7 @@ export const apiClient = {
           const sessionEmail = (session.user.email || '').toLowerCase().trim();
           const isSysAdmin = sessionEmail === 'admin@gmail.com';
 
-          // Check if session user has been explicitly revoked (admins are immune)
-          if (!isSysAdmin && isRevoked(session.user.id, session.user.email)) {
-            console.warn('[apiClient.me] User ID in revoked blacklist. Clearing session.');
-            localStorage.removeItem(CURRENT_SESSION_KEY);
-            localStorage.removeItem('_lms_session_security');
-            await supabase.auth.signOut().catch(() => {});
-            return { data: null, error: 'Account revoked by administrator.' };
-          }
-
+          // Database profile verification is the definitive source of truth
           let profile = null;
           let profileQueryFailed = false;
           try {
@@ -212,17 +204,32 @@ export const apiClient = {
             } catch (_) {}
             profile = adminProf;
           } else if (!profile && !profileQueryFailed) {
-            console.warn('[apiClient.me] User not found in profiles table. User was removed by admin.');
+            console.warn('[apiClient.me] User not found in profiles table.');
             localStorage.removeItem(CURRENT_SESSION_KEY);
             localStorage.removeItem('_lms_session_security');
             await supabase.auth.signOut().catch(() => {});
             return { data: null, error: 'Account has been removed by administrator.' };
           }
 
+          // If profile is suspended or archived in the database
           if (profile && !isSysAdmin && (profile.status === 'suspended' || profile.is_deleted)) {
             localStorage.removeItem(CURRENT_SESSION_KEY);
             await supabase.auth.signOut().catch(() => {});
             return { data: null, error: 'Account has been archived or access revoked by administrator.' };
+          }
+
+          // If user is active in DB, ensure local revoked blacklist is cleaned up
+          if (!isSysAdmin) {
+            try {
+              const revRaw = localStorage.getItem('_lms_revoked_users');
+              if (revRaw) {
+                const rev = JSON.parse(revRaw);
+                const filtered = rev.filter(r =>
+                  (r.id && r.id === session.user.id) || ((r.email || '').toLowerCase().trim() === sessionEmail) ? false : true
+                );
+                localStorage.setItem('_lms_revoked_users', JSON.stringify(filtered));
+              }
+            } catch (_) {}
           }
 
           const storedAvatar = getStoredAvatar(session.user.id, session.user.email);
@@ -339,14 +346,6 @@ export const apiClient = {
         }
       }
 
-      // ─── 2. REVOCATION BLACKLIST CHECK (Applies to regular user accounts only) ───
-      try {
-        const revokedUsers = JSON.parse(localStorage.getItem('_lms_revoked_users') || '[]');
-        if (cleanEmail !== 'admin@gmail.com' && revokedUsers.some(r => r.email?.toLowerCase().trim() === cleanEmail)) {
-          return { data: null, error: 'This account has been removed by the administrator. Access revoked.' };
-        }
-      } catch (_) {}
-
       if (isSupabaseConfigured) {
         try {
           // Try Supabase auth first
@@ -370,18 +369,6 @@ export const apiClient = {
 
             const isSysAdmin = cleanEmail === 'admin@gmail.com';
 
-            // Check if user is on revoked blacklist (admin is immune)
-            if (!isSysAdmin) {
-              const revokedUsers = JSON.parse(localStorage.getItem('_lms_revoked_users') || '[]');
-              const isUserRevoked = revokedUsers.some(
-                (r) => (data.user.id && r.id === data.user.id) || (cleanEmail && r.email?.toLowerCase().trim() === cleanEmail)
-              );
-              if (isUserRevoked) {
-                await supabase.auth.signOut().catch(() => {});
-                return { data: null, error: 'This account has been removed by the administrator. Access is revoked.' };
-              }
-            }
-
             if (!profile && isSysAdmin) {
               const adminProf = {
                 id: data.user.id,
@@ -395,17 +382,6 @@ export const apiClient = {
               } catch (_) {}
               profile = adminProf;
             } else if (!profile) {
-              // If user was removed from profiles table by admin, DO NOT re-create them
-              const regUsers = JSON.parse(localStorage.getItem(REGISTERED_USERS_KEY) || '[]');
-              const existsLocally = regUsers.some(
-                (u) => u.id === data.user.id || (u.email || '').toLowerCase().trim() === cleanEmail
-              );
-              if (!existsLocally) {
-                console.warn('[apiClient.login] User profile was removed by administrator. Denying sign-in.');
-                await supabase.auth.signOut().catch(() => {});
-                return { data: null, error: 'This account has been removed by the administrator. Access is revoked.' };
-              }
-
               try {
                 const { data: newProf } = await supabase
                   .from('profiles')
@@ -414,7 +390,8 @@ export const apiClient = {
                     email: data.user.email,
                     full_name: data.user.user_metadata?.full_name || 'Member',
                     role: (data.user.user_metadata?.role || 'user').toLowerCase(),
-                    status: 'active'
+                    status: 'active',
+                    is_deleted: false
                   }, { onConflict: 'id' })
                   .select()
                   .maybeSingle();
@@ -435,19 +412,38 @@ export const apiClient = {
               createdAt: data.user.created_at
             };
 
-            if (user.status === 'suspended' || profile?.is_deleted) {
+            // Database profile is the single source of truth for revocation & suspension
+            if (!isSysAdmin && (user.status === 'suspended' || profile?.is_deleted)) {
               await supabase.auth.signOut().catch(() => {});
               return { data: null, error: 'Your account has been archived or access revoked by the administrator. Please contact support.' };
             }
+
+            // User is authenticated and active: Purge any stale client-side revocation flags on this device
+            try {
+              const revRaw = localStorage.getItem('_lms_revoked_users');
+              if (revRaw) {
+                const rev = JSON.parse(revRaw);
+                const filtered = rev.filter(r =>
+                  (r.id && r.id === data.user.id) || ((r.email || '').toLowerCase().trim() === cleanEmail) ? false : true
+                );
+                localStorage.setItem('_lms_revoked_users', JSON.stringify(filtered));
+              }
+              const delRaw = localStorage.getItem('_lms_deleted_user_ids');
+              if (delRaw) {
+                const del = JSON.parse(delRaw);
+                const filtered = del.filter(id => id !== data.user.id);
+                localStorage.setItem('_lms_deleted_user_ids', JSON.stringify(filtered));
+              }
+            } catch (_) {}
 
             // Sync with local registered database so Admin User Management updates immediately
             try {
               const users = JSON.parse(localStorage.getItem(REGISTERED_USERS_KEY) || '[]');
               const existingIdx = users.findIndex(u => u.id === user.id || u.email?.toLowerCase() === cleanEmail);
               if (existingIdx >= 0) {
-                users[existingIdx] = { ...users[existingIdx], ...user };
+                users[existingIdx] = { ...users[existingIdx], ...user, status: 'active', is_deleted: false };
               } else {
-                users.unshift(user);
+                users.unshift({ ...user, status: 'active', is_deleted: false });
               }
               localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(users));
               window.dispatchEvent(new Event('lms_users_updated'));
@@ -457,35 +453,21 @@ export const apiClient = {
             return { data: { user, session: data.session }, error: null };
           }
 
-          // Fallback: Check if user profile exists in Supabase profiles table directly
-          const { data: dbProfile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('email', cleanEmail)
-            .maybeSingle();
-
-          if (dbProfile) {
-            const user = {
-              id: dbProfile.id,
-              email: dbProfile.email,
-              fullName: dbProfile.full_name || 'Member',
-              role: (dbProfile.role || 'USER').toUpperCase(),
-              status: dbProfile.status || 'active',
-              avatarUrl: dbProfile.avatar_url || null,
-              createdAt: dbProfile.created_at || new Date().toISOString()
-            };
-
-            if (user.status === 'suspended' || dbProfile.is_deleted) {
-              return { data: null, error: 'Your account has been archived or access revoked by administrator.' };
-            }
-
-            localStorage.setItem(CURRENT_SESSION_KEY, JSON.stringify(user));
-            return { data: { user, session: { token: 'supabase-profile-' + user.id } }, error: null };
+          if (error) {
+            return { data: null, error: error.message || 'Invalid email or password.' };
           }
-        } catch (err) {
-          console.warn('Supabase login attempt notice, checking directory fallback:', err.message);
+        } catch (supabaseErr) {
+          console.warn('[apiClient.login] Supabase auth attempt exception:', supabaseErr.message);
         }
       }
+
+      // ─── 2. LOCAL / MOCK AUTHENTICATION FALLBACK ───
+      try {
+        const revokedUsers = JSON.parse(localStorage.getItem('_lms_revoked_users') || '[]');
+        if (cleanEmail !== 'admin@gmail.com' && revokedUsers.some(r => r.email?.toLowerCase().trim() === cleanEmail)) {
+          return { data: null, error: 'This account has been removed by the administrator. Access revoked.' };
+        }
+      } catch (_) {}
 
       // Check local registered users database as fallback (covers seeded demo accounts & offline registrations)
       const users = JSON.parse(localStorage.getItem(REGISTERED_USERS_KEY) || '[]');

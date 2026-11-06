@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { motion } from 'framer-motion';
 import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../hooks/useToast';
-import { Eye, EyeOff, Mail, Lock, ArrowRight, ArrowLeft, Shield, Star, CheckCircle } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, ArrowRight, ArrowLeft, Shield, Star, CheckCircle, X } from 'lucide-react';
 import { Input } from '../../components/ui/input';
 import { Button } from '../../components/ui/button';
 import acfitLogo from '../../assets/libraries/ACFIT-LOGO.webp';
@@ -26,6 +26,8 @@ export const Login = () => {
 
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
   const isRevokedParam = new URLSearchParams(location.search).get('revoked') === 'true';
   const isSuspendedParam = new URLSearchParams(location.search).get('suspended') === 'true';
 
@@ -35,10 +37,10 @@ export const Login = () => {
 
   const enteredEmail = (watch('email') || '').toLowerCase().trim();
   const isTargetAdmin = enteredEmail === 'admin@gmail.com';
-  const isRevoked = isRevokedParam && !isTargetAdmin;
-  const isSuspended = isSuspendedParam && !isTargetAdmin;
+  const isRevoked = isRevokedParam && !isTargetAdmin && !bannerDismissed;
+  const isSuspended = isSuspendedParam && !isTargetAdmin && !bannerDismissed;
 
-  // On mount: ensure admin@gmail.com is unrevoked
+  // On mount: ensure admin@gmail.com is unrevoked and clear revoked url param if admin
   useEffect(() => {
     try {
       const revokedRaw = localStorage.getItem('_lms_revoked_users');
@@ -55,6 +57,13 @@ export const Login = () => {
       }
     } catch (_) {}
   }, []);
+
+  useEffect(() => {
+    if (isTargetAdmin && (isRevokedParam || isSuspendedParam)) {
+      window.history.replaceState({}, '', '/login');
+      setBannerDismissed(true);
+    }
+  }, [isTargetAdmin, isRevokedParam, isSuspendedParam]);
 
   const onSubmit = async (values) => {
     setIsLoading(true);
@@ -260,15 +269,28 @@ export const Login = () => {
               <motion.div
                 initial={{ opacity: 0, y: -6 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-3 shadow-xs"
+                className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start justify-between gap-3 shadow-xs"
               >
-                <Shield className="h-5 w-5 shrink-0 text-red-500 mt-0.5" />
-                <div className="space-y-0.5">
-                  <p className="font-bold text-sm text-red-800">Account Access Terminated</p>
-                  <p className="text-red-600 leading-relaxed">
-                    This account was removed by the administrator and is no longer authorized to access the ACFIT portal. Active sessions have been revoked.
-                  </p>
+                <div className="flex items-start gap-3">
+                  <Shield className="h-5 w-5 shrink-0 text-red-500 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <p className="font-bold text-sm text-red-800">Account Access Terminated</p>
+                    <p className="text-red-600 leading-relaxed">
+                      This account was removed by the administrator and is no longer authorized to access the ACFIT portal. Active sessions have been revoked.
+                    </p>
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBannerDismissed(true);
+                    window.history.replaceState({}, '', '/login');
+                  }}
+                  className="text-red-400 hover:text-red-700 transition-colors cursor-pointer shrink-0 p-1"
+                  title="Dismiss notification"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </motion.div>
             )}
 
@@ -277,15 +299,28 @@ export const Login = () => {
               <motion.div
                 initial={{ opacity: 0, y: -6 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-3 shadow-xs"
+                className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start justify-between gap-3 shadow-xs"
               >
-                <Shield className="h-5 w-5 shrink-0 text-amber-600 mt-0.5" />
-                <div className="space-y-0.5">
-                  <p className="font-bold text-sm text-amber-900">Account Deactivated</p>
-                  <p className="text-amber-700 leading-relaxed">
-                    Your account has been deactivated by the administrator. Access to course materials and learning dashboards is disabled.
-                  </p>
+                <div className="flex items-start gap-3">
+                  <Shield className="h-5 w-5 shrink-0 text-amber-600 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <p className="font-bold text-sm text-amber-900">Account Deactivated</p>
+                    <p className="text-amber-700 leading-relaxed">
+                      Your account has been deactivated by the administrator. Access to course materials and learning dashboards is disabled.
+                    </p>
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBannerDismissed(true);
+                    window.history.replaceState({}, '', '/login');
+                  }}
+                  className="text-amber-500 hover:text-amber-800 transition-colors cursor-pointer shrink-0 p-1"
+                  title="Dismiss notification"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </motion.div>
             )}
 
