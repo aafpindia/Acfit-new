@@ -25,12 +25,15 @@ export const PptPlayer = ({ content = {}, onComplete }) => {
     )
   );
 
+  const textBody = mediaObj.body || mediaObj.instructions || mediaObj.textContent || '';
+
   // 3. Render via HTML5 Canvas Viewbox (Gold Standard: Clean, No Downloads, Native Feel)
   if (isPdfOrConverted) {
     return (
       <DocumentCanvasViewbox
         fileUrl={mediaObj.pdfUrl || fileUrl}
         title={lessonTitle}
+        fallbackContent={textBody}
         isPresentation={true}
         onComplete={onComplete}
       />
@@ -63,14 +66,12 @@ export const PptPlayer = ({ content = {}, onComplete }) => {
       <DocumentCanvasViewbox
         fileUrl={fileUrl}
         title={lessonTitle}
+        fallbackContent={textBody}
         isPresentation={true}
         onComplete={onComplete}
       />
     );
   }
-
-  // 7. Text body presentation fallback
-  const textBody = mediaObj.body || mediaObj.instructions || mediaObj.textContent || '';
   if (textBody) {
     return (
       <Card className="rounded-2xl border border-slate-200 bg-white shadow-xs overflow-hidden">

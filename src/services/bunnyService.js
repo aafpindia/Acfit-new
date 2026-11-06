@@ -40,21 +40,25 @@ export const isValidBunnyVideoId = (id) => {
 
 /**
  * Generate the iframe embed URL for a Bunny Stream video.
- * Returns null if the videoId is not a valid Bunny video UUID or embed URL.
+ * Accepts either a raw video UUID or a Bunny CDN URL (.m3u8, b-cdn.net).
+ * Returns the official Bunny Iframe Embed player URL, which completely
+ * bypasses browser CORS / XMLHttpRequest origin restrictions.
  */
-export const getEmbedUrl = (videoId, libraryId) => {
-  if (!videoId || typeof videoId !== 'string') return null;
-  const trimmed = videoId.trim();
+export const getEmbedUrl = (videoIdOrUrl, libraryId) => {
+  if (!videoIdOrUrl || typeof videoIdOrUrl !== 'string') return null;
+  const trimmed = videoIdOrUrl.trim();
   // If already an embed URL, return it directly
   if (trimmed.includes('iframe.mediadelivery.net')) {
     return trimmed;
   }
-  // Guard against non-UUID mock strings (which cause HTTP 400 and rum.js DNS failures)
-  if (!isValidBunnyVideoId(trimmed)) {
+  // Check if trimmed contains a Bunny UUID
+  const match = trimmed.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  const id = match ? match[0] : trimmed;
+  if (!isValidBunnyVideoId(id)) {
     return null;
   }
   const libId = libraryId || BUNNY_LIBRARY_ID || '784894';
-  return `https://iframe.mediadelivery.net/embed/${libId}/${trimmed}?autoplay=false&loop=false&muted=false&preload=true&responsive=true`;
+  return `https://iframe.mediadelivery.net/embed/${libId}/${id}?autoplay=false&loop=false&muted=false&preload=true&responsive=true`;
 };
 
 /**
@@ -97,13 +101,22 @@ export const hasBunnyVideo = (content) => {
 };
 
 /**
- * Get the Bunny video ID from lesson content if it is a valid UUID.
+ * Get the Bunny video ID from lesson content if it is a valid UUID or contains one in a URL.
  */
 export const getBunnyVideoId = (content) => {
   if (!content) return null;
   const candidate = content?.bunnyVideoId || content?.bunny_video_id || content?.guid || null;
   if (candidate && isValidBunnyVideoId(candidate)) return candidate;
   if (content?.videoId && isValidBunnyVideoId(content.videoId)) return content.videoId;
+
+  // Extract from videoUrl, hlsUrl, or src if it points to Bunny CDN or contains a valid UUID
+  const urlCandidate = typeof content === 'string' ? content : (content?.videoUrl || content?.hlsUrl || content?.url || content?.src || '');
+  if (typeof urlCandidate === 'string') {
+    const match = urlCandidate.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    if (match && (urlCandidate.includes('b-cdn.net') || urlCandidate.includes('mediadelivery.net') || urlCandidate.includes('playlist.m3u8') || urlCandidate.includes('bunny'))) {
+      return match[0];
+    }
+  }
   return null;
 };
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import JSZip from 'jszip';
+import { findCachedDocument } from '../../../services/fileUploadService';
 import {
   ChevronLeft,
   ChevronRight,
@@ -35,6 +36,7 @@ if (typeof window !== 'undefined') {
 export const DocumentCanvasViewbox = ({
   fileUrl,
   title = 'Document Content',
+  fallbackContent = '',
   isPresentation = false,
   onComplete,
   className = ''
@@ -132,18 +134,32 @@ export const DocumentCanvasViewbox = ({
         if (typeof fileUrl === 'string' && fileUrl.startsWith('data:')) {
           uint8Data = dataUrlToUint8Array(fileUrl);
         }
-        // 2. Blob URL: Fetch on main thread to avoid Web Worker sandbox (status 0) errors
+        // 2. Blob URL: Fetch on main thread or recover from local cache
         else if (typeof fileUrl === 'string' && fileUrl.startsWith('blob:')) {
+          let loaded = false;
           try {
             const resp = await fetch(fileUrl);
-            if (!resp.ok) {
-              throw new Error(`Blob URL status: ${resp.status}`);
+            if (resp.ok) {
+              const buf = await resp.arrayBuffer();
+              uint8Data = new Uint8Array(buf);
+              loaded = true;
             }
-            const buf = await resp.arrayBuffer();
-            uint8Data = new Uint8Array(buf);
-          } catch (blobErr) {
-            console.warn('[DocumentCanvasViewbox] Blob fetch failed:', blobErr.message);
-            throw new Error('This document preview session has expired. Please re-upload or select the document.');
+          } catch (_) {}
+
+          if (!loaded) {
+            // Attempt recovery from local IndexedDB cache
+            try {
+              const cachedFile = await findCachedDocument(title);
+              if (cachedFile) {
+                const buf = await cachedFile.arrayBuffer();
+                uint8Data = new Uint8Array(buf);
+                loaded = true;
+              }
+            } catch (_) {}
+          }
+
+          if (!loaded) {
+            throw new Error('This document preview session has expired across browser sessions. Please re-upload or select the document in Course Studio.');
           }
         }
         // 3. Remote URL or relative file path (/uploads/...)
@@ -426,10 +442,18 @@ export const DocumentCanvasViewbox = ({
         )}
 
         {loadError && !isLoading && (
-          <div className="max-w-md p-6 rounded-2xl bg-slate-900 border border-slate-800 text-center space-y-3">
-            <AlertCircle className="h-8 w-8 text-rose-500 mx-auto" />
-            <h4 className="text-sm font-bold text-white">Document Preview Notice</h4>
-            <p className="text-xs text-slate-400 leading-relaxed">{loadError}</p>
+          <div className="w-full max-w-3xl space-y-4">
+            <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 text-center space-y-3 shadow-xl">
+              <AlertCircle className="h-8 w-8 text-amber-400 mx-auto" />
+              <h4 className="text-sm font-bold text-white">Document Preview Notice</h4>
+              <p className="text-xs text-slate-400 leading-relaxed max-w-md mx-auto">{loadError}</p>
+            </div>
+            {fallbackContent && (
+              <div className="p-6 sm:p-8 rounded-2xl bg-slate-900 border border-slate-800 text-left space-y-4 text-slate-200 text-sm leading-relaxed whitespace-pre-line shadow-xl">
+                <h3 className="text-base font-bold text-white border-b border-slate-800 pb-3">{title}</h3>
+                <div>{fallbackContent}</div>
+              </div>
+            )}
           </div>
         )}
 

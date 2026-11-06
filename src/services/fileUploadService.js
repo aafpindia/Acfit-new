@@ -66,6 +66,37 @@ export async function getBlobFromIndexedDB(id) {
   }
 }
 
+export async function findCachedDocument(filenameOrTitle) {
+  try {
+    const db = await openIndexedDB();
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.getAll();
+    return new Promise((resolve) => {
+      request.onsuccess = () => {
+        const items = request.result || [];
+        if (!items || !items.length) return resolve(null);
+
+        if (filenameOrTitle) {
+          const clean = filenameOrTitle.toLowerCase().trim();
+          const match = items.find(i => {
+            const itemName = (i.name || '').toLowerCase().trim();
+            return itemName.includes(clean) || clean.includes(itemName);
+          });
+          if (match && match.file) return resolve(match.file);
+        }
+
+        // Return most recent cached file as fallback
+        items.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        return resolve(items[0]?.file || null);
+      };
+      request.onerror = () => resolve(null);
+    });
+  } catch (_) {
+    return null;
+  }
+}
+
 /**
  * Upload a document or presentation file with accurate progress reporting.
  *

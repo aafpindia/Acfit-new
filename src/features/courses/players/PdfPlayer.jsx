@@ -14,6 +14,7 @@ export const PdfPlayer = ({ content = {}, onComplete }) => {
       <DocumentCanvasViewbox
         fileUrl={fileUrl}
         title={lessonTitle}
+        fallbackContent={textBody}
         isPresentation={false}
         onComplete={onComplete}
       />

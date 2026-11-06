@@ -4,6 +4,7 @@ import Hls from 'hls.js';
 import { Card } from '../../../components/ui/card';
 import {
   getHlsUrl,
+  getEmbedUrl,
   getDirectPlayUrl,
   getBunnyVideoId,
   isValidBunnyVideoId,
@@ -22,11 +23,19 @@ function getYouTubeEmbedUrl(url) {
   return `https://www.youtube.com/embed/${m[2]}?autoplay=0&rel=0&enablejsapi=1&origin=${origin}`;
 }
 
-function getBunnyEmbedUrl(url) {
+function getBunnyEmbedUrl(url, bunnyId) {
+  if (bunnyId && isValidBunnyVideoId(bunnyId)) {
+    return getEmbedUrl(bunnyId);
+  }
   if (!url || typeof url !== 'string') return null;
   const t = url.trim();
   if (t.includes('iframe.mediadelivery.net/embed/')) {
     return t;
+  }
+  // If the URL contains a Bunny UUID or points to b-cdn.net, generate the official Iframe Embed
+  const match = t.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  if (match && (t.includes('b-cdn.net') || t.includes('mediadelivery.net') || t.includes('playlist.m3u8'))) {
+    return getEmbedUrl(match[0]);
   }
   return null;
 }
@@ -75,6 +84,7 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
   const [progressPercent, setProgressPercent] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [playbackError, setPlaybackError] = useState(null);
+  const [forcedBunnyEmbedUrl, setForcedBunnyEmbedUrl] = useState(null);
 
   // ── Normalise content ──
   const mediaObj = useMemo(
@@ -108,8 +118,8 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
   );
 
   const bunnyEmbedUrl = useMemo(
-    () => getBunnyEmbedUrl(rawVideoUrl),
-    [rawVideoUrl]
+    () => forcedBunnyEmbedUrl || getBunnyEmbedUrl(rawVideoUrl, rawBunnyId),
+    [forcedBunnyEmbedUrl, rawVideoUrl, rawBunnyId]
   );
 
   const playableVideoUrl = useMemo(
@@ -166,6 +176,16 @@ export const VideoPlayer = ({ content = {}, onComplete }) => {
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
+                // Check if this stream is from Bunny with CORS / HTTP 403: seamlessly switch to official Iframe Embed
+                {
+                  const uuidMatch = playableVideoUrl?.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+                  if (uuidMatch && (playableVideoUrl?.includes('b-cdn.net') || playableVideoUrl?.includes('playlist.m3u8'))) {
+                    console.log('[VideoPlayer] Direct HLS blocked by CORS; auto-switching to Bunny Stream Iframe Embed:', uuidMatch[0]);
+                    setForcedBunnyEmbedUrl(getEmbedUrl(uuidMatch[0]));
+                    hls.destroy();
+                    return;
+                  }
+                }
                 retryAttempts += 1;
                 console.warn(`HLS Network error (attempt ${retryAttempts}/2):`, data.details);
                 if (retryAttempts <= 2) {
