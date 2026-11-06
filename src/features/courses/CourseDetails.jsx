@@ -112,6 +112,26 @@ export const CourseDetails = () => {
       return;
     }
 
+    // Security check: Verify active account authorization
+    if (user.status === 'suspended') {
+      error('Your account has been deactivated. Enrollment disabled.');
+      navigate('/login?suspended=true');
+      return;
+    }
+
+    try {
+      const revokedRaw = localStorage.getItem('_lms_revoked_users');
+      if (revokedRaw) {
+        const revoked = JSON.parse(revokedRaw);
+        const uEmail = (user.email || '').toLowerCase().trim();
+        if (revoked.some(r => (user.id && r.id === user.id) || (uEmail && (r.email || '').toLowerCase().trim() === uEmail))) {
+          error('Your account access has been revoked. Enrollment disabled.');
+          navigate('/login?revoked=true');
+          return;
+        }
+      }
+    } catch (_) {}
+
     // Require complete real profile details before enabling payment/enrollment
     if (!isProfileComplete) {
       setProfileForm({

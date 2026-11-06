@@ -27,6 +27,7 @@ export const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const isRevoked = new URLSearchParams(location.search).get('revoked') === 'true';
+  const isSuspended = new URLSearchParams(location.search).get('suspended') === 'true';
 
   const { register, handleSubmit, formState: { errors } } = useForm({
     resolver: zodResolver(loginSchema)
@@ -239,6 +240,23 @@ export const Login = () => {
                   <p className="font-bold text-sm text-red-800">Account Access Terminated</p>
                   <p className="text-red-600 leading-relaxed">
                     This account was removed by the administrator and is no longer authorized to access the ACFIT portal. Active sessions have been revoked.
+                  </p>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Suspended Alert Banner */}
+            {isSuspended && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-3 shadow-xs"
+              >
+                <Shield className="h-5 w-5 shrink-0 text-amber-600 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p className="font-bold text-sm text-amber-900">Account Deactivated</p>
+                  <p className="text-amber-700 leading-relaxed">
+                    Your account has been deactivated by the administrator. Access to course materials and learning dashboards is disabled.
                   </p>
                 </div>
               </motion.div>

@@ -22,12 +22,21 @@ export const ProtectedRoute = ({ children }) => {
 
   // Active check if current user was removed or revoked by administrator
   if (user) {
+    const userEmail = (user.email || '').toLowerCase().trim();
+
+    // 1. Check if user is suspended
+    if (user.status === 'suspended') {
+      signOut?.();
+      return <Navigate to="/login?suspended=true" replace />;
+    }
+
+    // 2. Check revoked blacklist
     try {
       const revokedRaw = localStorage.getItem('_lms_revoked_users');
       if (revokedRaw) {
         const revokedList = JSON.parse(revokedRaw);
         const isRevoked = revokedList.some(
-          (r) => (user.id && r.id === user.id) || (user.email && r.email?.toLowerCase() === user.email.toLowerCase())
+          (r) => (user.id && r.id === user.id) || (userEmail && r.email?.toLowerCase().trim() === userEmail)
         );
         if (isRevoked) {
           signOut?.();
@@ -35,9 +44,32 @@ export const ProtectedRoute = ({ children }) => {
         }
       }
     } catch (_) {}
+
+    // 3. For non-admin accounts, check if account was removed from registered users
+    if ((user.role || '').toLowerCase() !== 'admin') {
+      try {
+        const regRaw = localStorage.getItem('_lms_registered_users');
+        if (regRaw) {
+          const registered = JSON.parse(regRaw);
+          const found = registered.find(
+            (u) => (user.id && u.id === user.id) || (userEmail && (u.email || '').toLowerCase().trim() === userEmail)
+          );
+          if (!found) {
+            console.warn('[ProtectedRoute] User removed from user management. Revoking session.');
+            signOut?.();
+            return <Navigate to="/login?revoked=true" replace />;
+          }
+          if (found.status === 'suspended') {
+            console.warn('[ProtectedRoute] User status is suspended. Revoking session.');
+            signOut?.();
+            return <Navigate to="/login?suspended=true" replace />;
+          }
+        }
+      } catch (_) {}
+    }
   }
 
-  if (!authenticated) {
+  if (!authenticated || !user) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 

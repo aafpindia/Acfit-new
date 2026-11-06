@@ -57,6 +57,7 @@ import {
 import { StudentCoursePlayerPreviewModal } from './StudentCoursePlayerPreviewModal';
 import { VideoPlayer } from '../courses/players/VideoPlayer';
 import { processBunnyVideoWorkflow, getHlsUrl } from '../../services/bunnyService';
+import { uploadDocumentFile } from '../../services/fileUploadService';
 
 const DEFAULT_COVER_PRESETS = [];
 
@@ -227,12 +228,15 @@ export const ProgramStudioModal = ({
     videoUrl: '',
     bunnyVideoId: '',
     fileUrl: '',
+    fileName: '',
+    fileSize: '',
     passingPercentage: 70,
     timerMinutes: 10,
     feedbackText: '',
     questions: []
   });
   const [bunnyProgress, setBunnyProgress] = useState(null);
+  const [docUploadProgress, setDocUploadProgress] = useState({ isUploading: false, percent: 0, fileName: '' });
 
   const totalLessons = useMemo(() => {
     return formData.modules.reduce((acc, mod) => acc + (mod.lessons ? mod.lessons.length : 0), 0);
@@ -315,6 +319,8 @@ export const ProgramStudioModal = ({
       videoUrl: '',
       bunnyVideoId: '',
       fileUrl: '',
+      fileName: '',
+      fileSize: '',
       passingPercentage: '',
       timerMinutes: '',
       feedbackText: '',
@@ -376,6 +382,8 @@ export const ProgramStudioModal = ({
       videoUrl: item?.videoUrl || targetLesson?.videoUrl || '',
       bunnyVideoId: item?.bunnyVideoId || targetLesson?.bunnyVideoId || '',
       fileUrl: item?.fileUrl || targetLesson?.fileUrl || '',
+      fileName: item?.fileName || targetLesson?.fileName || '',
+      fileSize: item?.fileSize || targetLesson?.fileSize || '',
       passingPercentage: item?.passingPercentage !== undefined ? item.passingPercentage : (targetLesson?.passingPercentage !== undefined ? targetLesson.passingPercentage : ''),
       timerMinutes: item?.timerMinutes !== undefined ? item.timerMinutes : (targetLesson?.timerMinutes !== undefined ? targetLesson.timerMinutes : ''),
       feedbackText: item?.feedbackText || targetLesson?.feedbackText || '',
@@ -477,26 +485,40 @@ export const ProgramStudioModal = ({
     }
   };
 
-  const handlePptFileUpload = (e) => {
+  const handleDocumentFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result;
-      setContentFormData((prev) => ({
-        ...prev,
-        fileUrl: dataUrl,
-        fileName: file.name,
-        title: prev.title || file.name.replace(/\.[^/.]+$/, '')
-      }));
-      success(`Presentation / Document file "${file.name}" attached!`);
-    };
-    reader.onerror = () => {
-      error('Could not read presentation file.');
-    };
-    reader.readAsDataURL(file);
+    setDocUploadProgress({ isUploading: true, percent: 5, fileName: file.name });
+    try {
+      const uploadRes = await uploadDocumentFile(file, (percent) => {
+        setDocUploadProgress((prev) => ({ ...prev, percent }));
+      });
+
+      if (uploadRes.success && uploadRes.url) {
+        setContentFormData((prev) => ({
+          ...prev,
+          fileUrl: uploadRes.url,
+          fileName: uploadRes.fileName || file.name,
+          fileSize: uploadRes.formattedSize || '',
+          title: prev.title || file.name.replace(/\.[^/.]+$/, '')
+        }));
+        success(`File "${file.name}" uploaded successfully!`);
+      } else {
+        error(uploadRes.error || 'Upload failed. Please try again.');
+      }
+    } catch (err) {
+      console.error(err);
+      error(err?.message || 'Error uploading document.');
+    } finally {
+      setTimeout(() => {
+        setDocUploadProgress({ isUploading: false, percent: 0, fileName: '' });
+      }, 1000);
+      e.target.value = '';
+    }
   };
+
+  const handlePptFileUpload = handleDocumentFileUpload;
 
   const handleTextFileUpload = (e) => {
     const file = e.target.files?.[0];
@@ -679,6 +701,8 @@ export const ProgramStudioModal = ({
       videoUrl: contentFormData.videoUrl || '',
       bunnyVideoId: contentFormData.bunnyVideoId || '',
       fileUrl: contentFormData.fileUrl || '',
+      fileName: contentFormData.fileName || '',
+      fileSize: contentFormData.fileSize || '',
       passingPercentage: contentFormData.passingPercentage !== '' ? Number(contentFormData.passingPercentage) : 70,
       timerMinutes: contentFormData.timerMinutes !== '' ? Number(contentFormData.timerMinutes) : 10,
       feedbackText: contentFormData.feedbackText || '',
@@ -707,6 +731,8 @@ export const ProgramStudioModal = ({
                   title: contentFormData.title || l.title || 'Untitled Lesson',
                   type: editingContentItem.type || l.type,
                   fileUrl: contentFormData.fileUrl || l.fileUrl || '',
+                  fileName: contentFormData.fileName || l.fileName || '',
+                  fileSize: contentFormData.fileSize || l.fileSize || '',
                   videoUrl: contentFormData.videoUrl || l.videoUrl || '',
                   bunnyVideoId: contentFormData.bunnyVideoId || l.bunnyVideoId || '',
                   body: contentFormData.body || l.body || '',
@@ -1775,19 +1801,79 @@ export const ProgramStudioModal = ({
                     <input
                       type="file"
                       accept=".ppt,.pptx,.pdf"
-                      onChange={handlePptFileUpload}
+                      onChange={handleDocumentFileUpload}
                       className="block w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[#EFF6FF] file:text-[#2563EB] hover:file:bg-[#E5DFFF] cursor-pointer"
                     />
                     <span className="text-[11px] text-slate-400">
-                      Upload PowerPoint decks or presentation slides. Files are securely packaged for student viewing.
+                      Upload PowerPoint decks or presentation slides. Files are uploaded smoothly and optimized for students.
                     </span>
                   </div>
 
+                  {/* Upload Progress Bar */}
+                  {docUploadProgress.isUploading && (
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl space-y-2">
+                      <div className="flex items-center justify-between text-xs font-semibold text-blue-700">
+                        <span className="flex items-center gap-1.5">
+                          <Upload className="h-3.5 w-3.5 animate-bounce" />
+                          Uploading {docUploadProgress.fileName}...
+                        </span>
+                        <span>{docUploadProgress.percent}%</span>
+                      </div>
+                      <div className="w-full bg-blue-200 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+                          style={{ width: `${docUploadProgress.percent}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Attached File Indicator */}
+                  {contentFormData.fileUrl && (
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+                      <div className="flex items-center gap-2.5 overflow-hidden">
+                        <div className="p-2 bg-blue-100 text-blue-600 rounded-lg shrink-0">
+                          <Presentation className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-xs text-slate-800 truncate">
+                            {contentFormData.fileName || 'presentation.pptx'}
+                          </p>
+                          <p className="text-[10px] text-slate-500 font-mono truncate">
+                            {contentFormData.fileSize ? `${contentFormData.fileSize} • ` : ''}
+                            {contentFormData.fileUrl.startsWith('data:') ? 'Attached Data File' : contentFormData.fileUrl}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {(contentFormData.fileUrl.startsWith('http') || contentFormData.fileUrl.startsWith('/uploads/')) && (
+                          <a
+                            href={contentFormData.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] text-blue-600 font-semibold hover:underline flex items-center gap-1"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            Open
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setContentFormData((prev) => ({ ...prev, fileUrl: '', fileName: '', fileSize: '' }))}
+                          className="text-xs text-rose-500 hover:text-rose-700 font-semibold p-1 cursor-pointer"
+                          title="Remove file"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-1">
-                    <label className="font-semibold text-[#202124]">Presentation Slide Embed / File URL</label>
+                    <label className="font-semibold text-[#202124]">Presentation Slide Embed / External URL (Optional)</label>
                     <Input
-                      placeholder="https://docs.google.com/presentation/d/... or attached slide URL"
-                      value={contentFormData.fileUrl}
+                      placeholder="https://docs.google.com/presentation/d/... or custom slide URL"
+                      value={contentFormData.fileUrl.startsWith('data:') ? '' : contentFormData.fileUrl}
                       onChange={(e) => setContentFormData({ ...contentFormData, fileUrl: e.target.value })}
                       className="h-9 text-xs border-[#E4E7EB]"
                     />
@@ -1795,15 +1881,30 @@ export const ProgramStudioModal = ({
 
                   {contentFormData.fileUrl && (
                     <div className="space-y-1">
-                      <label className="font-semibold text-[#202124] text-[11px]">PPT Presentation Live Preview</label>
-                      <div className="h-52 bg-slate-900 rounded-xl border border-[#E4E7EB] overflow-hidden flex items-center justify-center text-white">
-                        {contentFormData.fileUrl.startsWith('http') || contentFormData.fileUrl.startsWith('data:application/pdf') ? (
+                      <div className="flex items-center justify-between">
+                        <label className="font-semibold text-[#202124] text-[11px]">PPT Presentation Live Preview</label>
+                        {(contentFormData.fileUrl.startsWith('http') || contentFormData.fileUrl.startsWith('/uploads/')) && (
+                          <a
+                            href={contentFormData.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] text-blue-600 font-bold hover:underline"
+                          >
+                            Open in Full View ↗
+                          </a>
+                        )}
+                      </div>
+                      <div className="h-56 bg-slate-900 rounded-xl border border-[#E4E7EB] overflow-hidden flex items-center justify-center text-white">
+                        {contentFormData.fileUrl.toLowerCase().endsWith('.pdf') || contentFormData.fileUrl.includes('.pdf?') || contentFormData.fileUrl.includes('docs.google.com') ? (
                           <iframe src={contentFormData.fileUrl} className="w-full h-full border-0" title="Presentation Preview" />
                         ) : (
-                          <div className="text-center p-4 text-xs space-y-2">
+                          <div className="text-center p-6 text-xs space-y-2">
                             <Presentation className="h-10 w-10 text-blue-400 mx-auto" />
-                            <span className="font-bold block text-white">Presentation File Attached:</span>
+                            <span className="font-bold block text-white text-sm">Presentation Deck Attached</span>
                             <span className="text-slate-300 font-mono text-[11px] block">{contentFormData.fileName || 'Presentation Slide Deck (.pptx)'}</span>
+                            <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                              Students will be able to download and view this presentation deck along with interactive notes in the course player.
+                            </p>
                           </div>
                         )}
                       </div>
@@ -1820,7 +1921,7 @@ export const ProgramStudioModal = ({
                     <input
                       type="file"
                       accept=".pdf"
-                      onChange={handlePptFileUpload}
+                      onChange={handleDocumentFileUpload}
                       className="block w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[#EFF6FF] file:text-[#2563EB] hover:file:bg-[#E5DFFF] cursor-pointer"
                     />
                     <span className="text-[11px] text-slate-400">
@@ -1828,11 +1929,71 @@ export const ProgramStudioModal = ({
                     </span>
                   </div>
 
+                  {/* Upload Progress Bar */}
+                  {docUploadProgress.isUploading && (
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-2">
+                      <div className="flex items-center justify-between text-xs font-semibold text-rose-700">
+                        <span className="flex items-center gap-1.5">
+                          <Upload className="h-3.5 w-3.5 animate-bounce" />
+                          Uploading {docUploadProgress.fileName}...
+                        </span>
+                        <span>{docUploadProgress.percent}%</span>
+                      </div>
+                      <div className="w-full bg-rose-200 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className="bg-rose-600 h-1.5 rounded-full transition-all duration-300"
+                          style={{ width: `${docUploadProgress.percent}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Attached File Indicator */}
+                  {contentFormData.fileUrl && (
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+                      <div className="flex items-center gap-2.5 overflow-hidden">
+                        <div className="p-2 bg-rose-100 text-rose-600 rounded-lg shrink-0">
+                          <FileText className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-xs text-slate-800 truncate">
+                            {contentFormData.fileName || 'document.pdf'}
+                          </p>
+                          <p className="text-[10px] text-slate-500 font-mono truncate">
+                            {contentFormData.fileSize ? `${contentFormData.fileSize} • ` : ''}
+                            {contentFormData.fileUrl.startsWith('data:') ? 'Attached Data File' : contentFormData.fileUrl}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {(contentFormData.fileUrl.startsWith('http') || contentFormData.fileUrl.startsWith('/uploads/')) && (
+                          <a
+                            href={contentFormData.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] text-rose-600 font-semibold hover:underline flex items-center gap-1"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            Open
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setContentFormData((prev) => ({ ...prev, fileUrl: '', fileName: '', fileSize: '' }))}
+                          className="text-xs text-rose-500 hover:text-rose-700 font-semibold p-1 cursor-pointer"
+                          title="Remove file"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-1">
-                    <label className="font-semibold text-[#202124]">PDF Document Embed / Hosted URL</label>
+                    <label className="font-semibold text-[#202124]">PDF Document Embed / External URL (Optional)</label>
                     <Input
                       placeholder="https://.../document.pdf or attached PDF URL"
-                      value={contentFormData.fileUrl}
+                      value={contentFormData.fileUrl.startsWith('data:') ? '' : contentFormData.fileUrl}
                       onChange={(e) => setContentFormData({ ...contentFormData, fileUrl: e.target.value })}
                       className="h-9 text-xs border-[#E4E7EB]"
                     />
@@ -1840,8 +2001,20 @@ export const ProgramStudioModal = ({
 
                   {contentFormData.fileUrl && (
                     <div className="space-y-1">
-                      <label className="font-semibold text-[#202124] text-[11px]">PDF Document Live Preview</label>
-                      <div className="h-56 bg-slate-100 rounded-xl border border-[#E4E7EB] overflow-hidden">
+                      <div className="flex items-center justify-between">
+                        <label className="font-semibold text-[#202124] text-[11px]">PDF Document Live Preview</label>
+                        {(contentFormData.fileUrl.startsWith('http') || contentFormData.fileUrl.startsWith('/uploads/')) && (
+                          <a
+                            href={contentFormData.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] text-rose-600 font-bold hover:underline"
+                          >
+                            Open in Full View ↗
+                          </a>
+                        )}
+                      </div>
+                      <div className="h-64 bg-slate-100 rounded-xl border border-[#E4E7EB] overflow-hidden">
                         <iframe src={contentFormData.fileUrl} className="w-full h-full border-0" title="PDF Document Preview" />
                       </div>
                     </div>

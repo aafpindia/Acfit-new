@@ -13,7 +13,9 @@ import {
   Layers,
   CheckCircle,
   Eye,
-  Bookmark
+  Bookmark,
+  Download,
+  ExternalLink
 } from 'lucide-react';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
@@ -30,7 +32,9 @@ export const PdfPlayer = ({ content = {}, onComplete }) => {
       rawFileUrl.startsWith('data:application/pdf') ||
       rawFileUrl.toLowerCase().endsWith('.pdf') ||
       rawFileUrl.toLowerCase().includes('.pdf?') ||
-      rawFileUrl.toLowerCase().includes('/pdf')
+      rawFileUrl.toLowerCase().includes('/pdf') ||
+      rawFileUrl.startsWith('/uploads/') ||
+      rawFileUrl.startsWith('blob:')
     )
   );
 
@@ -260,6 +264,20 @@ export const PdfPlayer = ({ content = {}, onComplete }) => {
               <RotateCcw className="h-3.5 w-3.5" />
             </Button>
           </div>
+
+          {rawFileUrl && (
+            <a
+              href={rawFileUrl}
+              download={content.fileName || 'document.pdf'}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="h-8 px-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs"
+              title="Download or open PDF"
+            >
+              <Download className="h-3.5 w-3.5 text-blue-600" />
+              <span className="hidden sm:inline">PDF</span>
+            </a>
+          )}
         </div>
       </div>
 

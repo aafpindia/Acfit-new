@@ -10,6 +10,7 @@ import { handleBunnyVideoStatus } from './api/bunny/video-status.js'
 import { handleSubmitAssessment } from './api/submit-assessment.js'
 import { handleAdminCreateUser } from './api/admin/create-user.js'
 import { handleAdminDeleteUser } from './api/admin/delete-user.js'
+import { handleUpload } from './api/upload.js'
 
 function localApiMiddleware() {
   const routeRequest = async (req, res, next) => {
@@ -45,6 +46,11 @@ function localApiMiddleware() {
     }
     if (url === '/api/bunny/video-status') {
       return handleBunnyVideoStatus(req, res);
+    }
+
+    // Document / Presentation upload route
+    if (url === '/api/upload') {
+      return handleUpload(req, res);
     }
 
     next();

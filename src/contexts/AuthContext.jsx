@@ -177,20 +177,30 @@ export const AuthProvider = ({ children }) => {
       return;
     }
 
-    // 1-second interval timer for live session duration tracking
+    // 1-second interval timer for live session duration tracking & instant revocation enforcement
     timerRef.current = setInterval(() => {
       const now = Date.now();
       const start = sessionStartTime || now;
       const elapsedSeconds = Math.max(0, Math.floor((now - start) / 1000));
       setSessionDurationSeconds(elapsedSeconds);
 
-      // 1. Check if user account was deleted or revoked by admin
+      const userEmail = (user.email || '').toLowerCase().trim();
+
+      // 1. Check if user is suspended in memory
+      if (user.status === 'suspended') {
+        console.warn('[Session Security] User status is suspended. Forcing logout.');
+        signOut();
+        window.location.href = '/login?suspended=true';
+        return;
+      }
+
+      // 2. Check if user account was deleted or revoked by admin
       try {
         const revokedRaw = localStorage.getItem('_lms_revoked_users');
         if (revokedRaw) {
           const revokedUsers = JSON.parse(revokedRaw);
           const isRevoked = revokedUsers.some(
-            (r) => (user.id && r.id === user.id) || (user.email && r.email?.toLowerCase() === user.email.toLowerCase())
+            (r) => (user.id && r.id === user.id) || (userEmail && (r.email || '').toLowerCase().trim() === userEmail)
           );
           if (isRevoked) {
             console.warn('[Session Security] User account has been removed by admin. Forcing instant logout.');
@@ -200,6 +210,42 @@ export const AuthProvider = ({ children }) => {
           }
         }
       } catch (_) {}
+
+      // 3. Check if user was removed from registered users registry or suspended
+      if ((user.role || '').toLowerCase() !== 'admin') {
+        try {
+          const regRaw = localStorage.getItem('_lms_registered_users');
+          if (regRaw) {
+            const registered = JSON.parse(regRaw);
+            const found = registered.find(
+              (u) => (user.id && u.id === user.id) || (userEmail && (u.email || '').toLowerCase().trim() === userEmail)
+            );
+            if (!found) {
+              console.warn('[Session Security] User no longer in registered users list. Forcing instant logout.');
+              signOut();
+              window.location.href = '/login?revoked=true';
+              return;
+            }
+            if (found.status === 'suspended') {
+              console.warn('[Session Security] User status changed to suspended in registry. Forcing instant logout.');
+              signOut();
+              window.location.href = '/login?suspended=true';
+              return;
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 4. Periodic server verification (every 10s)
+      if (elapsedSeconds > 0 && elapsedSeconds % 10 === 0) {
+        apiClient.auth.me().then((res) => {
+          if (!res.data?.user) {
+            console.warn('[Session Security] Periodic session validation failed. User removed or invalid.');
+            signOut();
+            window.location.href = '/login?revoked=true';
+          }
+        }).catch(() => {});
+      }
 
       // Check idle inactivity
       const idleSeconds = Math.floor((now - lastActivityRef.current) / 1000);
@@ -215,6 +261,48 @@ export const AuthProvider = ({ children }) => {
         signOut();
       }
     }, 1000);
+
+    // Realtime Supabase channel for profile deletion/suspension events
+    let realtimeProfileChannel = null;
+    if (isSupabaseConfigured && supabase?.channel) {
+      try {
+        realtimeProfileChannel = supabase
+          .channel(`auth-user-monitor-${user.id || 'curr'}-${Date.now()}`)
+          .on(
+            'postgres_changes',
+            { event: 'DELETE', schema: 'public', table: 'profiles' },
+            (payload) => {
+              const oldId = payload.old?.id;
+              const oldEmail = (payload.old?.email || '').toLowerCase().trim();
+              const myEmail = (user?.email || '').toLowerCase().trim();
+              if ((oldId && oldId === user?.id) || (oldEmail && oldEmail === myEmail)) {
+                console.warn('[Realtime Security] Profile deleted from Supabase. Immediate session termination.');
+                signOut();
+                window.location.href = '/login?revoked=true';
+              }
+            }
+          )
+          .on(
+            'postgres_changes',
+            { event: 'UPDATE', schema: 'public', table: 'profiles' },
+            (payload) => {
+              const newId = payload.new?.id;
+              const newEmail = (payload.new?.email || '').toLowerCase().trim();
+              const myEmail = (user?.email || '').toLowerCase().trim();
+              if ((newId && newId === user?.id) || (newEmail && newEmail === myEmail)) {
+                if (payload.new?.status === 'suspended') {
+                  console.warn('[Realtime Security] Profile suspended in Supabase. Immediate session termination.');
+                  signOut();
+                  window.location.href = '/login?suspended=true';
+                }
+              }
+            }
+          )
+          .subscribe();
+      } catch (err) {
+        console.warn('Realtime profile channel error:', err);
+      }
+    }
 
     // Revocation event listeners for real-time multi-tab session termination
     const handleRevocationEvent = (e) => {
@@ -278,6 +366,9 @@ export const AuthProvider = ({ children }) => {
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
+      }
+      if (realtimeProfileChannel) {
+        try { supabase.removeChannel(realtimeProfileChannel); } catch (_) {}
       }
       window.removeEventListener('lms_user_revoked', handleRevocationEvent);
       window.removeEventListener('storage', handleRevocationEvent);

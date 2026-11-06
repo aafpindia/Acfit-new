@@ -63,6 +63,33 @@ export const LandingPage = () => {
   const { submitEnquiry, courses: storeCourses, testimonials: storeTestimonials, syncFromSupabase } = useLmsStore();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
+  // Validate active login status (ensures deleted or suspended users are not treated as active)
+  const isUserActive = useMemo(() => {
+    if (!user) return false;
+    if (user.status === 'suspended') return false;
+    try {
+      const revokedRaw = localStorage.getItem('_lms_revoked_users');
+      if (revokedRaw) {
+        const revokedList = JSON.parse(revokedRaw);
+        const userEmail = (user.email || '').toLowerCase().trim();
+        if (revokedList.some(r => (user.id && r.id === user.id) || (userEmail && (r.email || '').toLowerCase().trim() === userEmail))) {
+          return false;
+        }
+      }
+      if ((user.role || '').toLowerCase() !== 'admin') {
+        const regRaw = localStorage.getItem('_lms_registered_users');
+        if (regRaw) {
+          const registered = JSON.parse(regRaw);
+          const userEmail = (user.email || '').toLowerCase().trim();
+          if (!registered.some(u => (user.id && u.id === user.id) || (userEmail && (u.email || '').toLowerCase().trim() === userEmail))) {
+            return false;
+          }
+        }
+      }
+    } catch (_) {}
+    return true;
+  }, [user]);
+
   // ─── Live courses from admin/Supabase ───
   const [liveCourses, setLiveCourses] = useState([]);
   const [coursesLoading, setCoursesLoading] = useState(true);
@@ -245,7 +272,7 @@ export const LandingPage = () => {
 
             {/* Action & User Auth Buttons */}
             <div className="flex items-center gap-3 sm:gap-4">
-              {!user ? (
+              {!isUserActive ? (
                 <div className="flex items-center gap-2 sm:gap-3">
                   <button
                     onClick={() => navigate('/login')}
@@ -265,7 +292,7 @@ export const LandingPage = () => {
               ) : (
                 <button
                   onClick={() => {
-                    const isAdmin = String(user.role || '').toLowerCase() === 'admin';
+                    const isAdmin = String(user?.role || '').toLowerCase() === 'admin';
                     navigate(isAdmin ? '/admin/courses' : '/app/courses');
                   }}
                   className="bg-[#1A1A1A] hover:bg-[#2563EB] text-white px-4 sm:px-6 py-2.5 rounded-full font-bold text-[11px] sm:text-xs uppercase tracking-wider transition-all shadow-md cursor-pointer"
@@ -316,7 +343,7 @@ export const LandingPage = () => {
                   >
                     Contact
                   </button>
-                  {!user && (
+                  {!isUserActive && (
                     <button
                       onClick={() => { navigate('/login'); setMobileNavOpen(false); }}
                       className="sm:hidden text-left text-sm font-bold text-[#2563EB] hover:bg-blue-50 px-4 py-3 rounded-xl transition-colors cursor-pointer"

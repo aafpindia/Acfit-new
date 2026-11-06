@@ -13,7 +13,8 @@ import {
   Sun,
   Moon,
   Compass,
-  ArrowRight
+  ArrowRight,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Card, CardContent } from '../../../components/ui/card';
@@ -35,14 +36,23 @@ export const PptPlayer = ({ content = {}, onComplete }) => {
     ? (fileUrl.includes('/embed') ? fileUrl : fileUrl.replace(/\/(edit|pub|preview).*$/, '/embed?start=false&loop=false&delayms=3000'))
     : null;
 
-  const isPdf = fileUrl && (
-    fileUrl.startsWith('data:application/pdf') ||
-    fileUrl.toLowerCase().endsWith('.pdf') ||
-    fileUrl.toLowerCase().includes('.pdf?') ||
-    fileUrl.toLowerCase().includes('/pdf')
+  const isPdf = Boolean(
+    fileUrl && (
+      fileUrl.startsWith('data:application/pdf') ||
+      fileUrl.toLowerCase().endsWith('.pdf') ||
+      fileUrl.toLowerCase().includes('.pdf?') ||
+      fileUrl.toLowerCase().includes('/pdf')
+    )
   );
 
-  const isWebPpt = fileUrl && (fileUrl.toLowerCase().endsWith('.ppt') || fileUrl.toLowerCase().endsWith('.pptx')) && fileUrl.startsWith('http');
+  const isWebPpt = Boolean(
+    fileUrl &&
+    (fileUrl.toLowerCase().endsWith('.ppt') || fileUrl.toLowerCase().endsWith('.pptx')) &&
+    fileUrl.startsWith('http') &&
+    !fileUrl.includes('localhost') &&
+    !fileUrl.includes('127.0.0.1')
+  );
+
   const officeViewerUrl = isWebPpt
     ? `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`
     : null;
@@ -57,6 +67,8 @@ export const PptPlayer = ({ content = {}, onComplete }) => {
       fileUrl.includes('sharepoint.com')
     ))
   );
+
+  const [presentationViewMode, setPresentationViewMode] = useState(isIframeable ? 'embed' : 'deck');
 
   const iframeSrc = googleSlidesEmbed || officeViewerUrl || fileUrl;
 
@@ -201,8 +213,48 @@ export const PptPlayer = ({ content = {}, onComplete }) => {
     <Card className="border-slate-200 overflow-hidden bg-white select-none rounded-2xl shadow-sm font-sans">
       <CardContent className="p-3 sm:p-5 space-y-4 font-sans">
 
+        {/* ─── 0. ATTACHED PRESENTATION DECK BANNER & DOWNLOAD QUICK ACTION ─── */}
+        {fileUrl && (
+          <div className="flex items-center justify-between p-3.5 bg-blue-50/80 border border-blue-200 rounded-xl text-xs gap-3">
+            <div className="flex items-center gap-2.5 overflow-hidden">
+              <div className="p-2 bg-blue-600 text-white rounded-lg shrink-0 shadow-xs">
+                <Presentation className="h-4 w-4" />
+              </div>
+              <div className="min-w-0">
+                <span className="font-bold text-slate-900 block truncate">
+                  {mediaObj.fileName || mediaObj.title || 'Presentation Slide Deck'}
+                </span>
+                <span className="text-[11px] text-slate-500 block truncate">
+                  {isPdf ? 'PDF Presentation Document' : 'PowerPoint Presentation (.pptx)'}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <a
+                href={fileUrl}
+                download={mediaObj.fileName || 'presentation.pptx'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-1.5 bg-[#2563EB] hover:bg-[#1D4ED8] text-white rounded-lg font-semibold text-xs flex items-center gap-1.5 transition-colors shadow-2xs"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span>Download Deck</span>
+              </a>
+              {isIframeable && (
+                <button
+                  type="button"
+                  onClick={() => setPresentationViewMode(presentationViewMode === 'embed' ? 'deck' : 'embed')}
+                  className="px-2.5 py-1.5 border border-blue-300 bg-white hover:bg-blue-50 text-blue-700 rounded-lg font-semibold text-xs transition-colors cursor-pointer"
+                >
+                  {presentationViewMode === 'embed' ? 'Slide Deck Notes' : 'Embedded View'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* ─── 1. IFRAME EMBED (GOOGLE SLIDES / WEB PRESENTATION / PDF) ─── */}
-        {isIframeable ? (
+        {isIframeable && presentationViewMode === 'embed' ? (
           <div className="relative aspect-[16/10] min-h-[340px] sm:min-h-[440px] lg:min-h-[560px] bg-slate-950 rounded-xl border border-slate-800 overflow-hidden shadow-lg">
             <iframe
               src={iframeSrc}

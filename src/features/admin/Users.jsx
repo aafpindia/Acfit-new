@@ -222,14 +222,15 @@ export const Users = () => {
   // Toggle Status (Activate / Deactivate)
   const toggleStatus = async (userId, currentStatus) => {
     const nextStatus = currentStatus === 'suspended' ? 'active' : 'suspended';
-    const res = await updateUser(userId, { status: nextStatus });
+    const targetUser = selectedUser?.id === userId ? selectedUser : usersList.find((u) => u.id === userId);
+    const res = await updateUser(userId, { status: nextStatus }, targetUser?.email);
     if (res.success) {
       await loadUsers();
       if (selectedUser?.id === userId) {
         setSelectedUser((prev) => ({ ...prev, status: nextStatus }));
       }
       try { window.dispatchEvent(new Event('lms_users_updated')); } catch (_) {}
-      success(`User ${nextStatus === 'suspended' ? 'Deactivated' : 'Activated'} successfully.`);
+      success(`User ${nextStatus === 'suspended' ? 'Deactivated & Session Revoked' : 'Activated'} successfully.`);
     } else {
       toastError(res.error || 'Failed to update status.');
     }
@@ -237,7 +238,7 @@ export const Users = () => {
 
   // Reset Password via Supabase Auth
   const handleResetPassword = async (userId) => {
-    const targetUser = selectedUser?.id === userId ? selectedUser : users.find((u) => u.id === userId);
+    const targetUser = selectedUser?.id === userId ? selectedUser : usersList.find((u) => u.id === userId);
     const targetEmail = targetUser?.email;
     if (!targetEmail) {
       toastError('No email address found for this user.');
@@ -252,21 +253,25 @@ export const Users = () => {
     }
   };
 
-  // Delete User Permanently from Supabase DB & Revoke Active Access
-  const handleDeleteUser = async (userId) => {
-    if (!window.confirm(`Are you sure you want to permanently delete ${selectedUser?.fullName || 'this user'}? This will also remove their database enrollments and invalidate any active login sessions.`)) {
+  // Delete / Remove User Permanently from Supabase DB & Revoke Active Access
+  const handleDeleteUser = async (userId, userEmail = null, userName = null) => {
+    const targetEmail = userEmail || selectedUser?.email;
+    const targetName = userName || selectedUser?.fullName || 'this user';
+    if (!window.confirm(`Are you sure you want to permanently remove ${targetName}? This will revoke active logins immediately and delete their account.`)) {
       return;
     }
 
-    const res = await deleteUser(userId, selectedUser?.email);
+    const res = await deleteUser(userId, targetEmail);
     if (res.success) {
       await loadUsers();
-      setSelectedUser(null);
+      if (selectedUser?.id === userId) {
+        setSelectedUser(null);
+      }
       try { window.dispatchEvent(new Event('lms_users_updated')); } catch (_) {}
       try { syncFromSupabase(); } catch (_) {}
-      success('User deleted and active session credentials revoked successfully.');
+      success('User removed and active session credentials revoked successfully.');
     } else {
-      toastError(res.error || 'Failed to delete user.');
+      toastError(res.error || 'Failed to remove user.');
     }
   };
 
@@ -636,17 +641,26 @@ export const Users = () => {
                 </div>
               </div>
 
-              {/* Action Buttons Right (Deactivate CTA) */}
-              <div className="flex items-center gap-2.5 self-start sm:self-auto">
+              {/* Action Buttons Right (Deactivate & Remove CTAs) */}
+              <div className="flex items-center gap-2 self-start sm:self-auto">
                 <button
                   onClick={() => toggleStatus(selectedUser.id, selectedUser.status)}
-                  className={`text-xs font-semibold px-4 py-1.5 rounded-md shadow-2xs transition-colors cursor-pointer ${
+                  className={`text-xs font-semibold px-3 py-1.5 rounded-md shadow-2xs transition-colors cursor-pointer ${
                     selectedUser.status === 'suspended'
                       ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
                       : 'bg-[#EF4444] hover:bg-rose-600 text-white'
                   }`}
                 >
                   {selectedUser.status === 'suspended' ? 'Activate' : 'Deactivate'}
+                </button>
+
+                <button
+                  onClick={() => handleDeleteUser(selectedUser.id, selectedUser.email, selectedUser.fullName)}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-md border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700 flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                  title="Permanently remove user from system and revoke active login session"
+                >
+                  <Trash2 className="h-3.5 w-3.5 text-rose-600" />
+                  <span>Remove User</span>
                 </button>
 
                 <button

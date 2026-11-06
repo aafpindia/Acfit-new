@@ -22,12 +22,19 @@ export const AdminRoute = ({ children }) => {
 
   // Active check if current user was removed or revoked by administrator
   if (user) {
+    const userEmail = (user.email || '').toLowerCase().trim();
+
+    if (user.status === 'suspended') {
+      signOut?.();
+      return <Navigate to="/login?suspended=true" replace />;
+    }
+
     try {
       const revokedRaw = localStorage.getItem('_lms_revoked_users');
       if (revokedRaw) {
         const revokedList = JSON.parse(revokedRaw);
         const isRevoked = revokedList.some(
-          (r) => (user.id && r.id === user.id) || (user.email && r.email?.toLowerCase() === user.email.toLowerCase())
+          (r) => (user.id && r.id === user.id) || (userEmail && r.email?.toLowerCase().trim() === userEmail)
         );
         if (isRevoked) {
           signOut?.();
@@ -37,7 +44,7 @@ export const AdminRoute = ({ children }) => {
     } catch (_) {}
   }
 
-  if (!authenticated) {
+  if (!authenticated || !user) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 

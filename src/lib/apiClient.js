@@ -286,7 +286,28 @@ export const apiClient = {
               profile = profileRes?.data;
             } catch (_) {}
 
+            // Check if user is on revoked blacklist
+            const revokedUsers = JSON.parse(localStorage.getItem('_lms_revoked_users') || '[]');
+            const isUserRevoked = revokedUsers.some(
+              (r) => (data.user.id && r.id === data.user.id) || (cleanEmail && r.email?.toLowerCase().trim() === cleanEmail)
+            );
+            if (isUserRevoked) {
+              await supabase.auth.signOut().catch(() => {});
+              return { data: null, error: 'This account has been removed by the administrator. Access is revoked.' };
+            }
+
             if (!profile) {
+              // If user was removed from profiles table by admin, DO NOT re-create them
+              const regUsers = JSON.parse(localStorage.getItem(REGISTERED_USERS_KEY) || '[]');
+              const existsLocally = regUsers.some(
+                (u) => u.id === data.user.id || (u.email || '').toLowerCase().trim() === cleanEmail
+              );
+              if (!existsLocally) {
+                console.warn('[apiClient.login] User profile was removed by administrator. Denying sign-in.');
+                await supabase.auth.signOut().catch(() => {});
+                return { data: null, error: 'This account has been removed by the administrator. Access is revoked.' };
+              }
+
               try {
                 const { data: newProf } = await supabase
                   .from('profiles')
@@ -317,8 +338,8 @@ export const apiClient = {
             };
 
             if (user.status === 'suspended') {
-              await supabase.auth.signOut();
-              return { data: null, error: 'Account suspended. Please contact support.' };
+              await supabase.auth.signOut().catch(() => {});
+              return { data: null, error: 'Your account has been deactivated by the administrator. Please contact support.' };
             }
 
             // Sync with local registered database so Admin User Management updates immediately
@@ -370,14 +391,16 @@ export const apiClient = {
 
       // Check local registered users database as fallback (covers seeded demo accounts & offline registrations)
       const users = JSON.parse(localStorage.getItem(REGISTERED_USERS_KEY) || '[]');
-      const found = users.find(u => u.email.toLowerCase() === cleanEmail && (u.passwordHash === password || password === 'password' || password.length > 0));
+      const found = users.find(
+        (u) => (u.email || '').toLowerCase().trim() === cleanEmail && (u.passwordHash === password || password === 'password' || password.length > 0)
+      );
 
       if (!found) {
         return { data: null, error: 'Invalid email or password.' };
       }
 
       if (found.status === 'suspended') {
-        return { data: null, error: 'Account suspended. Please contact support.' };
+        return { data: null, error: 'Your account has been deactivated by the administrator. Please contact support.' };
       }
 
       const user = {
