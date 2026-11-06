@@ -807,3 +807,64 @@ export const sendPasswordResetEmail = async (email) => {
     return handleSupabaseError(err, 'sendPasswordResetEmail exception');
   }
 };
+
+/**
+ * Update authenticated user password
+ * Handles Supabase session password change and local credentials fallback sync
+ */
+export const updateAccountPassword = async (newPassword) => {
+  if (!newPassword || newPassword.length < 6) {
+    return { success: false, error: 'Password must be at least 6 characters long.' };
+  }
+
+  let supabaseSuccess = false;
+  let supabaseError = null;
+
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) {
+        supabaseError = error.message;
+        console.warn('[userService] supabase.auth.updateUser notice:', error.message);
+      } else {
+        supabaseSuccess = true;
+      }
+    } catch (err) {
+      supabaseError = err.message;
+      console.warn('[userService] supabase.auth.updateUser exception:', err.message);
+    }
+  }
+
+  // Also sync password into local registered users store so local fallback logins remain updated
+  try {
+    const raw = localStorage.getItem('_lms_registered_users');
+    if (raw) {
+      const users = JSON.parse(raw);
+      let currentEmail = '';
+      try {
+        const sessionUser = JSON.parse(localStorage.getItem('_lms_current_session') || '{}');
+        currentEmail = (sessionUser.email || '').toLowerCase().trim();
+      } catch (_) {}
+
+      const updated = users.map((u) => {
+        if (!currentEmail || (u.email && u.email.toLowerCase().trim() === currentEmail)) {
+          return { ...u, password: newPassword };
+        }
+        return u;
+      });
+      localStorage.setItem('_lms_registered_users', JSON.stringify(updated));
+    }
+  } catch (_) {}
+
+  if (supabaseSuccess || !isSupabaseConfigured) {
+    return { success: true };
+  }
+
+  return {
+    success: false,
+    error: supabaseError || 'Failed to update password. Session may have expired.',
+  };
+};
