@@ -23,3 +23,4 @@ WHERE (title ILIKE '%personal trainer%' OR id = 'f1068915-d6ee-4e0f-ace1-4bc561f
 -- Soft-delete & account recovery support (if not yet run)
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
