@@ -77,6 +77,7 @@ export const CourseCardGrid = ({
   const filteredCourses = courses.filter((c) => {
     const matchesSearch =
       c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (c.code && c.code.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (c.instructor && c.instructor.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (c.category && c.category.toLowerCase().includes(searchQuery.toLowerCase()));
 
@@ -341,11 +342,18 @@ export const CourseCardGrid = ({
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-2 z-10">
+                    <div className="flex items-center gap-2.5 z-10 min-w-0">
                       <BookOpen className="h-6 w-6 text-white shrink-0" />
-                      <h3 className="font-extrabold text-sm text-white truncate leading-tight">
-                        {c.title}
-                      </h3>
+                      <div className="min-w-0">
+                        {c.code && (
+                          <span className="inline-block text-[9px] font-mono font-black uppercase tracking-wider bg-white/20 px-1.5 py-0.5 rounded text-white mb-0.5 border border-white/20">
+                            {c.code}
+                          </span>
+                        )}
+                        <h3 className="font-extrabold text-sm text-white truncate leading-tight">
+                          {c.title}
+                        </h3>
+                      </div>
                     </div>
 
                     {/* Subtle Background Pattern Circle */}
@@ -427,13 +435,20 @@ export const CourseCardGrid = ({
                             <div className="w-8 h-8 rounded-lg bg-blue-50 text-[#2088E7] font-bold text-xs flex items-center justify-center shrink-0">
                               <BookOpen className="h-4 w-4" />
                             </div>
-                            <div>
-                              <h4
-                                onClick={() => (onEditCourse ? onEditCourse(c) : onSelectCourse && onSelectCourse(c.id))}
-                                className="font-bold text-xs text-slate-900 hover:text-[#2088E7] cursor-pointer"
-                              >
-                                {c.title}
-                              </h4>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {c.code && (
+                                  <span className="font-mono text-[9px] font-extrabold px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded shrink-0">
+                                    {c.code}
+                                  </span>
+                                )}
+                                <h4
+                                  onClick={() => (onEditCourse ? onEditCourse(c) : onSelectCourse && onSelectCourse(c.id))}
+                                  className="font-bold text-xs text-slate-900 hover:text-[#2088E7] cursor-pointer truncate"
+                                >
+                                  {c.title}
+                                </h4>
+                              </div>
                               <span className="text-[10px] text-slate-500 truncate block max-w-xs">{c.description || 'No description'}</span>
                             </div>
                           </div>

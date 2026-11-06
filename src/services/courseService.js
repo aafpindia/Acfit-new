@@ -3,9 +3,39 @@ import { supabase, isSupabaseConfigured, handleSupabaseError, handleSuccess } fr
 const SAMPLE_VIDEO_URL = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
 const SAMPLE_VIDEO_URL_2 = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4';
 
+// Course Code Persistence & Fallback Registry
+const COURSE_CODE_STORAGE_KEY = '_lms_course_codes';
+const DEFAULT_COURSE_CODES = {
+  '9fc3320d-4b4a-45cf-89e3-a11e839a66f1': 'AC-FIT-101',
+  'f1068915-d6ee-4e0f-ace1-4bc561fdbd03': 'AC-FIT-201',
+  '10101010-1010-1010-1010-101010101010': 'AC-FIT-101',
+  '20202020-2020-2020-2020-202020202020': 'AC-FIT-201',
+};
+
+export const getStoredCourseCodes = () => {
+  if (typeof window === 'undefined') return { ...DEFAULT_COURSE_CODES };
+  try {
+    const raw = localStorage.getItem(COURSE_CODE_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return { ...DEFAULT_COURSE_CODES, ...parsed };
+  } catch (_) {
+    return { ...DEFAULT_COURSE_CODES };
+  }
+};
+
+export const saveStoredCourseCode = (courseId, code) => {
+  if (typeof window === 'undefined' || !courseId || !code) return;
+  try {
+    const current = getStoredCourseCodes();
+    current[courseId] = String(code).trim();
+    localStorage.setItem(COURSE_CODE_STORAGE_KEY, JSON.stringify(current));
+  } catch (_) {}
+};
+
 const DEFAULT_COURSES_SEED = [
   {
     id: '10101010-1010-1010-1010-101010101010',
+    code: 'AC-FIT-101',
     title: '30-Day Lean Muscle & Strength Blueprint',
     description: 'Master progressive overload, lift with correct form, and build a strong foundation using compound exercises.',
     category: 'Strength Training',
@@ -82,6 +112,7 @@ const DEFAULT_COURSES_SEED = [
   },
   {
     id: '20202020-2020-2020-2020-202020202020',
+    code: 'AC-FIT-201',
     title: 'HIIT Cardio & Athletic Conditioning Masterclass',
     description: 'High-intensity interval circuits to burn fat, boost aerobic thresholds, and optimize metabolic conditioning.',
     category: 'Cardio & HIIT',
@@ -268,8 +299,12 @@ export const fetchCourses = async () => {
       };
     });
 
+    const storedCodes = getStoredCourseCodes();
+    const courseCode = course.code || course.course_code || storedCodes[course.id] || '';
+
     return {
       id: course.id,
+      code: courseCode,
       title: course.title,
       description: course.description,
       category: course.category,
@@ -326,24 +361,46 @@ export const createCourse = async (courseData) => {
   if (!isSupabaseConfigured) return { success: true, data: null };
 
   const courseId = getOrGenerateUUID(courseData.id);
+  const courseCode = courseData.code ? String(courseData.code).trim() : '';
 
-  const { data, error } = await supabase
+  const basePayload = {
+    id: courseId,
+    title: courseData.title,
+    description: courseData.description || '',
+    category: courseData.category || 'General',
+    difficulty: courseData.difficulty || 'Beginner',
+    price: courseData.price || 0,
+    instructor: courseData.instructor || 'Platform Instructor',
+    duration: courseData.duration || '0 hours',
+    thumbnail: courseData.thumbnail || '',
+    featured: courseData.featured || false,
+    published: courseData.published || false,
+  };
+
+  const insertPayload = courseCode ? { ...basePayload, code: courseCode } : { ...basePayload };
+
+  let { data, error } = await supabase
     .from('courses')
-    .insert({
-      id: courseId,
-      title: courseData.title,
-      description: courseData.description || '',
-      category: courseData.category || 'General',
-      difficulty: courseData.difficulty || 'Beginner',
-      price: courseData.price || 0,
-      instructor: courseData.instructor || 'Platform Instructor',
-      duration: courseData.duration || '0 hours',
-      thumbnail: courseData.thumbnail || '',
-      featured: courseData.featured || false,
-      published: courseData.published || false,
-    })
+    .insert(insertPayload)
     .select()
     .single();
+
+  // Graceful fallback if 'code' column is not yet created in Supabase schema cache (PGRST204)
+  if (error && (error.code === 'PGRST204' || error.message?.includes('code') || error.code === '42703')) {
+    console.warn('[courseService] Supabase "code" column not yet present. Saving course without code column and caching locally.');
+    const retryRes = await supabase
+      .from('courses')
+      .insert(basePayload)
+      .select()
+      .single();
+    data = retryRes.data;
+    error = retryRes.error;
+  }
+
+  if (courseCode) {
+    saveStoredCourseCode(courseId, courseCode);
+    if (data) data.code = courseCode;
+  }
 
   if (error) return handleSupabaseError(error, 'createCourse');
 
@@ -439,6 +496,8 @@ export const createCourse = async (courseData) => {
 export const updateCourse = async (courseId, courseData) => {
   if (!isSupabaseConfigured) return { success: true, data: null };
 
+  const courseCode = courseData.code !== undefined ? String(courseData.code).trim() : undefined;
+
   const updatePayload = {};
   if (courseData.title !== undefined) updatePayload.title = courseData.title;
   if (courseData.description !== undefined) updatePayload.description = courseData.description;
@@ -450,14 +509,34 @@ export const updateCourse = async (courseId, courseData) => {
   if (courseData.thumbnail !== undefined) updatePayload.thumbnail = courseData.thumbnail;
   if (courseData.featured !== undefined) updatePayload.featured = courseData.featured;
   if (courseData.published !== undefined) updatePayload.published = courseData.published;
+  if (courseCode !== undefined) updatePayload.code = courseCode;
   updatePayload.updated_at = new Date().toISOString();
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('courses')
     .update(updatePayload)
     .eq('id', courseId)
     .select()
     .single();
+
+  // Graceful fallback if 'code' column is not yet created in Supabase schema cache (PGRST204)
+  if (error && (error.code === 'PGRST204' || error.message?.includes('code') || error.code === '42703')) {
+    console.warn('[courseService] Supabase "code" column not yet present. Updating without code column and caching locally.');
+    const { code: _, ...cleanPayload } = updatePayload;
+    const retryRes = await supabase
+      .from('courses')
+      .update(cleanPayload)
+      .eq('id', courseId)
+      .select()
+      .single();
+    data = retryRes.data;
+    error = retryRes.error;
+  }
+
+  if (courseCode !== undefined) {
+    saveStoredCourseCode(courseId, courseCode);
+    if (data) data.code = courseCode;
+  }
 
   if (error) return handleSupabaseError(error, 'updateCourse');
 

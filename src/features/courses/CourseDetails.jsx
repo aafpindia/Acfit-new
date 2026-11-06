@@ -316,6 +316,11 @@ export const CourseDetails = () => {
         <div className="max-w-7xl mx-auto px-6 sm:px-12 grid grid-cols-1 lg:grid-cols-3 gap-8 items-center">
           <div className="lg:col-span-2 space-y-6">
             <div className="flex flex-wrap gap-2 items-center">
+              {course.code && (
+                <span className="font-mono text-xs font-black px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20 tracking-wider">
+                  {course.code}
+                </span>
+              )}
               <Badge variant="outline" className="border-border bg-background text-text-secondary text-[10px] font-bold tracking-wider uppercase px-2.5 py-1">
                 {course.category}
               </Badge>

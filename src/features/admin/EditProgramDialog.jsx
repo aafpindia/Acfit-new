@@ -42,6 +42,7 @@ export const EditProgramDialog = ({
   const { categories: storeCategories, courses } = useLmsStore();
   const [formData, setFormData] = useState({
     title: '',
+    code: '',
     description: '',
     category: '',
     price: '',
@@ -58,6 +59,7 @@ export const EditProgramDialog = ({
     if (course) {
       setFormData({
         title: course.title || '',
+        code: course.code || '',
         description: course.description || '',
         category: course.category || '',
         price: course.price !== undefined ? course.price : '',
@@ -69,6 +71,7 @@ export const EditProgramDialog = ({
     } else {
       setFormData({
         title: '',
+        code: '',
         description: '',
         category: '',
         price: '',
@@ -145,14 +148,21 @@ export const EditProgramDialog = ({
               <Zap className="h-3.5 w-3.5 text-primary" /> Basic Program Profile
             </h4>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Input
                 label="Program Title"
                 placeholder="E.g. 1000 Days Muscle Building"
                 value={formData.title}
                 onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                 required
-                className="text-xs font-semibold rounded-2xl border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 bg-slate-50/70 focus:bg-white"
+                className="text-xs font-semibold rounded-2xl border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 bg-slate-50/70 focus:bg-white md:col-span-1"
+              />
+              <Input
+                label="Course Code"
+                placeholder="E.g. AC-FIT-101"
+                value={formData.code}
+                onChange={(e) => setFormData({ ...formData, code: e.target.value })}
+                className="text-xs font-semibold rounded-2xl border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 bg-slate-50/70 focus:bg-white font-mono uppercase"
               />
               <Input
                 label="Coach / Lead Instructor"

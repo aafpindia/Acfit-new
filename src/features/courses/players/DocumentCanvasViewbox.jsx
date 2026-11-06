@@ -54,16 +54,22 @@ export const DocumentCanvasViewbox = ({
   const [loadError, setLoadError] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Helper to convert base64 Data URL to Uint8Array
+  // Helper to convert base64 Data URL to Uint8Array safely
   const dataUrlToUint8Array = (dataUrl) => {
-    const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
-    const binary = atob(base64);
-    const len = binary.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binary.charCodeAt(i);
+    try {
+      const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+      const cleanBase64 = (base64 || '').trim().replace(/\s/g, '');
+      const binary = atob(cleanBase64);
+      const len = binary.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return bytes;
+    } catch (e) {
+      console.warn('[DocumentCanvasViewbox] Data URL decode notice:', e?.message || e);
+      return null;
     }
-    return bytes;
   };
 
   // Helper to extract slides from a PPTX (zip) buffer

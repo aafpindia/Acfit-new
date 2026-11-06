@@ -1064,11 +1064,20 @@ export const apiClient = {
       }
 
       if (isSupabaseConfigured) {
-        const { data, error } = await supabase.from('courses').insert({
+        const payload = {
           ...courseData,
           created_by: currentAdminUser.id,
           created_at: new Date().toISOString()
-        }).select().single();
+        };
+
+        let { data, error } = await supabase.from('courses').insert(payload).select().single();
+
+        if (error && (error.code === 'PGRST204' || error.message?.includes('code'))) {
+          const { code: _, ...cleanPayload } = payload;
+          const retryRes = await supabase.from('courses').insert(cleanPayload).select().single();
+          data = retryRes.data;
+          error = retryRes.error;
+        }
 
         return { data, error: error?.message || null };
       }
@@ -1085,10 +1094,19 @@ export const apiClient = {
       }
 
       if (isSupabaseConfigured) {
-        const { data, error } = await supabase.from('courses').update({
+        const payload = {
           ...courseData,
           updated_at: new Date().toISOString()
-        }).eq('id', courseId).select().single();
+        };
+
+        let { data, error } = await supabase.from('courses').update(payload).eq('id', courseId).select().single();
+
+        if (error && (error.code === 'PGRST204' || error.message?.includes('code'))) {
+          const { code: _, ...cleanPayload } = payload;
+          const retryRes = await supabase.from('courses').update(cleanPayload).eq('id', courseId).select().single();
+          data = retryRes.data;
+          error = retryRes.error;
+        }
 
         return { data, error: error?.message || null };
       }

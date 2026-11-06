@@ -71,6 +71,7 @@ const SAMPLE_VIDEO_URL_2 = 'https://commondatastorage.googleapis.com/gtv-videos-
 const initialCourses = [
   {
     id: '10101010-1010-1010-1010-101010101010',
+    code: 'AC-FIT-101',
     title: '30-Day Lean Muscle & Strength Blueprint',
     description: 'Master progressive overload, lift with correct form, and build a strong foundation using compound exercises.',
     category: 'Strength Training',
@@ -280,6 +281,7 @@ const initialCourses = [
   },
   {
     id: 'course-cardio-hiit',
+    code: 'AC-FIT-201',
     title: 'HIIT Cardio & Athletic Conditioning Masterclass',
     description: 'High-intensity interval circuits to burn fat, boost aerobic thresholds, and optimize metabolic conditioning.',
     category: 'Cardio & HIIT',
@@ -906,12 +908,14 @@ export const useLmsStore = create(
 
         const newCourse = {
           id: `course-${Date.now()}`,
+          code: courseData.code ? String(courseData.code).trim() : '',
           rating: 5.0,
           students: 0,
           featured: false,
           finalExam: defaultFinalExam,
           finalAssessment: defaultFinalExam,
           ...courseData,
+          code: courseData.code ? String(courseData.code).trim() : '',
           finalExam: courseData.finalExam || defaultFinalExam,
           finalAssessment: courseData.finalAssessment || courseData.finalExam || defaultFinalExam,
           modules: courseData.modules || []
@@ -971,6 +975,7 @@ export const useLmsStore = create(
             return {
               ...c,
               ...courseData,
+              code: courseData.code !== undefined ? String(courseData.code).trim() : (c.code || ''),
               notes: courseData.notes !== undefined ? courseData.notes : c.notes,
               finalExam: updatedExam,
               finalAssessment: updatedExam
@@ -1481,6 +1486,7 @@ export const useLmsStore = create(
                 const existing = currentCourses.find((c) => c.id === fetched.id);
                 return {
                   ...fetched,
+                  code: fetched.code || existing?.code || '',
                   notes: (fetched.notes && fetched.notes.length > 0) ? fetched.notes : (existing?.notes || []),
                   modules: (fetched.modules || []).map((m, mIdx) => {
                     const existingMod = existing?.modules?.[mIdx] || existing?.modules?.find(em => em.id === m.id);

@@ -20,9 +20,13 @@ CREATE TABLE IF NOT EXISTS profiles (
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
+-- Ensure course code column exists on courses
+ALTER TABLE courses ADD COLUMN IF NOT EXISTS code TEXT;
+
 -- 2. COURSES
 CREATE TABLE IF NOT EXISTS courses (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code TEXT,
   title TEXT NOT NULL,
   description TEXT,
   category TEXT NOT NULL DEFAULT 'General',
