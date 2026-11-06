@@ -184,61 +184,52 @@ export const createUser = async ({ email, fullName, role = 'user', status = 'act
   const cleanRole = role.toLowerCase().trim();
   const cleanName = (fullName || 'Member').trim();
 
-  // 1. Try local serverless / middleware endpoint
-  try {
-    const res = await fetch('/api/admin/create-user', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: cleanEmail,
-        fullName: cleanName,
-        role: cleanRole,
-        status: status || 'active',
-        password,
-      }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.success && data.user) {
-        return handleSuccess(data.user);
-      }
-    }
-  } catch (apiErr) {
-    console.warn('[userService] /api/admin/create-user fetch error, trying edge function:', apiErr);
-  }
-
-  // 2. Try Supabase Edge Function `create-user`
-  if (isSupabaseConfigured && supabase.functions) {
+  // 1. Try local serverless / middleware endpoint (if on localhost)
+  const isLocalHost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  if (isLocalHost) {
     try {
-      const { data, error } = await supabase.functions.invoke('create-user', {
-        body: {
+      const res = await fetch('/api/admin/create-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           email: cleanEmail,
           fullName: cleanName,
           role: cleanRole,
           status: status || 'active',
           password,
-        },
+        }),
       });
 
-      if (!error && data?.success && data?.user) {
-        return handleSuccess(data.user);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.success && data.user) {
+          // Cache in local registered users database
+          try {
+            const regUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
+            const existingIdx = regUsers.findIndex(u => (u.email || '').toLowerCase().trim() === cleanEmail);
+            const userObj = { ...data.user, passwordHash: password || 'Password123!' };
+            if (existingIdx >= 0) regUsers[existingIdx] = { ...regUsers[existingIdx], ...userObj };
+            else regUsers.unshift(userObj);
+            localStorage.setItem('_lms_registered_users', JSON.stringify(regUsers));
+            window.dispatchEvent(new Event('lms_users_updated'));
+          } catch (_) {}
+          return handleSuccess(data.user);
+        }
       }
-    } catch (funcErr) {
-      console.warn('[userService] Supabase create-user function invocation failed:', funcErr);
-    }
+    } catch (_) {}
   }
 
-  // 3. Fallback: Direct database upsert into profiles (Never call supabase.auth.signUp from client to preserve admin session)
+  // 2. Direct database write into Supabase profiles table
+  let createdUserRecord = null;
   if (isSupabaseConfigured) {
     try {
-      // Check if user profile already exists
       const { data: existing } = await supabase
         .from('profiles')
         .select('*')
         .eq('email', cleanEmail)
         .maybeSingle();
 
+      const targetId = existing?.id || ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `usr-${Date.now()}`);
       let profileData = null;
       let profileErr = null;
 
@@ -273,7 +264,7 @@ export const createUser = async ({ email, fullName, role = 'user', status = 'act
       }
 
       if (!profileErr && profileData) {
-        return handleSuccess({
+        createdUserRecord = {
           id: profileData.id,
           fullName: profileData.full_name || cleanName,
           email: cleanEmail,
@@ -281,25 +272,60 @@ export const createUser = async ({ email, fullName, role = 'user', status = 'act
           status: profileData.status || status || 'active',
           createdAt: profileData.created_at || new Date().toISOString(),
           source: 'database',
-        });
+        };
       }
     } catch (dbErr) {
-      console.warn('[userService] Fallback database profile insert/update notice:', dbErr);
+      console.warn('[userService] Database profile insert/update notice:', dbErr);
     }
   }
 
-  // 4. In-memory / Mock fallback if DB is not reachable
-  const mockUser = {
-    id: `usr-${Date.now().toString(36)}-${Math.floor(Math.random() * 1000)}`,
-    fullName: cleanName,
-    email: cleanEmail,
-    role: cleanRole,
-    status: status || 'active',
-    createdAt: new Date().toISOString(),
-    source: 'local',
-  };
+  // 3. Fallback record if DB write failed
+  if (!createdUserRecord) {
+    createdUserRecord = {
+      id: `usr-${Date.now().toString(36)}-${Math.floor(Math.random() * 1000)}`,
+      fullName: cleanName,
+      email: cleanEmail,
+      role: cleanRole,
+      status: status || 'active',
+      createdAt: new Date().toISOString(),
+      source: 'local',
+    };
+  }
 
-  return handleSuccess(mockUser);
+  // 4. Always store user with passwordHash in local registry so user-side login works immediately!
+  try {
+    const regUsers = JSON.parse(localStorage.getItem('_lms_registered_users') || '[]');
+    const existingIdx = regUsers.findIndex(u => (u.email || '').toLowerCase().trim() === cleanEmail);
+    const userToStore = {
+      ...createdUserRecord,
+      passwordHash: password || 'Password123!',
+      password: password || 'Password123!',
+    };
+    if (existingIdx >= 0) {
+      regUsers[existingIdx] = { ...regUsers[existingIdx], ...userToStore };
+    } else {
+      regUsers.unshift(userToStore);
+    }
+    localStorage.setItem('_lms_registered_users', JSON.stringify(regUsers));
+  } catch (_) {}
+
+  // 5. Ensure removed from any revoked lists
+  try {
+    const revRaw = localStorage.getItem('_lms_revoked_users');
+    if (revRaw) {
+      const rev = JSON.parse(revRaw);
+      const cleaned = rev.filter(r => (r.email || '').toLowerCase().trim() !== cleanEmail);
+      localStorage.setItem('_lms_revoked_users', JSON.stringify(cleaned));
+    }
+  } catch (_) {}
+
+  // 6. Broadcast update
+  try {
+    window.dispatchEvent(new Event('lms_users_updated'));
+    window.dispatchEvent(new Event('storage'));
+  } catch (_) {}
+
+  return handleSuccess(createdUserRecord);
 };
 
 /**
@@ -449,14 +475,16 @@ export const updateUser = async (userId, updates, targetEmail = null) => {
       }
     } catch (_) {}
 
-    // Unban via backend administrative endpoint
-    try {
-      fetch('/api/admin/delete-user', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, email: cleanEmail, action: 'restore' }),
-      }).catch(() => {});
-    } catch (_) {}
+    // Unban via backend administrative endpoint (only on localhost middleware)
+    if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+      try {
+        fetch('/api/admin/delete-user', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, email: cleanEmail, action: 'restore' }),
+        }).catch(() => {});
+      } catch (_) {}
+    }
   }
 
   // 4. Update Zustand store
@@ -499,22 +527,24 @@ export const archiveUser = async (userId, email = null) => {
   const isUUID = isValidUUID(userId);
   const nowIso = new Date().toISOString();
 
-  // 1. Try local serverless / middleware endpoint (calls Supabase Auth Admin API with ban_duration)
-  try {
-    const res = await fetch('/api/admin/delete-user', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, email: cleanEmail, action: 'archive' }),
-    });
+  // 1. Try local serverless / middleware endpoint (only on localhost middleware)
+  if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    try {
+      const res = await fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, email: cleanEmail, action: 'archive' }),
+      });
 
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.success) {
-        console.log('[userService] Admin archive user succeeded via backend endpoint.');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.success) {
+          console.log('[userService] Admin archive user succeeded via backend endpoint.');
+        }
       }
+    } catch (apiErr) {
+      console.warn('[userService] /api/admin/delete-user archive notice:', apiErr.message);
     }
-  } catch (apiErr) {
-    console.warn('[userService] /api/admin/delete-user archive notice:', apiErr.message);
   }
 
   // 2. Update Supabase database profile (status = 'suspended' preserves all historical data)
@@ -633,22 +663,24 @@ export const restoreUser = async (userId, email = null) => {
   const cleanEmail = email ? email.toLowerCase().trim() : null;
   const isUUID = isValidUUID(userId);
 
-  // 1. Try local serverless / middleware endpoint (calls Supabase Auth Admin API unban)
-  try {
-    const res = await fetch('/api/admin/delete-user', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, email: cleanEmail, action: 'restore' }),
-    });
+  // 1. Try local serverless / middleware endpoint (only on localhost middleware)
+  if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    try {
+      const res = await fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, email: cleanEmail, action: 'restore' }),
+      });
 
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.success) {
-        console.log('[userService] Admin restore user succeeded via backend endpoint.');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.success) {
+          console.log('[userService] Admin restore user succeeded via backend endpoint.');
+        }
       }
+    } catch (apiErr) {
+      console.warn('[userService] /api/admin/delete-user restore notice:', apiErr.message);
     }
-  } catch (apiErr) {
-    console.warn('[userService] /api/admin/delete-user restore notice:', apiErr.message);
   }
 
   // 2. Direct client-side Supabase database update (status = 'active')

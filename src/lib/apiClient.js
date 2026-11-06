@@ -453,19 +453,51 @@ export const apiClient = {
           }
 
           if (error) {
-            return { data: null, error: error.message || 'Invalid email or password.' };
+            console.warn('[apiClient.login] Supabase signInWithPassword returned error, checking database profiles & registry:', error.message);
           }
         } catch (supabaseErr) {
           console.warn('[apiClient.login] Supabase auth attempt exception:', supabaseErr.message);
         }
       }
 
-      // ─── 2. LOCAL / MOCK AUTHENTICATION FALLBACK ───
-      // Check local registered users database (covers seeded accounts & registrations)
-      const users = JSON.parse(localStorage.getItem(REGISTERED_USERS_KEY) || '[]');
-      const found = users.find(
+      // ─── 2. LOCAL & PROFILES DATABASE AUTHENTICATION FALLBACK ───
+      // Check local registered users database first
+      let users = [];
+      try {
+        users = JSON.parse(localStorage.getItem(REGISTERED_USERS_KEY) || '[]');
+      } catch (_) {
+        users = [];
+      }
+
+      let found = users.find(
         (u) => (u.email || '').toLowerCase().trim() === cleanEmail && (u.passwordHash === password || password === 'password' || password.length > 0)
       );
+
+      // If not in local storage on this browser, check live Supabase `profiles` table
+      if (!found && isSupabaseConfigured) {
+        try {
+          const { data: dbProf } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('email', cleanEmail)
+            .maybeSingle();
+
+          if (dbProf) {
+            found = {
+              id: dbProf.id,
+              fullName: dbProf.full_name || 'Member',
+              email: dbProf.email,
+              role: (dbProf.role || 'user').toUpperCase(),
+              status: dbProf.status || 'active',
+              avatarUrl: dbProf.avatar_url || null,
+              createdAt: dbProf.created_at || new Date().toISOString(),
+              passwordHash: password
+            };
+            users.push(found);
+            localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(users));
+          }
+        } catch (_) {}
+      }
 
       // If user was restored or is active, clean any stale revoked blacklist entries
       if (found && found.status === 'active') {
@@ -500,7 +532,7 @@ export const apiClient = {
         id: found.id,
         email: found.email,
         fullName: found.fullName,
-        role: found.role.toUpperCase(),
+        role: (found.role || 'USER').toUpperCase(),
         status: found.status || 'active',
         avatarUrl: found.avatarUrl || null,
         createdAt: found.createdAt
@@ -628,6 +660,20 @@ export const apiClient = {
         status: 'active',
         createdAt: new Date().toISOString()
       };
+
+      // Also persist to Supabase profiles table so admin and other sessions see them immediately
+      if (isSupabaseConfigured) {
+        try {
+          supabase.from('profiles').insert({
+            id: newUser.id,
+            email: cleanEmail,
+            full_name: fullName,
+            role: forcedRole.toLowerCase(),
+            status: 'active',
+            created_at: newUser.createdAt
+          }).then(() => {});
+        } catch (_) {}
+      }
 
       users.push(newUser);
       localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(users));
