@@ -3,10 +3,12 @@ import { useLmsStore } from '../../stores/lmsStore';
 import { useToast } from '../../hooks/useToast';
 import { supabase, isSupabaseConfigured } from '../../config/supabase';
 import { getUserCourseProgress } from '../../services/progressService';
-import { fetchUsers, createUser, updateUser, deleteUser, sendPasswordResetEmail } from '../../services/userService';
+import { fetchUsers, createUser, updateUser, archiveUser, restoreUser, deleteUser, sendPasswordResetEmail } from '../../services/userService';
 import {
   Shield,
   Ban,
+  Archive,
+  RotateCcw,
   Check,
   Search,
   ChevronLeft,
@@ -79,6 +81,11 @@ export const Users = () => {
     }
   }, [searchParams]);
   const [statusFilter, setStatusFilter] = useState('All'); // 'All' | 'active' | 'suspended' | 'admin' | 'user'
+  const [viewScope, setViewScope] = useState('active'); // 'active' | 'archived'
+
+  // Counters for Segmented Switcher
+  const activeUsersCount = useMemo(() => usersList.filter(u => !u.is_deleted).length, [usersList]);
+  const archivedUsersCount = useMemo(() => usersList.filter(u => Boolean(u.is_deleted)).length, [usersList]);
   
   // Navigation Tabs
   const [detailTab, setDetailTab] = useState('Applications'); // 'Info' | 'Applications' | 'Enroll Status' | 'Account Activity' | 'Security Policies'
@@ -158,10 +165,15 @@ export const Users = () => {
     }
   }, [selectedUser]);
 
-  // Filter Users
+  // Filter Users by search query, status filter dropdown, and active/archived scope toggle
   const filteredUsers = useMemo(() => {
     const q = (search || '').toLowerCase();
     return usersList.filter((usr) => {
+      // Problem 1 Soft-Delete Architecture: Filter by viewScope
+      const isArchived = Boolean(usr.is_deleted);
+      if (viewScope === 'active' && isArchived) return false;
+      if (viewScope === 'archived' && !isArchived) return false;
+
       const name = (usr.fullName || '').toLowerCase();
       const email = (usr.email || '').toLowerCase();
       const matchesQuery = name.includes(q) || email.includes(q);
@@ -172,7 +184,19 @@ export const Users = () => {
       if (statusFilter === 'user') return matchesQuery && usr.role === 'user';
       return matchesQuery;
     });
-  }, [usersList, search, statusFilter]);
+  }, [usersList, search, statusFilter, viewScope]);
+
+  // Keep selectedUser in sync when switching between Active and Archived tabs
+  useEffect(() => {
+    if (filteredUsers.length > 0) {
+      const stillVisible = filteredUsers.some((u) => u.id === selectedUser?.id);
+      if (!stillVisible) {
+        setSelectedUser(filteredUsers[0]);
+      }
+    } else {
+      setSelectedUser(null);
+    }
+  }, [viewScope, filteredUsers]);
 
   // Add New User Handler (Direct Supabase DB)
   const handleCreateUserSubmit = async (e) => {
@@ -182,11 +206,17 @@ export const Users = () => {
       return;
     }
 
+    const cleanMail = newUserData.email.toLowerCase().trim();
+    if (cleanMail === 'admin@gmail.com') {
+      toastError('admin@gmail.com is reserved as the primary system administrator.');
+      return;
+    }
+
     setIsSubmittingNewUser(true);
     const res = await createUser({
-      email: newUserData.email,
+      email: cleanMail,
       fullName: newUserData.fullName,
-      role: newUserData.role,
+      role: 'user', // User management adds student/learner accounts
       password: newUserData.password || 'Password123!'
     });
 
@@ -197,7 +227,7 @@ export const Users = () => {
       await loadUsers();
       setSelectedUser(res.data);
       try { window.dispatchEvent(new Event('lms_users_updated')); } catch (_) {}
-      success(`New user "${res.data.fullName}" created in database successfully!`);
+      success(`New user "${res.data.fullName}" added successfully!`);
     } else {
       toastError(res.error || 'Failed to create user in database.');
     }
@@ -205,8 +235,15 @@ export const Users = () => {
 
   // Toggle User Role
   const toggleRole = async (userId, currentRole) => {
+    const targetUser = selectedUser?.id === userId ? selectedUser : usersList.find((u) => u.id === userId);
+    const targetEmail = (targetUser?.email || '').toLowerCase().trim();
+    if (targetEmail === 'admin@gmail.com') {
+      toastError('The primary administrator account role cannot be modified.');
+      return;
+    }
+
     const nextRole = (currentRole || '').toLowerCase() === 'admin' ? 'user' : 'admin';
-    const res = await updateUser(userId, { role: nextRole });
+    const res = await updateUser(userId, { role: nextRole }, targetEmail);
     if (res.success) {
       await loadUsers();
       if (selectedUser?.id === userId) {
@@ -221,9 +258,15 @@ export const Users = () => {
 
   // Toggle Status (Activate / Deactivate)
   const toggleStatus = async (userId, currentStatus) => {
-    const nextStatus = currentStatus === 'suspended' ? 'active' : 'suspended';
     const targetUser = selectedUser?.id === userId ? selectedUser : usersList.find((u) => u.id === userId);
-    const res = await updateUser(userId, { status: nextStatus }, targetUser?.email);
+    const targetEmail = (targetUser?.email || '').toLowerCase().trim();
+    if (targetEmail === 'admin@gmail.com') {
+      toastError('The primary administrator account (admin@gmail.com) cannot be deactivated.');
+      return;
+    }
+
+    const nextStatus = currentStatus === 'suspended' ? 'active' : 'suspended';
+    const res = await updateUser(userId, { status: nextStatus }, targetEmail);
     if (res.success) {
       await loadUsers();
       if (selectedUser?.id === userId) {
@@ -253,27 +296,51 @@ export const Users = () => {
     }
   };
 
-  // Delete / Remove User Permanently from Supabase DB & Revoke Active Access
-  const handleDeleteUser = async (userId, userEmail = null, userName = null) => {
-    const targetEmail = userEmail || selectedUser?.email;
-    const targetName = userName || selectedUser?.fullName || 'this user';
-    if (!window.confirm(`Are you sure you want to permanently remove ${targetName}? This will revoke active logins immediately and delete their account.`)) {
+  // Problem 1 Solution: Soft-Delete Flag (is_deleted, deleted_at) with Archive Mode
+  const handleArchiveUser = async (userId, userEmail = null, userName = null) => {
+    const targetEmail = (userEmail || selectedUser?.email || '').toLowerCase().trim();
+    if (targetEmail === 'admin@gmail.com') {
+      toastError('The primary administrator account (admin@gmail.com) cannot be archived or revoked.');
       return;
     }
 
-    const res = await deleteUser(userId, targetEmail);
+    const targetName = userName || selectedUser?.fullName || 'this user';
+    if (!window.confirm(`Are you sure you want to archive "${targetName}"? Active logins will be revoked immediately, while past exam scores, certificate verification records, and transaction history will be preserved in Archive Mode.`)) {
+      return;
+    }
+
+    const res = await archiveUser(userId, targetEmail);
     if (res.success) {
       await loadUsers();
-      if (selectedUser?.id === userId) {
-        setSelectedUser(null);
-      }
       try { window.dispatchEvent(new Event('lms_users_updated')); } catch (_) {}
       try { syncFromSupabase(); } catch (_) {}
-      success('User removed and active session credentials revoked successfully.');
+      success(`User "${targetName}" archived and access revoked. Historical records preserved.`);
     } else {
-      toastError(res.error || 'Failed to remove user.');
+      toastError(res.error || 'Failed to archive user.');
     }
   };
+
+  // Restore User from Archive Mode back to Active Directory
+  const handleRestoreUser = async (userId, userEmail = null, userName = null) => {
+    const targetEmail = (userEmail || selectedUser?.email || '').toLowerCase().trim();
+    const targetName = userName || selectedUser?.fullName || 'this user';
+
+    if (!window.confirm(`Restore access for "${targetName}"? This will re-enable their portal login and restore active status with all past records intact.`)) {
+      return;
+    }
+
+    const res = await restoreUser(userId, targetEmail);
+    if (res.success) {
+      await loadUsers();
+      try { window.dispatchEvent(new Event('lms_users_updated')); } catch (_) {}
+      try { syncFromSupabase(); } catch (_) {}
+      success(`User "${targetName}" restored to Active Directory successfully.`);
+    } else {
+      toastError(res.error || 'Failed to restore user.');
+    }
+  };
+
+  const handleDeleteUser = handleArchiveUser;
 
   // Save Edit User
   const handleSaveEditUser = async () => {
@@ -297,11 +364,11 @@ export const Users = () => {
     success('User details updated.');
   };
 
-  // Export CSV
+  // Export CSV (Preserves compliance and audit records)
   const handleExportUsersCSV = () => {
-    const headers = ['User ID,Full Name,Email Address,Role,Status,Created At'];
+    const headers = ['User ID,Full Name,Email Address,Role,Status,Archived,Archived At,Created At'];
     const rows = filteredUsers.map(
-      (u) => `"${u.id}","${u.fullName}","${u.email}","${u.role}","${u.status}","${u.createdAt}"`
+      (u) => `"${u.id}","${u.fullName}","${u.email}","${u.role}","${u.status}","${u.is_deleted ? 'Yes' : 'No'}","${u.deleted_at || ''}","${u.createdAt}"`
     );
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers, ...rows].join('\n');
     const encodedUri = encodeURI(csvContent);
@@ -464,13 +531,54 @@ export const Users = () => {
         {/* ─── LEFT MASTER USER LIST PANEL ───────────────────────────────────── */}
         <div className="w-full lg:w-[360px] xl:w-[380px] border-r border-[#E4E7EB] flex flex-col bg-white shrink-0">
           
+          {/* Segmented Switcher: Active Users vs Archived / Revoked Users */}
+          <div className="p-2.5 border-b border-[#E4E7EB] bg-slate-50/70">
+            <div className="grid grid-cols-2 bg-slate-200/70 p-1 rounded-lg text-xs gap-1">
+              <button
+                type="button"
+                onClick={() => setViewScope('active')}
+                className={`py-1.5 px-2 rounded-md flex items-center justify-center gap-1.5 font-bold transition-all cursor-pointer ${
+                  viewScope === 'active'
+                    ? 'bg-white text-[#2563EB] shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <UserCheck className="h-3.5 w-3.5" />
+                <span>Active Users</span>
+                <span className={`px-1.5 py-0.2 text-[10px] rounded-full font-extrabold ${
+                  viewScope === 'active' ? 'bg-blue-100 text-[#2563EB]' : 'bg-slate-300/80 text-slate-700'
+                }`}>
+                  {activeUsersCount}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setViewScope('archived')}
+                className={`py-1.5 px-2 rounded-md flex items-center justify-center gap-1.5 font-bold transition-all cursor-pointer ${
+                  viewScope === 'archived'
+                    ? 'bg-white text-rose-600 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Archive className="h-3.5 w-3.5" />
+                <span>Archived / Revoked</span>
+                <span className={`px-1.5 py-0.2 text-[10px] rounded-full font-extrabold ${
+                  viewScope === 'archived' ? 'bg-rose-100 text-rose-600' : 'bg-slate-300/80 text-slate-700'
+                }`}>
+                  {archivedUsersCount}
+                </span>
+              </button>
+            </div>
+          </div>
+
           {/* List Sub-Header (Search & Filter) */}
           <div className="p-3 border-b border-[#E4E7EB] flex items-center justify-between gap-2 bg-slate-50/50">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search user..."
+                placeholder={viewScope === 'active' ? "Search active users..." : "Search archived users..."}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full h-8 pl-8 pr-3 bg-white border border-[#E4E7EB] rounded-md text-xs text-[#202124] focus:outline-none focus:border-[#2563EB]"
@@ -483,9 +591,9 @@ export const Users = () => {
               onChange={(e) => setStatusFilter(e.target.value)}
               className="h-8 px-2 text-xs font-semibold bg-white border border-[#E4E7EB] rounded-md text-[#5F6368] focus:outline-none focus:border-[#2563EB] cursor-pointer"
             >
-              <option value="All">All Users ▾</option>
-              <option value="active">Active Users</option>
-              <option value="suspended">Deactivated Users</option>
+              <option value="All">All Status ▾</option>
+              <option value="active">Active Only</option>
+              <option value="suspended">Suspended Only</option>
               <option value="admin">Admins Only</option>
               <option value="user">Students Only</option>
             </select>
@@ -502,7 +610,9 @@ export const Users = () => {
             {isLoadingUsers ? (
               <div className="p-8 text-center text-xs text-slate-400">Loading user directory...</div>
             ) : filteredUsers.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-400">No matching user records.</div>
+              <div className="p-8 text-center text-xs text-slate-400">
+                {viewScope === 'active' ? 'No active users found.' : 'No archived or revoked accounts.'}
+              </div>
             ) : (
               filteredUsers.map((usr) => {
                 const isSelected = selectedUser?.id === usr.id;
@@ -536,11 +646,18 @@ export const Users = () => {
                         <span className={`text-xs block truncate ${isSelected ? 'font-bold text-[#202124]' : 'font-semibold text-[#202124]'}`}>
                           {usr.fullName}
                         </span>
-                        {usr.role === 'admin' && (
-                          <span className="text-[9px] font-bold text-[#2563EB] bg-[#EFF6FF] px-1.5 py-0.2 rounded">
-                            Admin
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1">
+                          {usr.is_deleted && (
+                            <span className="text-[9px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.2 rounded">
+                              Archived
+                            </span>
+                          )}
+                          {usr.role === 'admin' && (
+                            <span className="text-[9px] font-bold text-[#2563EB] bg-[#EFF6FF] px-1.5 py-0.2 rounded">
+                              Admin
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <span className="text-[11px] text-[#5F6368] block truncate font-normal">
                         {usr.email}
@@ -595,6 +712,11 @@ export const Users = () => {
                     >
                       {selectedUser.role === 'admin' ? 'Admin' : 'Student'}
                     </span>
+                    {selectedUser.is_deleted && (
+                      <span className="text-xs font-bold px-2.5 py-0.5 rounded-full border bg-rose-50 text-rose-700 border-rose-200">
+                        Archived / Revoked
+                      </span>
+                    )}
                   </div>
 
                   <p className="text-xs text-[#5F6368] font-normal">{selectedUser.email}</p>
@@ -619,49 +741,76 @@ export const Users = () => {
                     </button>
 
                     {/* More Options Dropdown (...) */}
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button className="w-7 h-7 rounded-md border border-[#E4E7EB] bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-600 cursor-pointer">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-48 text-xs font-sans">
-                        <DropdownMenuItem onClick={() => toggleRole(selectedUser.id, selectedUser.role)}>
-                          <Shield className="h-3.5 w-3.5 mr-2 text-[#2563EB]" />
-                          <span>Make {selectedUser.role === 'admin' ? 'Student' : 'Admin'}</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => handleDeleteUser(selectedUser.id)} className="text-rose-600">
-                          <Trash2 className="h-3.5 w-3.5 mr-2" />
-                          <span>Delete User</span>
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    {selectedUser.email?.toLowerCase().trim() !== 'admin@gmail.com' && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button className="w-7 h-7 rounded-md border border-[#E4E7EB] bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-600 cursor-pointer">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-48 text-xs font-sans">
+                          <DropdownMenuItem onClick={() => toggleRole(selectedUser.id, selectedUser.role)}>
+                            <Shield className="h-3.5 w-3.5 mr-2 text-[#2563EB]" />
+                            <span>Make {selectedUser.role === 'admin' ? 'Student' : 'Admin'}</span>
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          {selectedUser.is_deleted ? (
+                            <DropdownMenuItem onClick={() => handleRestoreUser(selectedUser.id, selectedUser.email, selectedUser.fullName)} className="text-emerald-600">
+                              <RotateCcw className="h-3.5 w-3.5 mr-2" />
+                              <span>Restore User</span>
+                            </DropdownMenuItem>
+                          ) : (
+                            <DropdownMenuItem onClick={() => handleArchiveUser(selectedUser.id, selectedUser.email, selectedUser.fullName)} className="text-rose-600">
+                              <Archive className="h-3.5 w-3.5 mr-2" />
+                              <span>Archive User</span>
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
                   </div>
                 </div>
               </div>
 
-              {/* Action Buttons Right (Deactivate & Remove CTAs) */}
+              {/* Action Buttons Right (Deactivate, Archive & Restore CTAs) */}
               <div className="flex items-center gap-2 self-start sm:self-auto">
-                <button
-                  onClick={() => toggleStatus(selectedUser.id, selectedUser.status)}
-                  className={`text-xs font-semibold px-3 py-1.5 rounded-md shadow-2xs transition-colors cursor-pointer ${
-                    selectedUser.status === 'suspended'
-                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                      : 'bg-[#EF4444] hover:bg-rose-600 text-white'
-                  }`}
-                >
-                  {selectedUser.status === 'suspended' ? 'Activate' : 'Deactivate'}
-                </button>
+                {selectedUser.email?.toLowerCase().trim() === 'admin@gmail.com' ? (
+                  <span className="px-3 py-1.5 rounded-md text-xs font-bold bg-purple-50 text-purple-700 border border-purple-200 flex items-center gap-1.5 shadow-2xs">
+                    <Shield className="h-3.5 w-3.5 text-purple-600" />
+                    <span>Primary Administrator</span>
+                  </span>
+                ) : selectedUser.is_deleted ? (
+                  <Button
+                    onClick={() => handleRestoreUser(selectedUser.id, selectedUser.email, selectedUser.fullName)}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-8 px-3.5 font-bold shadow-2xs flex items-center gap-1.5 cursor-pointer"
+                    title="Restore account to Active Directory and re-enable login credentials"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>Restore Access</span>
+                  </Button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => toggleStatus(selectedUser.id, selectedUser.status)}
+                      className={`text-xs font-semibold px-3 py-1.5 rounded-md shadow-2xs transition-colors cursor-pointer ${
+                        selectedUser.status === 'suspended'
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                          : 'bg-amber-600 hover:bg-amber-700 text-white'
+                      }`}
+                    >
+                      {selectedUser.status === 'suspended' ? 'Activate' : 'Deactivate'}
+                    </button>
 
-                <button
-                  onClick={() => handleDeleteUser(selectedUser.id, selectedUser.email, selectedUser.fullName)}
-                  className="text-xs font-semibold px-3 py-1.5 rounded-md border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700 flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
-                  title="Permanently remove user from system and revoke active login session"
-                >
-                  <Trash2 className="h-3.5 w-3.5 text-rose-600" />
-                  <span>Remove User</span>
-                </button>
+                    <button
+                      onClick={() => handleArchiveUser(selectedUser.id, selectedUser.email, selectedUser.fullName)}
+                      className="text-xs font-semibold px-3 py-1.5 rounded-md border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700 flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                      title="Archive user in Soft-Delete Mode, revoke active sessions, and preserve past academic records"
+                    >
+                      <Archive className="h-3.5 w-3.5 text-rose-600" />
+                      <span>Archive / Revoke</span>
+                    </button>
+                  </>
+                )}
 
                 <button
                   onClick={() => setSelectedUser(null)}
@@ -672,6 +821,30 @@ export const Users = () => {
                 </button>
               </div>
             </div>
+
+            {/* Archived Mode Notice Banner */}
+            {selectedUser.is_deleted && (
+              <div className="mx-6 mt-4 p-3.5 rounded-lg bg-amber-50 border border-amber-200 flex items-start gap-3 text-xs">
+                <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5 min-w-0 flex-1">
+                  <p className="font-bold text-amber-900 flex items-center gap-2">
+                    <span>Archived Account (Access Revoked)</span>
+                    <span className="text-[10px] font-bold bg-amber-200/80 text-amber-800 px-1.5 py-0.2 rounded">Soft-Deleted Mode</span>
+                  </p>
+                  <p className="text-amber-700 leading-relaxed">
+                    This account was archived{selectedUser.deleted_at ? ` on ${new Date(selectedUser.deleted_at).toLocaleString()}` : ''}.
+                    Login access is blocked, but historical course enrollments, assessment attempts, exam scores, and certificates are safely preserved for compliance and accounting.
+                  </p>
+                </div>
+                <Button
+                  onClick={() => handleRestoreUser(selectedUser.id, selectedUser.email, selectedUser.fullName)}
+                  className="shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-7 px-2.5 font-bold shadow-2xs flex items-center gap-1 cursor-pointer"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  <span>Restore Access</span>
+                </Button>
+              </div>
+            )}
 
             {/* ── Profile Subheader Navigation Tabs Bar ── */}
             <div className="bg-white border-b border-[#E4E7EB] px-6 h-11 flex items-center gap-6 shrink-0 text-xs font-medium">
@@ -1121,15 +1294,16 @@ export const Users = () => {
               </div>
 
               <div className="space-y-1">
-                <label className="font-semibold text-[#202124]">System Role</label>
-                <select
-                  value={newUserData.role}
-                  onChange={(e) => setNewUserData({ ...newUserData, role: e.target.value })}
-                  className="w-full h-9 px-3 text-xs bg-white border border-[#E4E7EB] rounded-md text-[#202124]"
-                >
-                  <option value="user">Student (Standard Access)</option>
-                  <option value="admin">Instructor / Admin (Full Access)</option>
-                </select>
+                <label className="font-semibold text-[#202124]">Account Type</label>
+                <div className="p-2.5 bg-slate-50 border border-[#E4E7EB] rounded-md text-xs flex items-center justify-between">
+                  <div>
+                    <span className="font-bold text-slate-800 block">Student Athlete / Learner</span>
+                    <span className="text-[11px] text-slate-500">Standard course portal and learning dashboard access</span>
+                  </div>
+                  <Badge className="bg-[#EFF6FF] text-[#2563EB] text-[10px] font-mono border border-blue-200">
+                    user
+                  </Badge>
+                </div>
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-[#E4E7EB]">

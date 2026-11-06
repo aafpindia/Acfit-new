@@ -1,9 +1,15 @@
 /**
- * Serverless / Middleware Endpoint: Admin User Deletion & Session Revocation
+ * Serverless / Middleware Endpoint: Admin User Soft-Delete & Archive Mode / Restoration
  *
- * Permanently deletes users using Supabase Auth Admin API (supabase.auth.admin.deleteUser)
- * with the Service Role Key. This permanently invalidates the user's refresh tokens and
- * removes their profiles, enrollments, and progress so they cannot access the system.
+ * Implements the Soft-Delete Pattern (is_deleted, deleted_at, status='suspended')
+ * instead of destructive cascade DELETE.
+ *
+ * - When archiving: Bans the auth user via Supabase Auth Admin API (ban_duration: '876000h')
+ *   and updates profiles (status='suspended', is_deleted=TRUE, deleted_at=NOW()).
+ *   Preserves enrollments, assessment attempts, exam scores, and certificates for compliance.
+ *
+ * - When restoring: Unbans the auth user (ban_duration: 'none')
+ *   and updates profiles (status='active', is_deleted=FALSE, deleted_at=NULL).
  */
 
 import { createClient } from '@supabase/supabase-js';
@@ -18,7 +24,12 @@ export async function handleAdminDeleteUser(req, res) {
 
   try {
     const body = await parseRequestBody(req);
-    const { userId, email } = body;
+    const { userId, email, action = 'archive' } = body;
+
+    const cleanEmail = (email || '').toLowerCase().trim();
+    if (cleanEmail === 'admin@gmail.com') {
+      return sendResponse(res, 400, { success: false, error: 'Cannot modify or archive primary system administrator.' });
+    }
 
     if (!userId && !email) {
       return sendResponse(res, 400, { success: false, error: 'User ID or email is required' });
@@ -30,6 +41,8 @@ export async function handleAdminDeleteUser(req, res) {
 
     const isUUID = typeof userId === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(userId);
 
+    const isRestore = action === 'restore';
+
     if (supabaseUrl && serviceRoleKey) {
       const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
         auth: { autoRefreshToken: false, persistSession: false },
@@ -40,64 +53,108 @@ export async function handleAdminDeleteUser(req, res) {
       // If only email provided or ID is non-UUID, locate the auth user ID
       if (!targetUserId && email) {
         const { data: listData } = await supabaseAdmin.auth.admin.listUsers();
-        const found = listData?.users?.find(u => u.email?.toLowerCase() === email.toLowerCase());
+        const found = listData?.users?.find(u => u.email?.toLowerCase() === cleanEmail);
         if (found) targetUserId = found.id;
       }
 
-      // 1. Delete from Supabase Auth Admin API (immediately revokes tokens and prevents logins)
-      if (targetUserId) {
-        try {
-          const { error: authErr } = await supabaseAdmin.auth.admin.deleteUser(targetUserId);
-          if (authErr && !authErr.message?.toLowerCase().includes('not found')) {
-            console.warn('[Admin Delete User Auth Warning]', authErr.message);
-          }
-        } catch (e) {
-          console.warn('[Admin Delete User Auth Exception]', e.message);
-        }
-      }
-
-      // 2. Cascade delete records across public tables
-      try {
-        if (email) {
-          await supabaseAdmin.from('profiles').delete().eq('email', email.toLowerCase());
-        }
+      if (isRestore) {
+        // ── RESTORE USER ──
         if (targetUserId) {
-          await supabaseAdmin.from('profiles').delete().eq('id', targetUserId);
-          await supabaseAdmin.from('enrollments').delete().eq('user_id', targetUserId);
-          await supabaseAdmin.from('progress').delete().eq('user_id', targetUserId);
-          await supabaseAdmin.from('attempts').delete().eq('user_id', targetUserId);
+          try {
+            await supabaseAdmin.auth.admin.updateUserById(targetUserId, {
+              ban_duration: 'none',
+            });
+          } catch (e) {
+            console.warn('[Admin Restore User Auth Warning]', e.message);
+          }
         }
-      } catch (dbErr) {
-        console.warn('[Admin Delete User DB Cleanup Notice]', dbErr.message);
-      }
 
-      return sendResponse(res, 200, {
-        success: true,
-        userId: targetUserId || userId,
-        message: 'User deleted and active session credentials revoked successfully.',
-      });
+        const restorePayload = {
+          status: 'active',
+          is_deleted: false,
+          deleted_at: null,
+        };
+
+        try {
+          if (targetUserId) {
+            await supabaseAdmin.from('profiles').update(restorePayload).eq('id', targetUserId);
+          }
+          if (cleanEmail) {
+            await supabaseAdmin.from('profiles').update(restorePayload).eq('email', cleanEmail);
+          }
+        } catch (dbErr) {
+          console.warn('[Admin Restore User DB Notice]', dbErr.message);
+        }
+
+        return sendResponse(res, 200, {
+          success: true,
+          userId: targetUserId || userId,
+          action: 'restore',
+          message: 'User restored successfully. Login access re-enabled and historical records active.',
+        });
+      } else {
+        // ── SOFT-DELETE / ARCHIVE USER ──
+        // 1. Invalidate sessions and block login via ban_duration (876000h = 100 years)
+        if (targetUserId) {
+          try {
+            await supabaseAdmin.auth.admin.updateUserById(targetUserId, {
+              ban_duration: '876000h',
+            });
+          } catch (e) {
+            console.warn('[Admin Archive User Auth Warning]', e.message);
+          }
+        }
+
+        // 2. Soft-delete flag on profiles record (PRESERVES past attempts, certificates & enrollments)
+        const archivePayload = {
+          status: 'suspended',
+          is_deleted: true,
+          deleted_at: new Date().toISOString(),
+        };
+
+        try {
+          if (targetUserId) {
+            await supabaseAdmin.from('profiles').update(archivePayload).eq('id', targetUserId);
+          }
+          if (cleanEmail) {
+            await supabaseAdmin.from('profiles').update(archivePayload).eq('email', cleanEmail);
+          }
+        } catch (dbErr) {
+          console.warn('[Admin Archive User DB Notice]', dbErr.message);
+        }
+
+        return sendResponse(res, 200, {
+          success: true,
+          userId: targetUserId || userId,
+          action: 'archive',
+          message: 'User archived and active sessions revoked. Historical scores and records preserved.',
+        });
+      }
     }
 
-    // Direct database removal via Anon Key
+    // Direct database update via Anon Key fallback
     if (supabaseUrl && anonKey) {
       try {
         const supabaseClient = createClient(supabaseUrl, anonKey);
-        if (email) {
-          await supabaseClient.from('profiles').delete().eq('email', email.toLowerCase());
+        const payload = isRestore
+          ? { status: 'active', is_deleted: false, deleted_at: null }
+          : { status: 'suspended', is_deleted: true, deleted_at: new Date().toISOString() };
+
+        if (cleanEmail) {
+          await supabaseClient.from('profiles').update(payload).eq('email', cleanEmail);
         }
         if (isUUID) {
-          await supabaseClient.from('profiles').delete().eq('id', userId);
-          await supabaseClient.from('enrollments').delete().eq('user_id', userId);
-          await supabaseClient.from('progress').delete().eq('user_id', userId);
-          await supabaseClient.from('attempts').delete().eq('user_id', userId);
+          await supabaseClient.from('profiles').update(payload).eq('id', userId);
         }
+
         return sendResponse(res, 200, {
           success: true,
           userId,
-          message: 'User deleted from Supabase database tables successfully.',
+          action: isRestore ? 'restore' : 'archive',
+          message: `User ${isRestore ? 'restored' : 'archived'} in Supabase database successfully.`,
         });
       } catch (anonErr) {
-        console.warn('[Admin Delete User Anon Fallback Notice]', anonErr.message);
+        console.warn('[Admin Delete/Archive User Anon Fallback Notice]', anonErr.message);
       }
     }
 
@@ -106,11 +163,11 @@ export async function handleAdminDeleteUser(req, res) {
       success: true,
       userId,
       isSimulated: true,
-      message: 'User removed from local platform registry.',
+      action: isRestore ? 'restore' : 'archive',
+      message: `User ${isRestore ? 'restored in' : 'archived in'} local platform registry.`,
     });
   } catch (err) {
-    console.error('[Admin Delete User Exception]', err);
+    console.error('[Admin Archive/Restore User Exception]', err);
     return sendResponse(res, 500, { success: false, error: err.message || 'Internal Server Error' });
   }
 }
-

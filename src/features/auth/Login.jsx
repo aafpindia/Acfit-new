@@ -26,15 +26,42 @@ export const Login = () => {
 
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const isRevoked = new URLSearchParams(location.search).get('revoked') === 'true';
-  const isSuspended = new URLSearchParams(location.search).get('suspended') === 'true';
+  const isRevokedParam = new URLSearchParams(location.search).get('revoked') === 'true';
+  const isSuspendedParam = new URLSearchParams(location.search).get('suspended') === 'true';
 
-  const { register, handleSubmit, formState: { errors } } = useForm({
+  const { register, handleSubmit, watch, formState: { errors } } = useForm({
     resolver: zodResolver(loginSchema)
   });
 
+  const enteredEmail = (watch('email') || '').toLowerCase().trim();
+  const isTargetAdmin = enteredEmail === 'admin@gmail.com';
+  const isRevoked = isRevokedParam && !isTargetAdmin;
+  const isSuspended = isSuspendedParam && !isTargetAdmin;
+
+  // On mount: ensure admin@gmail.com is unrevoked
+  useEffect(() => {
+    try {
+      const revokedRaw = localStorage.getItem('_lms_revoked_users');
+      if (revokedRaw) {
+        const revoked = JSON.parse(revokedRaw);
+        const filtered = revoked.filter(r => (r.email || '').toLowerCase().trim() !== 'admin@gmail.com');
+        localStorage.setItem('_lms_revoked_users', JSON.stringify(filtered));
+      }
+      const delRaw = localStorage.getItem('_lms_deleted_user_ids');
+      if (delRaw) {
+        const delIds = JSON.parse(delRaw);
+        const filtered = delIds.filter(id => id !== 'admin-gmail-initial-id-001' && id !== 'admin-id');
+        localStorage.setItem('_lms_deleted_user_ids', JSON.stringify(filtered));
+      }
+    } catch (_) {}
+  }, []);
+
   const onSubmit = async (values) => {
     setIsLoading(true);
+    const cleanMail = values.email.toLowerCase().trim();
+    if (cleanMail === 'admin@gmail.com') {
+      window.history.replaceState({}, '', '/login');
+    }
     const res = await signIn(values.email, values.password);
     setIsLoading(false);
 

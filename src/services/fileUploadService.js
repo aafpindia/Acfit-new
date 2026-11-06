@@ -94,6 +94,9 @@ export async function uploadDocumentFile(file, onProgress = () => {}) {
             return resolve({
               success: true,
               url: res.url,
+              pdfUrl: res.pdfUrl || (res.url.toLowerCase().endsWith('.pdf') ? res.url : null),
+              originalUrl: res.originalUrl || res.url,
+              isConverted: Boolean(res.isConverted),
               fileName: res.fileName || file.name,
               size: res.size || file.size,
               formattedSize: formatFileSize(res.size || file.size),

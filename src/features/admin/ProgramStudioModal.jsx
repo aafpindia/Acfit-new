@@ -499,6 +499,9 @@ export const ProgramStudioModal = ({
         setContentFormData((prev) => ({
           ...prev,
           fileUrl: uploadRes.url,
+          pdfUrl: uploadRes.pdfUrl || (uploadRes.url.toLowerCase().endsWith('.pdf') ? uploadRes.url : null),
+          originalUrl: uploadRes.originalUrl || uploadRes.url,
+          isConverted: Boolean(uploadRes.isConverted),
           fileName: uploadRes.fileName || file.name,
           fileSize: uploadRes.formattedSize || '',
           title: prev.title || file.name.replace(/\.[^/.]+$/, '')

@@ -29,6 +29,8 @@ export const fetchUsers = async () => {
           bio: p.bio || '',
           role: (p.role || 'user').toLowerCase(),
           status: p.status || 'active',
+          is_deleted: Boolean(p.is_deleted),
+          deleted_at: p.deleted_at || null,
           avatarUrl: p.avatar_url || null,
           createdAt: p.created_at || new Date().toISOString(),
           source: 'database'
@@ -59,6 +61,8 @@ export const fetchUsers = async () => {
             bio: u.bio || '',
             role: (u.role || 'user').toLowerCase(),
             status: u.status || 'active',
+            is_deleted: Boolean(u.is_deleted),
+            deleted_at: u.deleted_at || null,
             avatarUrl: u.avatarUrl || null,
             createdAt: u.createdAt || new Date().toISOString(),
             source: 'local'
@@ -81,10 +85,71 @@ export const fetchUsers = async () => {
         ...existing,
         phone: existing.phone || u.phone || '',
         location: existing.location || u.location || '',
-        bio: existing.bio || u.bio || ''
+        bio: existing.bio || u.bio || '',
+        is_deleted: existing.is_deleted !== undefined ? existing.is_deleted : Boolean(u.is_deleted),
+        deleted_at: existing.deleted_at || u.deleted_at || null,
+        status: existing.status || u.status || 'active'
       });
     }
   });
+
+  // Cross-check with revoked blacklist so revoked users are flagged as archived/suspended
+  try {
+    const revokedRaw = localStorage.getItem('_lms_revoked_users');
+    if (revokedRaw) {
+      const revoked = JSON.parse(revokedRaw);
+      revoked.forEach(r => {
+        const revMail = (r.email || '').toLowerCase().trim();
+        if (revMail && revMail !== 'admin@gmail.com' && mergedMap.has(revMail)) {
+          const usr = mergedMap.get(revMail);
+          mergedMap.set(revMail, {
+            ...usr,
+            status: 'suspended',
+            is_deleted: true,
+            deleted_at: usr.deleted_at || r.revokedAt || new Date().toISOString()
+          });
+        }
+      });
+    }
+  } catch (_) {}
+
+  // Always guarantee primary administrator (admin@gmail.com) is present and active
+  if (!mergedMap.has('admin@gmail.com')) {
+    mergedMap.set('admin@gmail.com', {
+      id: 'admin-gmail-initial-id-001',
+      fullName: 'System Administrator',
+      email: 'admin@gmail.com',
+      role: 'admin',
+      status: 'active',
+      is_deleted: false,
+      deleted_at: null,
+      phone: '',
+      location: '',
+      bio: '',
+      avatarUrl: null,
+      createdAt: new Date().toISOString(),
+      source: 'system'
+    });
+  } else {
+    const adminObj = mergedMap.get('admin@gmail.com');
+    mergedMap.set('admin@gmail.com', {
+      ...adminObj,
+      role: 'admin',
+      status: 'active',
+      is_deleted: false,
+      deleted_at: null
+    });
+  }
+
+  // Purge any accidental revocation of admin@gmail.com
+  try {
+    const revokedRaw = localStorage.getItem('_lms_revoked_users');
+    if (revokedRaw) {
+      const revoked = JSON.parse(revokedRaw);
+      const cleaned = revoked.filter(r => (r.email || '').toLowerCase().trim() !== 'admin@gmail.com');
+      localStorage.setItem('_lms_revoked_users', JSON.stringify(cleaned));
+    }
+  } catch (_) {}
 
   return Array.from(mergedMap.values());
 };
@@ -99,6 +164,9 @@ export const createUser = async ({ email, fullName, role = 'user', status = 'act
   }
 
   const cleanEmail = email.toLowerCase().trim();
+  if (cleanEmail === 'admin@gmail.com') {
+    return { success: false, error: 'admin@gmail.com is reserved as the primary system administrator.' };
+  }
   const cleanRole = role.toLowerCase().trim();
   const cleanName = (fullName || 'Member').trim();
 
@@ -212,6 +280,9 @@ export const updateUser = async (userId, updates, targetEmail = null) => {
   }
 
   const cleanEmail = targetEmail ? targetEmail.toLowerCase().trim() : null;
+  if (cleanEmail === 'admin@gmail.com' && updates.status === 'suspended') {
+    return { success: false, error: 'The primary system administrator account (admin@gmail.com) cannot be deactivated.' };
+  }
   const isUUID = isValidUUID(userId);
   let updatedRecord = null;
 
@@ -359,89 +430,99 @@ export const updateUser = async (userId, updates, targetEmail = null) => {
 };
 
 /**
- * Permanently delete / remove a user from database, registry, and revoke all active session credentials.
+ * Soft-delete / Archive a user (Problem 1 Solution: Soft-Delete Flag is_deleted, deleted_at)
+ * Sets status = 'suspended', is_deleted = TRUE, deleted_at = NOW()
+ * Immediately invalidates active login sessions while preserving past enrollments,
+ * exam attempts, assessment scores, and certificate records for compliance & accounting.
  */
-export const deleteUser = async (userId, email = null) => {
+export const archiveUser = async (userId, email = null) => {
   if (!userId && !email) {
     return { success: false, error: 'User identifier is required.' };
   }
 
   const cleanEmail = email ? email.toLowerCase().trim() : null;
+  if (cleanEmail === 'admin@gmail.com') {
+    return { success: false, error: 'The primary system administrator account (admin@gmail.com) cannot be archived or revoked.' };
+  }
   const isUUID = isValidUUID(userId);
+  const nowIso = new Date().toISOString();
 
-  // 1. Try local serverless / middleware endpoint (calls Supabase Auth Admin API with Service Role Key or Anon Key)
+  // 1. Try local serverless / middleware endpoint (calls Supabase Auth Admin API with ban_duration)
   try {
     const res = await fetch('/api/admin/delete-user', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, email: cleanEmail }),
+      body: JSON.stringify({ userId, email: cleanEmail, action: 'archive' }),
     });
 
     if (res.ok) {
       const data = await res.json();
       if (data && data.success) {
-        console.log('[userService] Admin delete user succeeded via backend endpoint.');
+        console.log('[userService] Admin archive user succeeded via backend endpoint.');
       }
     }
   } catch (apiErr) {
-    console.warn('[userService] /api/admin/delete-user endpoint notice:', apiErr.message);
+    console.warn('[userService] /api/admin/delete-user archive notice:', apiErr.message);
   }
 
   // 2. Try Supabase Edge Function `delete-user`
   if (isSupabaseConfigured && supabase.functions) {
     try {
       await supabase.functions.invoke('delete-user', {
-        body: { userId, email: cleanEmail },
+        body: { userId, email: cleanEmail, action: 'archive' },
       });
     } catch (funcErr) {
-      console.warn('[userService] Edge function delete-user invocation notice:', funcErr.message);
+      console.warn('[userService] Edge function archive invocation notice:', funcErr.message);
     }
   }
 
-  // 3. Fallback client-side Supabase database removal
+  // 3. Fallback client-side Supabase database soft-delete (Never DELETE rows!)
   if (isSupabaseConfigured) {
+    const archivePayload = {
+      status: 'suspended',
+      is_deleted: true,
+      deleted_at: nowIso,
+    };
     if (cleanEmail) {
       try {
-        await supabase.from('profiles').delete().eq('email', cleanEmail);
+        await supabase.from('profiles').update(archivePayload).eq('email', cleanEmail);
       } catch (dbErr) {
-        console.warn('[userService] Client DB delete profile by email notice:', dbErr.message);
+        console.warn('[userService] DB soft-delete profile by email notice:', dbErr.message);
       }
     }
     if (isUUID) {
       try {
-        await supabase.from('profiles').delete().eq('id', userId);
-        await supabase.from('enrollments').delete().eq('user_id', userId);
-        await supabase.from('progress').delete().eq('user_id', userId);
-        await supabase.from('attempts').delete().eq('user_id', userId);
+        await supabase.from('profiles').update(archivePayload).eq('id', userId);
       } catch (dbErr) {
-        console.warn('[userService] Client DB delete profile by UUID notice:', dbErr.message);
+        console.warn('[userService] DB soft-delete profile by UUID notice:', dbErr.message);
       }
     }
   }
 
-  // 4. Remove user from local registered users cache
+  // 4. Update local registered users cache (Keep user record, mark is_deleted = true)
   try {
     const raw = localStorage.getItem('_lms_registered_users');
     if (raw) {
       const users = JSON.parse(raw);
-      const filtered = users.filter((u) => {
-        if (userId && u.id === userId) return false;
-        if (cleanEmail && (u.email || '').toLowerCase().trim() === cleanEmail) return false;
-        return true;
+      const updatedList = users.map((u) => {
+        const isMatch =
+          (userId && u.id === userId) ||
+          (cleanEmail && (u.email || '').toLowerCase().trim() === cleanEmail);
+        if (isMatch) {
+          return {
+            ...u,
+            status: 'suspended',
+            is_deleted: true,
+            deleted_at: nowIso,
+          };
+        }
+        return u;
       });
-      localStorage.setItem('_lms_registered_users', JSON.stringify(filtered));
+      localStorage.setItem('_lms_registered_users', JSON.stringify(updatedList));
     }
   } catch (_) {}
 
-  // 5. Add user to deleted ID set (used across payments, analytics, etc.)
-  try {
-    const delRaw = localStorage.getItem('_lms_deleted_user_ids');
-    const delIds = delRaw ? JSON.parse(delRaw) : [];
-    if (userId && !delIds.includes(userId)) delIds.push(userId);
-    localStorage.setItem('_lms_deleted_user_ids', JSON.stringify(delIds));
-  } catch (_) {}
-
-  // 6. Add user to revoked access blacklist to invalidate active sessions immediately across all tabs
+  // 5. Add user to revoked access blacklist to invalidate active sessions immediately across all tabs
   try {
     const revokedRaw = localStorage.getItem('_lms_revoked_users');
     const revoked = revokedRaw ? JSON.parse(revokedRaw) : [];
@@ -452,32 +533,28 @@ export const deleteUser = async (userId, email = null) => {
       revoked.push({
         id: userId || null,
         email: cleanEmail || null,
-        revokedAt: new Date().toISOString(),
+        reason: 'archived',
+        revokedAt: nowIso,
       });
       localStorage.setItem('_lms_revoked_users', JSON.stringify(revoked));
     }
   } catch (_) {}
 
-  // 7. Remove user and enrollments from Zustand store in memory
+  // 6. Update user in Zustand store (PRESERVE enrollments, progress, and attempts!)
   try {
     const store = useLmsStore.getState();
     if (store.users) {
-      const filteredUsers = (store.users || []).filter(
-        (u) => u.id !== userId && (!cleanEmail || (u.email || '').toLowerCase().trim() !== cleanEmail)
-      );
-      store.setUsers?.(filteredUsers);
-    }
-    if (store.enrollments) {
-      const filteredEnrollments = (store.enrollments || []).filter((e) => {
-        const uid = e.userId || e.user_id;
-        const uemail = (e.studentEmail || '').toLowerCase().trim();
-        return uid !== userId && (!cleanEmail || uemail !== cleanEmail);
+      const updatedUsers = store.users.map((u) => {
+        if ((userId && u.id === userId) || (cleanEmail && (u.email || '').toLowerCase().trim() === cleanEmail)) {
+          return { ...u, status: 'suspended', is_deleted: true, deleted_at: nowIso };
+        }
+        return u;
       });
-      useLmsStore.setState({ enrollments: filteredEnrollments });
+      store.setUsers?.(updatedUsers);
     }
   } catch (_) {}
 
-  // 8. Invalidate current active session if the deleted user is currently logged in
+  // 7. Invalidate current active session if the deleted user is currently logged in
   try {
     const currRaw = localStorage.getItem('_lms_current_session');
     if (currRaw) {
@@ -495,9 +572,145 @@ export const deleteUser = async (userId, email = null) => {
     }
   } catch (_) {}
 
-  // 9. Dispatch multi-channel revocation events for real-time reactivity
+  // 8. Dispatch multi-channel revocation events for real-time reactivity
   try {
     window.dispatchEvent(new CustomEvent('lms_user_revoked', { detail: { userId, email: cleanEmail } }));
+    window.dispatchEvent(new Event('lms_users_updated'));
+    window.dispatchEvent(new Event('storage'));
+  } catch (_) {}
+
+  return handleSuccess(true);
+};
+
+export const deleteUser = archiveUser;
+
+/**
+ * Restore an archived / revoked user back to the Active Directory.
+ * Re-enables login access while retaining all historical progress, exam attempts, and certificates.
+ */
+export const restoreUser = async (userId, email = null) => {
+  if (!userId && !email) {
+    return { success: false, error: 'User identifier is required.' };
+  }
+
+  const cleanEmail = email ? email.toLowerCase().trim() : null;
+  const isUUID = isValidUUID(userId);
+
+  // 1. Try local serverless / middleware endpoint (calls Supabase Auth Admin API unban)
+  try {
+    const res = await fetch('/api/admin/delete-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, email: cleanEmail, action: 'restore' }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success) {
+        console.log('[userService] Admin restore user succeeded via backend endpoint.');
+      }
+    }
+  } catch (apiErr) {
+    console.warn('[userService] /api/admin/delete-user restore notice:', apiErr.message);
+  }
+
+  // 2. Try Supabase Edge Function `delete-user` with restore action
+  if (isSupabaseConfigured && supabase.functions) {
+    try {
+      await supabase.functions.invoke('delete-user', {
+        body: { userId, email: cleanEmail, action: 'restore' },
+      });
+    } catch (funcErr) {
+      console.warn('[userService] Edge function restore invocation notice:', funcErr.message);
+    }
+  }
+
+  // 3. Fallback client-side Supabase database update
+  if (isSupabaseConfigured) {
+    const restorePayload = {
+      status: 'active',
+      is_deleted: false,
+      deleted_at: null,
+    };
+    if (cleanEmail) {
+      try {
+        await supabase.from('profiles').update(restorePayload).eq('email', cleanEmail);
+      } catch (dbErr) {
+        console.warn('[userService] DB restore profile by email notice:', dbErr.message);
+      }
+    }
+    if (isUUID) {
+      try {
+        await supabase.from('profiles').update(restorePayload).eq('id', userId);
+      } catch (dbErr) {
+        console.warn('[userService] DB restore profile by UUID notice:', dbErr.message);
+      }
+    }
+  }
+
+  // 4. Update local registered users cache
+  try {
+    const raw = localStorage.getItem('_lms_registered_users');
+    if (raw) {
+      const users = JSON.parse(raw);
+      const updatedList = users.map((u) => {
+        const isMatch =
+          (userId && u.id === userId) ||
+          (cleanEmail && (u.email || '').toLowerCase().trim() === cleanEmail);
+        if (isMatch) {
+          return {
+            ...u,
+            status: 'active',
+            is_deleted: false,
+            deleted_at: null,
+          };
+        }
+        return u;
+      });
+      localStorage.setItem('_lms_registered_users', JSON.stringify(updatedList));
+    }
+  } catch (_) {}
+
+  // 5. Remove from revoked blacklist
+  try {
+    const revokedRaw = localStorage.getItem('_lms_revoked_users');
+    if (revokedRaw) {
+      const revoked = JSON.parse(revokedRaw);
+      const filtered = revoked.filter((r) => {
+        if (userId && r.id === userId) return false;
+        if (cleanEmail && (r.email || '').toLowerCase().trim() === cleanEmail) return false;
+        return true;
+      });
+      localStorage.setItem('_lms_revoked_users', JSON.stringify(filtered));
+    }
+  } catch (_) {}
+
+  // 6. Remove from deleted user IDs
+  try {
+    const delRaw = localStorage.getItem('_lms_deleted_user_ids');
+    if (delRaw) {
+      const del = JSON.parse(delRaw);
+      const filtered = del.filter((id) => id !== userId);
+      localStorage.setItem('_lms_deleted_user_ids', JSON.stringify(filtered));
+    }
+  } catch (_) {}
+
+  // 7. Update user in Zustand store
+  try {
+    const store = useLmsStore.getState();
+    if (store.users) {
+      const updatedUsers = store.users.map((u) => {
+        if ((userId && u.id === userId) || (cleanEmail && (u.email || '').toLowerCase().trim() === cleanEmail)) {
+          return { ...u, status: 'active', is_deleted: false, deleted_at: null };
+        }
+        return u;
+      });
+      store.setUsers?.(updatedUsers);
+    }
+  } catch (_) {}
+
+  // 8. Dispatch reactivity events
+  try {
     window.dispatchEvent(new Event('lms_users_updated'));
     window.dispatchEvent(new Event('storage'));
   } catch (_) {}

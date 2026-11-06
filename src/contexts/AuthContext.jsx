@@ -185,6 +185,12 @@ export const AuthProvider = ({ children }) => {
       setSessionDurationSeconds(elapsedSeconds);
 
       const userEmail = (user.email || '').toLowerCase().trim();
+      const isAdmin = userEmail === 'admin@gmail.com' || (user.role || '').toLowerCase() === 'admin';
+
+      // ─── ADMIN IMMUNITY: The primary system administrator is NEVER revoked or suspended ───
+      if (isAdmin) {
+        return;
+      }
 
       // 1. Check if user is suspended in memory
       if (user.status === 'suspended') {
@@ -212,29 +218,27 @@ export const AuthProvider = ({ children }) => {
       } catch (_) {}
 
       // 3. Check if user was removed from registered users registry or suspended
-      if ((user.role || '').toLowerCase() !== 'admin') {
-        try {
-          const regRaw = localStorage.getItem('_lms_registered_users');
-          if (regRaw) {
-            const registered = JSON.parse(regRaw);
-            const found = registered.find(
-              (u) => (user.id && u.id === user.id) || (userEmail && (u.email || '').toLowerCase().trim() === userEmail)
-            );
-            if (!found) {
-              console.warn('[Session Security] User no longer in registered users list. Forcing instant logout.');
-              signOut();
-              window.location.href = '/login?revoked=true';
-              return;
-            }
-            if (found.status === 'suspended') {
-              console.warn('[Session Security] User status changed to suspended in registry. Forcing instant logout.');
-              signOut();
-              window.location.href = '/login?suspended=true';
-              return;
-            }
+      try {
+        const regRaw = localStorage.getItem('_lms_registered_users');
+        if (regRaw) {
+          const registered = JSON.parse(regRaw);
+          const found = registered.find(
+            (u) => (user.id && u.id === user.id) || (userEmail && (u.email || '').toLowerCase().trim() === userEmail)
+          );
+          if (!found) {
+            console.warn('[Session Security] User no longer in registered users list. Forcing instant logout.');
+            signOut();
+            window.location.href = '/login?revoked=true';
+            return;
           }
-        } catch (_) {}
-      }
+          if (found.status === 'suspended') {
+            console.warn('[Session Security] User status changed to suspended in registry. Forcing instant logout.');
+            signOut();
+            window.location.href = '/login?suspended=true';
+            return;
+          }
+        }
+      } catch (_) {}
 
       // 4. Periodic server verification (every 10s)
       if (elapsedSeconds > 0 && elapsedSeconds % 10 === 0) {
@@ -306,6 +310,10 @@ export const AuthProvider = ({ children }) => {
 
     // Revocation event listeners for real-time multi-tab session termination
     const handleRevocationEvent = (e) => {
+      const userEmail = (user?.email || '').toLowerCase().trim();
+      const isAdmin = userEmail === 'admin@gmail.com' || (user?.role || '').toLowerCase() === 'admin';
+      if (isAdmin) return; // Admin is immune
+
       const revokedId = e?.detail?.userId;
       const revokedEmail = e?.detail?.email;
       let isTarget = false;
@@ -333,6 +341,10 @@ export const AuthProvider = ({ children }) => {
     // Re-verify session integrity on window focus (detects server-side deletion)
     const handleFocusCheck = async () => {
       if (!user) return;
+      const userEmail = (user?.email || '').toLowerCase().trim();
+      const isAdmin = userEmail === 'admin@gmail.com' || (user?.role || '').toLowerCase() === 'admin';
+      if (isAdmin) return; // Admin is immune
+
       try {
         const meRes = await apiClient.auth.me();
         if (!meRes.data?.user) {

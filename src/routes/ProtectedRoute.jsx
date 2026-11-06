@@ -20,30 +20,33 @@ export const ProtectedRoute = ({ children }) => {
     );
   }
 
-  // Active check if current user was removed or revoked by administrator
+  // Active check if current user was removed or revoked by administrator (Admin accounts immune)
   if (user) {
     const userEmail = (user.email || '').toLowerCase().trim();
+    const isAdmin = userEmail === 'admin@gmail.com' || (user.role || '').toLowerCase() === 'admin';
 
-    // 1. Check if user is suspended
-    if (user.status === 'suspended') {
-      signOut?.();
-      return <Navigate to="/login?suspended=true" replace />;
-    }
-
-    // 2. Check revoked blacklist
-    try {
-      const revokedRaw = localStorage.getItem('_lms_revoked_users');
-      if (revokedRaw) {
-        const revokedList = JSON.parse(revokedRaw);
-        const isRevoked = revokedList.some(
-          (r) => (user.id && r.id === user.id) || (userEmail && r.email?.toLowerCase().trim() === userEmail)
-        );
-        if (isRevoked) {
-          signOut?.();
-          return <Navigate to="/login?revoked=true" replace />;
-        }
+    if (!isAdmin) {
+      // 1. Check if user is suspended
+      if (user.status === 'suspended') {
+        signOut?.();
+        return <Navigate to="/login?suspended=true" replace />;
       }
-    } catch (_) {}
+
+      // 2. Check revoked blacklist
+      try {
+        const revokedRaw = localStorage.getItem('_lms_revoked_users');
+        if (revokedRaw) {
+          const revokedList = JSON.parse(revokedRaw);
+          const isRevoked = revokedList.some(
+            (r) => (user.id && r.id === user.id) || (userEmail && r.email?.toLowerCase().trim() === userEmail)
+          );
+          if (isRevoked) {
+            signOut?.();
+            return <Navigate to="/login?revoked=true" replace />;
+          }
+        }
+      } catch (_) {}
+    }
 
     // 3. For non-admin accounts, check if account was removed from registered users
     if ((user.role || '').toLowerCase() !== 'admin') {

@@ -20,28 +20,31 @@ export const AdminRoute = ({ children }) => {
     );
   }
 
-  // Active check if current user was removed or revoked by administrator
+  // Active check if current user was removed or revoked by administrator (Admin accounts immune)
   if (user) {
     const userEmail = (user.email || '').toLowerCase().trim();
+    const isAdmin = userEmail === 'admin@gmail.com' || (user.role || '').toLowerCase() === 'admin';
 
-    if (user.status === 'suspended') {
-      signOut?.();
-      return <Navigate to="/login?suspended=true" replace />;
-    }
-
-    try {
-      const revokedRaw = localStorage.getItem('_lms_revoked_users');
-      if (revokedRaw) {
-        const revokedList = JSON.parse(revokedRaw);
-        const isRevoked = revokedList.some(
-          (r) => (user.id && r.id === user.id) || (userEmail && r.email?.toLowerCase().trim() === userEmail)
-        );
-        if (isRevoked) {
-          signOut?.();
-          return <Navigate to="/login?revoked=true" replace />;
-        }
+    if (!isAdmin) {
+      if (user.status === 'suspended') {
+        signOut?.();
+        return <Navigate to="/login?suspended=true" replace />;
       }
-    } catch (_) {}
+
+      try {
+        const revokedRaw = localStorage.getItem('_lms_revoked_users');
+        if (revokedRaw) {
+          const revokedList = JSON.parse(revokedRaw);
+          const isRevoked = revokedList.some(
+            (r) => (user.id && r.id === user.id) || (userEmail && r.email?.toLowerCase().trim() === userEmail)
+          );
+          if (isRevoked) {
+            signOut?.();
+            return <Navigate to="/login?revoked=true" replace />;
+          }
+        }
+      } catch (_) {}
+    }
   }
 
   if (!authenticated || !user) {

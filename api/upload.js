@@ -1,15 +1,65 @@
 /**
- * Serverless / Middleware Endpoint: Document & Presentation File Upload
+ * Serverless / Middleware Endpoint: Document & Presentation File Upload & Auto-Conversion
  *
- * Saves uploaded PDF and PPT/PPTX documents to public/uploads/
- * and returns clean static URLs (/uploads/<filename>).
- * Prevents main-thread Base64 lag, Supabase 413 payload rejections,
- * and localStorage quota crashes.
+ * Saves uploaded PDF and PPT/PPTX documents to public/uploads/.
+ * Automatically converts PPTX presentations into high-fidelity PDFs using pure-JS
+ * engine so that both PDF documents and PPT slides render seamlessly in the
+ * HTML5 Canvas Viewbox without requiring third-party viewers or downloads.
  */
 
 import fs from 'fs';
 import path from 'path';
+import { convert as convertPptxToPdf } from 'pptx-to-pdf';
 import { sendResponse, handleCors } from './_utils.js';
+
+/**
+ * Finalize file upload: if the file is PPTX, auto-converts to PDF alongside it.
+ */
+async function finalizeUploadedFileResponse(res, targetFilePath, uniqueFileName, originalFileName, mimeType, uploadsDir) {
+  const isPptx = /\.pptx$/i.test(uniqueFileName) || /\.pptx$/i.test(originalFileName);
+
+  if (isPptx) {
+    try {
+      const pdfFileName = uniqueFileName.replace(/\.pptx$/i, '.pdf');
+      const pdfFilePath = path.join(uploadsDir, pdfFileName);
+      const pptxBuffer = fs.readFileSync(targetFilePath);
+
+      // Convert PPTX buffer to PDF buffer
+      const pdfBuffer = await convertPptxToPdf(pptxBuffer);
+
+      if (pdfBuffer && pdfBuffer.length > 0) {
+        fs.writeFileSync(pdfFilePath, Buffer.from(pdfBuffer));
+        const pdfStats = fs.statSync(pdfFilePath);
+        console.log(`[Upload] Successfully converted "${originalFileName}" to PDF viewbox format: ${pdfFileName}`);
+
+        return sendResponse(res, 200, {
+          success: true,
+          url: `/uploads/${pdfFileName}`, // Clean PDF URL for Canvas Viewbox
+          pdfUrl: `/uploads/${pdfFileName}`,
+          originalUrl: `/uploads/${uniqueFileName}`,
+          isConverted: true,
+          fileName: originalFileName.replace(/\.pptx$/i, '.pdf'),
+          originalFileName,
+          size: pdfStats.size,
+          mimeType: 'application/pdf',
+        });
+      }
+    } catch (convErr) {
+      console.warn('[Upload PPTX to PDF Conversion Notice]', convErr?.message || convErr);
+      // If conversion fails, continue and return the original uploaded file
+    }
+  }
+
+  const stats = fs.statSync(targetFilePath);
+  return sendResponse(res, 200, {
+    success: true,
+    url: `/uploads/${uniqueFileName}`,
+    originalUrl: `/uploads/${uniqueFileName}`,
+    fileName: originalFileName,
+    size: stats.size,
+    mimeType,
+  });
+}
 
 export async function handleUpload(req, res) {
   if (handleCors(req, res, 'POST, OPTIONS')) return;
@@ -44,15 +94,14 @@ export async function handleUpload(req, res) {
         req.on('error', reject);
       });
 
-      const stats = fs.statSync(targetFilePath);
-
-      return sendResponse(res, 200, {
-        success: true,
-        url: `/uploads/${uniqueFileName}`,
-        fileName: originalFileName,
-        size: stats.size,
-        mimeType
-      });
+      return await finalizeUploadedFileResponse(
+        res,
+        targetFilePath,
+        uniqueFileName,
+        originalFileName,
+        mimeType,
+        uploadsDir
+      );
     }
 
     // 2. Multipart form data or raw buffer fallback
@@ -88,7 +137,6 @@ export async function handleUpload(req, res) {
             const nameMatch = headerStr.match(/filename="([^"]+)"/i);
             if (nameMatch) {
               finalFileName = nameMatch[1];
-              // Body is between headerEnd + 4 and partBuffer.length - 2 (\r\n before next boundary)
               extractedBuffer = partBuffer.slice(headerEnd + 4, partBuffer.length - 2);
               break;
             }
@@ -100,15 +148,15 @@ export async function handleUpload(req, res) {
       const uniqueFileName = `${Date.now()}-${sanitizedName}`;
       const targetFilePath = path.join(uploadsDir, uniqueFileName);
       fs.writeFileSync(targetFilePath, extractedBuffer);
-      const stats = fs.statSync(targetFilePath);
 
-      return sendResponse(res, 200, {
-        success: true,
-        url: `/uploads/${uniqueFileName}`,
-        fileName: finalFileName,
-        size: stats.size,
-        mimeType
-      });
+      return await finalizeUploadedFileResponse(
+        res,
+        targetFilePath,
+        uniqueFileName,
+        finalFileName,
+        mimeType,
+        uploadsDir
+      );
     }
 
     // 3. JSON body fallback ({ fileName, fileData (base64) })
@@ -123,27 +171,26 @@ export async function handleUpload(req, res) {
       const uniqueFileName = `${Date.now()}-${sanitizedName}`;
       const targetFilePath = path.join(uploadsDir, uniqueFileName);
       fs.writeFileSync(targetFilePath, fileBuffer);
-      const stats = fs.statSync(targetFilePath);
 
-      return sendResponse(res, 200, {
-        success: true,
-        url: `/uploads/${uniqueFileName}`,
-        fileName: finalFileName,
-        size: stats.size,
-        mimeType: data.mimeType || 'application/octet-stream'
-      });
+      return await finalizeUploadedFileResponse(
+        res,
+        targetFilePath,
+        uniqueFileName,
+        finalFileName,
+        data.mimeType || 'application/octet-stream',
+        uploadsDir
+      );
     }
 
     return sendResponse(res, 400, {
       success: false,
-      error: 'Unsupported content type for file upload.'
+      error: 'Unsupported content type for file upload.',
     });
   } catch (err) {
     console.error('[Upload Error]', err);
     return sendResponse(res, 500, {
       success: false,
-      error: err.message || 'File upload failed.'
+      error: err.message || 'File upload failed.',
     });
   }
 }
-

@@ -1,4 +1,4 @@
-// Supabase Edge Function: Admin Delete User & Revoke Session
+// Supabase Edge Function: Admin User Soft-Delete & Archive Mode / Restoration
 // Deploy with: supabase functions deploy delete-user
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
@@ -38,7 +38,15 @@ serve(async (req) => {
     });
 
     const body = await req.json().catch(() => ({}));
-    const { userId, email } = body;
+    const { userId, email, action = 'archive' } = body;
+
+    const cleanEmail = (email || '').toLowerCase().trim();
+    if (cleanEmail === 'admin@gmail.com') {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Cannot archive or modify primary administrator' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     if (!userId && !email) {
       return new Response(
@@ -50,38 +58,74 @@ serve(async (req) => {
     let targetUserId = userId;
     if (!targetUserId && email) {
       const { data: listData } = await supabaseAdmin.auth.admin.listUsers();
-      const found = listData?.users?.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+      const found = listData?.users?.find((u) => u.email?.toLowerCase() === cleanEmail);
       if (found) targetUserId = found.id;
     }
 
-    // 1. Delete user from auth.users (revokes all active sessions & refresh tokens)
-    if (targetUserId) {
-      try {
-        await supabaseAdmin.auth.admin.deleteUser(targetUserId);
-      } catch (err) {
-        console.warn('[delete-user edge] Auth delete notice:', err);
-      }
-    }
+    const isRestore = action === 'restore';
 
-    // 2. Cascade delete from profiles and student records
-    try {
+    if (isRestore) {
       if (targetUserId) {
-        await supabaseAdmin.from('profiles').delete().eq('id', targetUserId);
-        await supabaseAdmin.from('enrollments').delete().eq('user_id', targetUserId);
-        await supabaseAdmin.from('progress').delete().eq('user_id', targetUserId);
-        await supabaseAdmin.from('attempts').delete().eq('user_id', targetUserId);
+        try {
+          await supabaseAdmin.auth.admin.updateUserById(targetUserId, { ban_duration: 'none' });
+        } catch (err) {
+          console.warn('[restore-user edge] Auth unban notice:', err);
+        }
       }
-      if (email) {
-        await supabaseAdmin.from('profiles').delete().eq('email', email.toLowerCase());
-      }
-    } catch (dbErr) {
-      console.warn('[delete-user edge] DB cleanup notice:', dbErr);
-    }
 
-    return new Response(
-      JSON.stringify({ success: true, message: 'User deleted and credentials revoked.' }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+      const restorePayload = {
+        status: 'active',
+        is_deleted: false,
+        deleted_at: null,
+      };
+
+      try {
+        if (targetUserId) {
+          await supabaseAdmin.from('profiles').update(restorePayload).eq('id', targetUserId);
+        }
+        if (cleanEmail) {
+          await supabaseAdmin.from('profiles').update(restorePayload).eq('email', cleanEmail);
+        }
+      } catch (dbErr) {
+        console.warn('[restore-user edge] DB update notice:', dbErr);
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, message: 'User restored and login re-enabled.' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    } else {
+      // Archive / Soft-delete
+      if (targetUserId) {
+        try {
+          await supabaseAdmin.auth.admin.updateUserById(targetUserId, { ban_duration: '876000h' });
+        } catch (err) {
+          console.warn('[archive-user edge] Auth ban notice:', err);
+        }
+      }
+
+      const archivePayload = {
+        status: 'suspended',
+        is_deleted: true,
+        deleted_at: new Date().toISOString(),
+      };
+
+      try {
+        if (targetUserId) {
+          await supabaseAdmin.from('profiles').update(archivePayload).eq('id', targetUserId);
+        }
+        if (cleanEmail) {
+          await supabaseAdmin.from('profiles').update(archivePayload).eq('email', cleanEmail);
+        }
+      } catch (dbErr) {
+        console.warn('[archive-user edge] DB archive notice:', dbErr);
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, message: 'User archived in soft-delete mode and credentials revoked.' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
   } catch (err) {
     return new Response(
       JSON.stringify({ success: false, error: err.message || 'Internal Server Error' }),
@@ -89,4 +133,3 @@ serve(async (req) => {
     );
   }
 });
-

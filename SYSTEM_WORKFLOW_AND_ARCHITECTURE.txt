@@ -1,0 +1,429 @@
+================================================================================
+                    ACFIT FITNESS ACADEMY LMS PLATFORM
+       COMPLETE END-TO-END SYSTEM WORKFLOW, ARCHITECTURE & BOTTLENECK ANALYSIS
+================================================================================
+Document Version : 2.4.0 (Production Release)
+Generated Date   : 2026-11-06
+Stack            : React 19, Tailwind CSS v4, Vite 8, Supabase (PostgreSQL & Auth),
+                   Bunny Stream (HLS Video CDN), Razorpay, Node Serverless Middleware
+
+--------------------------------------------------------------------------------
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1. EXECUTIVE PLATFORM ARCHITECTURE & DATA FLOW
+2. ADMIN-SIDE DEEP WORKFLOWS
+   2.1. Admin Authentication & Role Gatekeeping
+   2.2. Admin Dashboard & Real-Time KPI Telemetry
+   2.3. User Management, Provisioning & Instant Revocation
+   2.4. Course Studio: Full-Spectrum Curriculum Authoring
+        - Video Pipeline (Bunny Stream TUS Upload & HLS Transcoding)
+        - Document Pipeline (PDF & PPT/PPTX Upload, Storage & Static Serving)
+        - Interactive Quiz & Assessment Builder
+        - Course Publishing & Database Synchronization
+   2.5. Student Course Player Preview Studio
+   2.6. Broadcast Announcements & Enquiry Management
+   2.7. Financial Ledgers, Enrollments & Reporting
+3. USER-SIDE DEEP WORKFLOWS
+   3.1. Landing Page Navigation & Controlled Scrolling
+   3.2. User Registration, Login & Revocation Interceptor
+   3.3. Profile Completeness Enforcement Before Payment
+   3.4. Course Catalog, Details & Razorpay Checkout Pipeline
+   3.5. Student Course Player Experience
+        - Video Lecture Streaming (Bunny / YouTube / Iframe Bridge)
+        - PowerPoint Presentation Deck (Viewer + Direct Download)
+        - PDF Handbook & Manual (Embedded Canvas + Reader Mode)
+        - Secure Assessment Engine (Server-Side Grading)
+        - Final Exam & Dynamic Certification
+   3.6. User Dashboard, Progress Tracker & Studio Notifications
+4. FLOW LAGS, BOTTLENECK AUDIT & RESOLUTION MATRIX (BEFORE vs AFTER)
+5. PROS & CONS ANALYSIS: MODULE-BY-MODULE WORKFLOW TRADEOFFS
+6. SUMMARY OF ARTIFACTS & FILE DIRECTORY MAP
+
+================================================================================
+1. EXECUTIVE PLATFORM ARCHITECTURE & DATA FLOW
+================================================================================
+The ACFIT platform is built on an asynchronous, decoupled architecture separating
+heavy binary media from relational metadata:
+
+[STUDENT CLIENT / ADMIN SPA] (React 19 + Vite 8)
+       │               │                   │
+       │ (JSON CRUD)   │ (Binary Stream)   │ (Video TUS)
+       ▼               ▼                   ▼
+[SUPABASE POSTGRES] [NODE /API/UPLOAD] [BUNNY STREAM CDN]
+   - Profiles           - Writes to        - Direct Chunked TUS
+   - Courses              public/uploads/  - Multi-bitrate HLS
+   - Modules            - Lightweight URL    Transcoding
+   - Lessons              generation       - Global Edge Delivery
+   - Enrollments
+   - Assessments
+   - Attempts
+
+Database Relations:
+- courses (1) ────< (N) modules (1) ────< (N) lessons (content JSONB)
+- courses (1) ────< (N) assessments (questions JSONB)
+- users (1) ──────< (1) profiles
+- users (1) ──────< (N) enrollments >──── (1) courses
+- users (1) ──────< (N) assessment_attempts
+- users (1) ──────< (N) certificates
+
+================================================================================
+2. ADMIN-SIDE DEEP WORKFLOWS
+================================================================================
+
+2.1. ADMIN AUTHENTICATION & ROLE GATEKEEPING
+--------------------------------------------------------------------------------
+- Entry Route: `/admin/login` or standard login redirected via role check.
+- Mechanism:
+  1. Authenticates against Supabase Auth (`supabase.auth.signInWithPassword`).
+  2. Queries `profiles` table to verify `role === 'admin'`.
+  3. `AdminRoute.jsx` intercepts route changes:
+     - If unauthenticated -> redirects to `/login`.
+     - If authenticated but `role !== 'admin'` -> redirects to `/unauthorized`.
+     - If `status === 'suspended'` or user has been revoked -> immediate session
+       invalidation, cookie purge, and redirect to `/login`.
+
+2.2. ADMIN DASHBOARD & REAL-TIME KPI TELEMETRY
+--------------------------------------------------------------------------------
+- Component: `src/features/admin/AdminDashboard.jsx`
+- Workflow:
+  1. Aggregates live platform metrics:
+     - Total Active Students (from `profiles` where `role = 'user'`).
+     - Published Courses Count (from `courses` where `published = true`).
+     - Total Platform Revenue (calculated from completed enrollments/payments).
+     - Course Completion Rate (across enrolled students).
+  2. "Learners Needing Attention" Algorithm:
+     - Evaluates enrolled students who have logged 0% progress over 7+ days,
+       failed 2+ consecutive quiz attempts, or have an assessment score < 50%.
+     - Dynamically displays their names, emails, and exact struggling modules.
+  3. "Recent Activity" Feed:
+     - Merges live student enrollments, exam pass events, certificate issuance,
+       and admin broadcasts into a sorted chronological timeline.
+
+2.3. USER MANAGEMENT, PROVISIONING & INSTANT REVOCATION
+--------------------------------------------------------------------------------
+- Component: `src/features/admin/Users.jsx`
+- Backend Endpoints: `POST /api/admin/create-user`, `POST /api/admin/delete-user`
+- Workflow:
+  A. Adding / Creating Users:
+     1. Admin submits email, full name, temporary password, role ('user'/'admin').
+     2. Dispatched to `POST /api/admin/create-user`.
+     3. Uses Supabase Auth Admin Service Role (`supabaseAdmin.auth.admin.createUser`)
+        with `email_confirm: true`.
+     4. This prevents client session corruption (admins are never logged out when
+        creating users).
+     5. Automatically inserts the corresponding record in `profiles`.
+  B. Instant User Revocation & Deletion:
+     1. Admin clicks "Revoke / Delete User".
+     2. Request hits `POST /api/admin/delete-user`.
+     3. Service role deletes user from `auth.users` and cascades through `profiles`.
+     4. Broadcasts cache invalidation.
+     5. Real-Time Revocation Guard: Any active tab held by that deleted user
+        checks `userService.getActiveProfile()` on interval or navigation. If the
+        profile no longer exists in `profiles`, the token is revoked, local storage
+        cleared, and user redirected to `/login` with an "Account Revoked" notice.
+
+2.4. COURSE STUDIO: FULL-SPECTRUM CURRICULUM AUTHORING
+--------------------------------------------------------------------------------
+- Component: `src/features/admin/ProgramStudioModal.jsx`
+- Workflow:
+  A. Course Metadata Setup:
+     - Title, Slug, Category, Difficulty, Thumbnail, Price, Certification flag.
+  B. Curriculum Hierarchy Builder:
+     - Admin creates Modules (Chapters).
+     - Within each Module, Admin creates Lessons of type: Video, PPT, PDF, Text, Quiz.
+  C. Video Pipeline (Bunny Stream):
+     1. Admin drops a video file (`.mp4`, `.mov`).
+     2. `processBunnyVideoWorkflow()` calls `/api/bunny/create-video` to create video GUID.
+     3. Fetches direct TUS chunked upload signature via `/api/bunny/tus-signature`.
+     4. Video streams directly from browser to Bunny CDN edge without touching
+        app server RAM.
+     5. Polls `/api/bunny/video-status` until transcoding finishes.
+     6. Stores Bunny Video ID and HLS URL (`https://.../playlist.m3u8`).
+  D. Document Pipeline (PDF & PowerPoint):
+     1. Admin selects a `.pdf`, `.ppt`, or `.pptx` file.
+     2. `fileUploadService.uploadDocumentFile()` initiates asynchronous upload.
+     3. Request streams binary payload directly to `/api/upload`.
+     4. Server writes file to `public/uploads/<timestamp>-<filename>`.
+     5. Returns clean static URL: `/uploads/<filename>` (30 bytes instead of 30MB).
+     6. Studio shows live upload progress bar (0% -> 100%).
+     7. Live Preview:
+        - PDF: Embedded preview iframe with "Open in Full View ↗".
+        - PPT/PPTX: Presentation deck card with file size, name, download test,
+          and slide notes inspector.
+  E. Quiz & Assessment Builder:
+     - Single choice, multi-select, fill-in-the-blank, descriptive solutions.
+     - Sets passing threshold (e.g. 70%) and timer duration (minutes).
+  F. Saving & Publishing:
+     - Payload serialized cleanly (no giant base64 strings).
+     - Dispatched to `updateCourse()` or `createCourse()` in `courseService.js`.
+     - Modules, Lessons, and Assessments upserted atomically in Supabase.
+
+2.5. STUDENT COURSE PLAYER PREVIEW STUDIO
+--------------------------------------------------------------------------------
+- Component: `src/features/admin/StudentCoursePlayerPreviewModal.jsx`
+- Workflow:
+  - Allows instructor to preview the entire student experience before publishing.
+  - Features playlist sidebar and full rendering of Video, PPT, PDF, Text, and Quiz.
+
+2.6. BROADCAST ANNOUNCEMENTS & ENQUIRY MANAGEMENT
+--------------------------------------------------------------------------------
+- Component: `src/features/admin/Announcements.jsx`
+- Workflow:
+  - Tab 1: Broadcast Announcements:
+    - Target: "All Athletes", specific course, or urgent alert.
+    - Stored in `announcements` table and delivered in real-time to student dashboards.
+  - Tab 2: Enquiries (Contact Form Submissions):
+    - Lists prospective student messages submitted via landing page.
+    - Status toggle: "New" -> "Contacted" -> "Resolved".
+
+2.7. FINANCIAL LEDGERS, ENROLLMENTS & REPORTING
+--------------------------------------------------------------------------------
+- Components: `EnrollmentsAdmin.jsx`, `Payments.jsx`, `Reports.jsx`, `Analytics.jsx`
+- Workflow:
+  - Tracks Razorpay payment IDs, course access status, and manual enrollments.
+  - Generates downloadable CSV/PDF audit reports.
+
+================================================================================
+3. USER-SIDE DEEP WORKFLOWS
+================================================================================
+
+3.1. LANDING PAGE NAVIGATION & CONTROLLED SCROLLING
+--------------------------------------------------------------------------------
+- Component: `src/features/landing/LandingPage.jsx`
+- Workflow:
+  - Header with curriculum links, program certifications, and CTA buttons.
+  - "About" & "Contact" sections: Controlled view transitions prevent sudden window
+    scroll jumping.
+  - Contact Section: Clean contact details (email, phone, address, office hours)
+    plus quick enquiry submission form that feeds directly into Admin Enquiries.
+
+3.2. USER REGISTRATION, LOGIN & REVOCATION INTERCEPTOR
+--------------------------------------------------------------------------------
+- Components: `Login.jsx`, `Signup.jsx`, `AuthContext.jsx`
+- Workflow:
+  1. User signs up or logs in via Supabase Auth.
+  2. `AuthContext` initializes user session and fetches `profiles` record.
+  3. If profile does not exist or was deleted by Admin:
+     - Auth is terminated immediately.
+     - Displays: "Account Revoked: This user account has been disabled or removed."
+  4. Real-time broadcast listener logs out revoked users across all open browser tabs.
+
+3.3. PROFILE COMPLETENESS ENFORCEMENT BEFORE PAYMENT
+--------------------------------------------------------------------------------
+- Components: `UserProfile.jsx`, `CourseDetails.jsx`
+- Workflow:
+  1. Default or blank profile data is strictly disallowed for course enrollment.
+  2. When a user clicks "Enroll Now / Pay Now" on any course:
+     - `CourseDetails.jsx` validates profile completeness (Full Name, Phone Number,
+       Fitness/Career Goals, Emergency Contact).
+     - If incomplete:
+       * Enrollment modal halts.
+       * Displays a warning prompt: "Please complete your student profile details
+         before proceeding to payment."
+       * Redirects or opens Profile Modal so details are saved to Supabase first.
+     - Once profile details are verified and stored in both client state and database:
+       * Payment trigger is unlocked and Razorpay Checkout initiates.
+
+3.4. COURSE CATALOG, DETAILS & RAZORPAY CHECKOUT PIPELINE
+--------------------------------------------------------------------------------
+- Component: `src/features/courses/CourseDetails.jsx`
+- Backend Endpoints: `POST /api/create-razorpay-order`, `POST /api/verify-razorpay-payment`
+- Workflow:
+  1. Student reviews curriculum syllabus, trainer info, and pricing.
+  2. Student initiates payment:
+     - Frontend requests `/api/create-razorpay-order` with `courseId` and `userId`.
+     - Backend generates official Razorpay Order ID.
+  3. Razorpay Checkout modal renders securely in browser.
+  4. Upon successful card/UPI/Netbanking authorization:
+     - Razorpay returns `razorpay_payment_id`, `order_id`, and `signature`.
+  5. Frontend dispatches signature to `/api/verify-razorpay-payment`.
+  6. Backend validates HMAC SHA-256 signature using secret key.
+  7. Atomic Enrollment Creation:
+     - Writes to `enrollments` table with status 'active'.
+     - Increments `students` counter on `courses` atomically via database function
+       `UPDATE courses SET students = students + 1 WHERE id = ...` (preventing lost updates).
+  8. Student receives confirmation toast and is redirected to Course Player.
+
+3.5. STUDENT COURSE PLAYER EXPERIENCE
+--------------------------------------------------------------------------------
+- Component: `src/features/courses/CoursePlayer.jsx`
+- Child Players:
+  A. Video Player (`VideoPlayer.jsx`):
+     - Renders adaptive multi-bitrate HLS streams via `hls.js`.
+     - Embedded YouTube & Vimeo players use postMessage / `YT.PlayerState.ENDED`
+       bridges to trigger automatic completion and progress recording.
+  B. PowerPoint Presentation Player (`PptPlayer.jsx`):
+     - Attached Presentation Deck Banner with "Download Deck (.pptx)" button.
+     - In-browser interactive concept deck viewer with theme toggle (Navy/Light)
+       and slide notes.
+     - Embedded Google Slides / Office Online view when hosted publicly.
+  C. PDF Handbook Player (`PdfPlayer.jsx`):
+     - Embedded native PDF viewer for `/uploads/...` files.
+     - Dual Mode: Toggle between "Embedded PDF" and "Reader Mode".
+     - Theme selector: White Paper, Sepia Eye-Care, Night Reading.
+     - Zoom controls (75% to 150%) + Direct "Download PDF" action button.
+  D. Assessment Player (`AssessmentPlayer.jsx`):
+     - Timed quiz interface with single-choice, multi-choice, and text questions.
+     - Anti-Cheating Architecture: Correct answer keys (`isCorrect`) are NEVER sent
+       to the client browser.
+     - User answers submitted to `POST /api/submit-assessment`.
+     - Backend evaluates score, passing threshold, and returns `{ score, passed }`.
+  E. Final Exam & Certification (`CertificatePage.jsx`):
+     - Passing the final comprehensive exam unlocks the Course Certificate.
+     - Generates unique verification code, athlete name, completion date, and
+       high-resolution printable certificate view.
+
+3.6. USER DASHBOARD, PROGRESS TRACKER & STUDIO NOTIFICATIONS
+--------------------------------------------------------------------------------
+- Component: `src/features/dashboard/UserDashboard.jsx`
+- Workflow:
+  - Displays enrolled courses, completion percentage bars, and next up lessons.
+  - Announcement Feed:
+    - Automatically filters announcements targeting "All", user's enrolled courses,
+      or user's individual email/name.
+  - Progress tracker logs lesson completions in `progress` table in Supabase.
+
+================================================================================
+4. FLOW LAGS, BOTTLENECK AUDIT & RESOLUTION MATRIX (BEFORE vs AFTER)
+================================================================================
+
++-----------------------+-----------------------------+-----------------------------+
+| BOTTLENECK / LAG      | PREVIOUS BEHAVIOR (BEFORE)  | RESOLVED BEHAVIOR (AFTER)   |
++-----------------------+-----------------------------+-----------------------------+
+| 1. PPT/PDF Upload     | FileReader.readAsDataURL    | Asynchronous streaming to   |
+|    Browser Freezing   | converted 30MB files into   | `/api/upload` writing to    |
+|                       | massive base64 strings.     | `public/uploads/`. Input    |
+|                       | Bound into `<Input>`, which | contains clean URLs (30 B). |
+|                       | crashed DOM rendering.      | Zero main-thread lag.       |
++-----------------------+-----------------------------+-----------------------------+
+| 2. Vanishing Lessons  | 30MB JSON payload sent to   | Files stored on disk/CDN;   |
+|    on Save (HTTP 413) | Supabase. PostgREST dropped | only static URL saved in DB.|
+|                       | payload silently. Reload    | Upsert completes in <100ms; |
+|                       | wiped lessons completely.   | lessons persist reliably.   |
++-----------------------+-----------------------------+-----------------------------+
+| 3. Deleted Users      | Deleted users remained      | Centralized revocation      |
+|    Session Ghosting   | logged in via stale cookie; | interceptor in AuthContext. |
+|                       | login recreated user        | Deleted users immediately   |
+|                       | automatically.              | logged out & blocked.       |
++-----------------------+-----------------------------+-----------------------------+
+| 4. Concurrent Student | Read count, add 1, write    | Atomic database update:     |
+|    Counter Race       | count. Simultaneous         | `UPDATE courses SET students|
+|    Conditions         | purchases overwrote counts. | = students + 1 ...`         |
++-----------------------+-----------------------------+-----------------------------+
+| 5. Exam Answer Key    | Question JSON contained     | Correct keys stored on      |
+|    Client Exposure    | `isCorrect: true` on browser| backend. Client receives    |
+|                       | JavaScript inspection.      | questions only; grading run |
+|                       |                             | via `/api/submit-assessment`|
++-----------------------+-----------------------------+-----------------------------+
+| 6. Landing Page       | Clicking About/Contact      | Controlled in-page state    |
+|    Scroll Jitter      | forced jarring window       | transitions prevent window  |
+|                       | scroll jumping.             | scroll displacement.        |
++-----------------------+-----------------------------+-----------------------------+
+| 7. Video End Events   | Bunny / YouTube iframes had | Message listener & YouTube  |
+|    on Embedded Player | no completion trigger;      | IFrame API bridge detects   |
+|                       | lessons couldn't auto-pass. | `YT.PlayerState.ENDED`.     |
++-----------------------+-----------------------------+-----------------------------+
+
+================================================================================
+5. PROS & CONS ANALYSIS: MODULE-BY-MODULE WORKFLOW TRADEOFFS
+================================================================================
+
+--------------------------------------------------------------------------------
+MODULE 1: USER MANAGEMENT & REVOCATION
+--------------------------------------------------------------------------------
+PROS:
+- Immediate security: Revoking a user terminates their access platform-wide.
+- Admin creation uses Service Role API, keeping admin browser cookies clean.
+- Cascade integrity: Deletes user profiles, attempts, and progress records.
+CONS:
+- Hard deletion removes historic test attempt logs unless soft-delete archive
+  is enabled.
+- Requires admin service role environment key on backend server.
+
+--------------------------------------------------------------------------------
+MODULE 2: COURSE STUDIO & CURRICULUM AUTHORING
+--------------------------------------------------------------------------------
+PROS:
+- Highly flexible multi-content lessons (mix videos, presentations, PDFs, quizzes).
+- Full live preview studio matching student view.
+- Real-time progress bar feedback during upload.
+CONS:
+- Multi-nested modules require careful structural ordering by author.
+- Large courses with 50+ lessons take slightly longer to sync on initial load.
+
+--------------------------------------------------------------------------------
+MODULE 3: VIDEO PIPELINE (BUNNY STREAM CDN)
+--------------------------------------------------------------------------------
+PROS:
+- Direct TUS chunked uploads bypass application server memory limits.
+- Multi-bitrate HLS transcoding ensures smooth playback on slow mobile networks.
+- Prevents raw video link scraping.
+CONS:
+- Video processing has a 1-3 minute transcoding queue before HLS is ready.
+- Requires external Bunny CDN account and API credentials.
+
+--------------------------------------------------------------------------------
+MODULE 4: DOCUMENT MANAGEMENT (PPT & PDF)
+--------------------------------------------------------------------------------
+PROS:
+- Files stream to disk/CDN with zero browser UI lag.
+- PDF player provides dual mode (Embedded canvas + Sepia/Night reader).
+- PPT player provides both in-browser conceptual deck and direct file download.
+- 100% offline fallback via IndexedDB storage.
+CONS:
+- PPTX files cannot be rendered natively in iframe without third-party web viewer
+  (e.g., Office Online or Google Docs Viewer).
+
+--------------------------------------------------------------------------------
+MODULE 5: ASSESSMENT & EXAM ENGINE
+--------------------------------------------------------------------------------
+PROS:
+- Zero answer-key leakage (100% server-side grading).
+- Supports single-choice, multi-select, and descriptive formats.
+- Configurable timers and passing thresholds.
+CONS:
+- Descriptive text answers require instructor manual review or AI scoring
+  for full open-ended evaluation.
+
+--------------------------------------------------------------------------------
+MODULE 6: PAYMENT & CHECKOUT PIPELINE (RAZORPAY)
+--------------------------------------------------------------------------------
+PROS:
+- Profile requirement gate guarantees user contact details before money is paid.
+- Cryptographic HMAC SHA-256 signature verification prevents payment spoofing.
+- Atomic counter increment eliminates race condition lost updates.
+CONS:
+- Dependent on Razorpay webhook/redirect availability.
+- International currencies require Razorpay international transaction enablement.
+
+--------------------------------------------------------------------------------
+MODULE 7: DASHBOARD & BROADCAST NOTIFICATIONS
+--------------------------------------------------------------------------------
+PROS:
+- Targeted broadcasts allow messaging specific courses or all athletes.
+- "Learners Needing Attention" provides actionable proactive coaching insights.
+- Clean tactile cards with unread badges.
+CONS:
+- In-app notification feed only (SMS/WhatsApp notifications require external
+  webhook provider).
+
+================================================================================
+6. SUMMARY OF ARTIFACTS & FILE DIRECTORY MAP
+================================================================================
+- Architecture & Middleware : `vite.config.js`, `api/_utils.js`
+- Upload Endpoint           : `api/upload.js`
+- Admin User Endpoints      : `api/admin/create-user.js`, `api/admin/delete-user.js`
+- Assessment Grading API    : `api/submit-assessment.js`
+- Bunny Stream Integration  : `api/bunny/*`, `src/services/bunnyService.js`
+- Upload Service Client     : `src/services/fileUploadService.js`
+- Course Service            : `src/services/courseService.js`
+- Admin Studio Modal        : `src/features/admin/ProgramStudioModal.jsx`
+- Preview Modal             : `src/features/admin/StudentCoursePlayerPreviewModal.jsx`
+- Course Players            : `src/features/courses/players/*`
+- Auth & Revocation Guard   : `src/contexts/AuthContext.jsx`, `src/routes/*`
+- Landing Page              : `src/features/landing/LandingPage.jsx`
+- User Dashboard            : `src/features/dashboard/UserDashboard.jsx`
+================================================================================
+                              END OF ARCHITECTURE FILE
+================================================================================
+

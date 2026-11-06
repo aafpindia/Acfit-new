@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { VideoPlayer } from '../courses/players/VideoPlayer';
+import { DocumentCanvasViewbox } from '../courses/players/DocumentCanvasViewbox';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import {
@@ -87,72 +88,32 @@ export const StudentCoursePlayerPreviewModal = ({ isOpen, onClose, courseData })
                       )}
 
                       {item.type === 'ppt' && (
-                        <div className="p-6 bg-slate-50 border border-[#E4E7EB] rounded-xl space-y-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-3">
-                              <div className="p-3 bg-blue-100 text-blue-600 rounded-xl">
-                                <Presentation className="h-6 w-6" />
-                              </div>
-                              <div>
-                                <h5 className="font-bold text-xs text-[#202124]">{item.fileName || item.title || 'Presentation Deck Attached'}</h5>
-                                <p className="text-[11px] text-[#5F6368] font-mono truncate max-w-md">
-                                  {item.fileUrl || 'presentation.pptx'}
-                                </p>
-                              </div>
-                            </div>
-                            {item.fileUrl && (
-                              <a
-                                href={item.fileUrl}
-                                download={item.fileName || 'presentation.pptx'}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-3 py-1.5 bg-[#2563EB] hover:bg-[#1D4ED8] text-white rounded-lg font-semibold text-xs flex items-center gap-1.5 transition-colors shadow-2xs shrink-0"
-                              >
-                                <Download className="h-3.5 w-3.5" />
-                                <span>Download Deck</span>
-                              </a>
-                            )}
-                          </div>
-
-                          {item.fileUrl && (item.fileUrl.toLowerCase().endsWith('.pdf') || item.fileUrl.includes('.pdf?') || item.fileUrl.includes('docs.google.com')) && (
-                            <div className="h-72 bg-white rounded-lg overflow-hidden border border-[#E4E7EB]">
-                              <iframe src={item.fileUrl} className="w-full h-full border-0" title="Presentation Preview" />
+                        <div className="space-y-2">
+                          {item.fileUrl ? (
+                            <DocumentCanvasViewbox
+                              fileUrl={item.pdfUrl || item.fileUrl}
+                              title={item.fileName || item.title || 'Presentation Deck'}
+                              isPresentation={true}
+                            />
+                          ) : (
+                            <div className="p-8 text-center bg-slate-50 border border-[#E4E7EB] rounded-xl text-slate-500 text-xs">
+                              No presentation file attached to preview.
                             </div>
                           )}
                         </div>
                       )}
 
                       {item.type === 'pdf' && (
-                        <div className="p-6 bg-slate-50 border border-[#E4E7EB] rounded-xl space-y-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-3">
-                              <div className="p-3 bg-rose-100 text-rose-600 rounded-xl">
-                                <FileText className="h-6 w-6" />
-                              </div>
-                              <div>
-                                <h5 className="font-bold text-xs text-[#202124]">{item.fileName || item.title || 'PDF Document Attached'}</h5>
-                                <p className="text-[11px] text-[#5F6368] font-mono truncate max-w-md">
-                                  {item.fileUrl || 'document.pdf'}
-                                </p>
-                              </div>
-                            </div>
-                            {item.fileUrl && (
-                              <a
-                                href={item.fileUrl}
-                                download={item.fileName || 'document.pdf'}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-semibold text-xs flex items-center gap-1.5 transition-colors shadow-2xs shrink-0"
-                              >
-                                <Download className="h-3.5 w-3.5" />
-                                <span>Download PDF</span>
-                              </a>
-                            )}
-                          </div>
-
-                          {item.fileUrl && (
-                            <div className="h-80 bg-white rounded-lg overflow-hidden border border-[#E4E7EB]">
-                              <iframe src={item.fileUrl} className="w-full h-full border-0" title="PDF Document Preview" />
+                        <div className="space-y-2">
+                          {item.fileUrl ? (
+                            <DocumentCanvasViewbox
+                              fileUrl={item.fileUrl}
+                              title={item.fileName || item.title || 'PDF Document'}
+                              isPresentation={false}
+                            />
+                          ) : (
+                            <div className="p-8 text-center bg-slate-50 border border-[#E4E7EB] rounded-xl text-slate-500 text-xs">
+                              No PDF file attached to preview.
                             </div>
                           )}
                         </div>

@@ -517,6 +517,8 @@ export const CoursePlayer = () => {
       const pptContent = {
         title: lessonTitle,
         fileUrl: itemContent?.fileUrl || fullItem?.fileUrl || '',
+        pdfUrl: itemContent?.pdfUrl || fullItem?.pdfUrl || '',
+        isConverted: itemContent?.isConverted || fullItem?.isConverted || false,
         body: itemContent?.body || fullItem?.body || '',
         notes: itemContent?.notes || fullItem?.notes || '',
         instructions: itemContent?.instructions || fullItem?.instructions || '',
