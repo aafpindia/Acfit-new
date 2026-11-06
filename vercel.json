@@ -2,11 +2,31 @@
   "version": 2,
   "rewrites": [
     {
-      "source": "/api/(.*)",
-      "destination": "/api/$1"
+      "source": "/api/create-razorpay-order",
+      "destination": "/api/create-razorpay-order.js"
     },
     {
-      "source": "/(.*)",
+      "source": "/api/verify-razorpay-payment",
+      "destination": "/api/verify-razorpay-payment.js"
+    },
+    {
+      "source": "/api/upload",
+      "destination": "/api/upload.js"
+    },
+    {
+      "source": "/api/admin/create-user",
+      "destination": "/api/admin/create-user.js"
+    },
+    {
+      "source": "/api/admin/delete-user",
+      "destination": "/api/admin/delete-user.js"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1.js"
+    },
+    {
+      "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ]
