@@ -16,9 +16,9 @@ import { createClient } from '@supabase/supabase-js';
 import { parseRequestBody, sendResponse, handleCors } from '../_utils.js';
 
 export async function handleAdminDeleteUser(req, res) {
-  if (handleCors(req, res, 'POST, OPTIONS')) return;
+  if (handleCors(req, res, 'POST, GET, OPTIONS, DELETE')) return;
 
-  if (req.method !== 'POST') {
+  if (req.method !== 'POST' && req.method !== 'DELETE' && req.method !== 'GET') {
     return sendResponse(res, 405, { success: false, error: 'Method Not Allowed' });
   }
 
@@ -71,8 +71,6 @@ export async function handleAdminDeleteUser(req, res) {
 
         const restorePayload = {
           status: 'active',
-          is_deleted: false,
-          deleted_at: null,
         };
 
         try {
@@ -108,8 +106,6 @@ export async function handleAdminDeleteUser(req, res) {
         // 2. Soft-delete flag on profiles record (PRESERVES past attempts, certificates & enrollments)
         const archivePayload = {
           status: 'suspended',
-          is_deleted: true,
-          deleted_at: new Date().toISOString(),
         };
 
         try {
@@ -137,8 +133,8 @@ export async function handleAdminDeleteUser(req, res) {
       try {
         const supabaseClient = createClient(supabaseUrl, anonKey);
         const payload = isRestore
-          ? { status: 'active', is_deleted: false, deleted_at: null }
-          : { status: 'suspended', is_deleted: true, deleted_at: new Date().toISOString() };
+          ? { status: 'active' }
+          : { status: 'suspended' };
 
         if (cleanEmail) {
           await supabaseClient.from('profiles').update(payload).eq('email', cleanEmail);

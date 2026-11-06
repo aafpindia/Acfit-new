@@ -27,6 +27,7 @@ export const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [typedEmail, setTypedEmail] = useState('');
 
   const isRevokedParam = new URLSearchParams(location.search).get('revoked') === 'true';
   const isSuspendedParam = new URLSearchParams(location.search).get('suspended') === 'true';
@@ -35,7 +36,7 @@ export const Login = () => {
     resolver: zodResolver(loginSchema)
   });
 
-  const enteredEmail = (watch('email') || '').toLowerCase().trim();
+  const enteredEmail = (typedEmail || watch('email') || '').toLowerCase().trim();
   const isTargetAdmin = enteredEmail === 'admin@gmail.com';
   const isRevoked = isRevokedParam && !isTargetAdmin && !bannerDismissed;
   const isSuspended = isSuspendedParam && !isTargetAdmin && !bannerDismissed;
@@ -334,6 +335,15 @@ export const Login = () => {
                   leftIcon={<Mail className="h-4 w-4 text-stone-400" />}
                   error={errors.email?.message}
                   {...register('email')}
+                  onChange={(e) => {
+                    register('email').onChange(e);
+                    const val = (e.target.value || '').toLowerCase().trim();
+                    setTypedEmail(val);
+                    if (val === 'admin@gmail.com') {
+                      setBannerDismissed(true);
+                      window.history.replaceState({}, '', '/login');
+                    }
+                  }}
                   className="h-12 text-sm border-stone-200 bg-white focus:border-[#2563EB] rounded-xl shadow-xs"
                 />
               </div>

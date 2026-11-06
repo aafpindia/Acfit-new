@@ -212,7 +212,7 @@ export const apiClient = {
           }
 
           // If profile is suspended or archived in the database
-          if (profile && !isSysAdmin && (profile.status === 'suspended' || profile.is_deleted)) {
+          if (profile && !isSysAdmin && profile.status === 'suspended') {
             localStorage.removeItem(CURRENT_SESSION_KEY);
             await supabase.auth.signOut().catch(() => {});
             return { data: null, error: 'Account has been archived or access revoked by administrator.' };
@@ -390,8 +390,7 @@ export const apiClient = {
                     email: data.user.email,
                     full_name: data.user.user_metadata?.full_name || 'Member',
                     role: (data.user.user_metadata?.role || 'user').toLowerCase(),
-                    status: 'active',
-                    is_deleted: false
+                    status: 'active'
                   }, { onConflict: 'id' })
                   .select()
                   .maybeSingle();
@@ -413,7 +412,7 @@ export const apiClient = {
             };
 
             // Database profile is the single source of truth for revocation & suspension
-            if (!isSysAdmin && (user.status === 'suspended' || profile?.is_deleted)) {
+            if (!isSysAdmin && user.status === 'suspended') {
               await supabase.auth.signOut().catch(() => {});
               return { data: null, error: 'Your account has been archived or access revoked by the administrator. Please contact support.' };
             }
@@ -462,24 +461,38 @@ export const apiClient = {
       }
 
       // ─── 2. LOCAL / MOCK AUTHENTICATION FALLBACK ───
-      try {
-        const revokedUsers = JSON.parse(localStorage.getItem('_lms_revoked_users') || '[]');
-        if (cleanEmail !== 'admin@gmail.com' && revokedUsers.some(r => r.email?.toLowerCase().trim() === cleanEmail)) {
-          return { data: null, error: 'This account has been removed by the administrator. Access revoked.' };
-        }
-      } catch (_) {}
-
-      // Check local registered users database as fallback (covers seeded demo accounts & offline registrations)
+      // Check local registered users database (covers seeded accounts & registrations)
       const users = JSON.parse(localStorage.getItem(REGISTERED_USERS_KEY) || '[]');
       const found = users.find(
         (u) => (u.email || '').toLowerCase().trim() === cleanEmail && (u.passwordHash === password || password === 'password' || password.length > 0)
       );
 
+      // If user was restored or is active, clean any stale revoked blacklist entries
+      if (found && found.status === 'active') {
+        try {
+          const revRaw = localStorage.getItem('_lms_revoked_users');
+          if (revRaw) {
+            const rev = JSON.parse(revRaw);
+            const filtered = rev.filter(r => (r.email || '').toLowerCase().trim() !== cleanEmail);
+            localStorage.setItem('_lms_revoked_users', JSON.stringify(filtered));
+          }
+        } catch (_) {}
+      }
+
+      try {
+        const revokedUsers = JSON.parse(localStorage.getItem('_lms_revoked_users') || '[]');
+        if (cleanEmail !== 'admin@gmail.com' && revokedUsers.some(r => r.email?.toLowerCase().trim() === cleanEmail)) {
+          if (!found || found.status === 'suspended') {
+            return { data: null, error: 'This account has been removed by the administrator. Access revoked.' };
+          }
+        }
+      } catch (_) {}
+
       if (!found) {
         return { data: null, error: 'Invalid email or password.' };
       }
 
-      if (found.status === 'suspended' || found.is_deleted) {
+      if (found.status === 'suspended') {
         return { data: null, error: 'Your account has been archived or access revoked by the administrator. Please contact support.' };
       }
 

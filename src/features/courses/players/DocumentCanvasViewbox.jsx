@@ -111,14 +111,34 @@ export const DocumentCanvasViewbox = ({
     return slides;
   };
 
-  // Load Document (PDF or PPTX)
-  useEffect(() => {
-    if (!fileUrl) {
-      setIsLoading(false);
-      setLoadError('No document source provided.');
-      return;
-    }
+  // Helper to parse text into clean presentation slide cards
+  const parseTextIntoSlides = (text, defaultTitle) => {
+    if (!text || typeof text !== 'string') return [];
+    const clean = text.trim();
+    if (!clean) return [];
 
+    const rawSections = clean
+      .split(/\n\s*---\s*\n|\n(?=Slide \d+:?)|(?=### )/i)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const sections = rawSections.length > 0 ? rawSections : [clean];
+
+    return sections.map((sec, idx) => {
+      const lines = sec.split('\n').map((l) => l.trim()).filter(Boolean);
+      const titleLine = lines[0]?.replace(/^#+\s*/, '') || `${defaultTitle || 'Slide'} ${idx + 1}`;
+      const points = lines.slice(1).map((l) => l.replace(/^[-*•]\s*/, ''));
+      return {
+        slideNumber: idx + 1,
+        title: lines.length > 1 ? titleLine : (defaultTitle || `Slide ${idx + 1}`),
+        points: lines.length > 1 && points.length > 0 ? points : [titleLine],
+        allLines: lines
+      };
+    });
+  };
+
+  // Load Document (PDF, PPTX, or Clean Presentation Content)
+  useEffect(() => {
     let isCancelled = false;
     let loadingTask = null;
     setIsLoading(true);
@@ -134,52 +154,42 @@ export const DocumentCanvasViewbox = ({
         if (typeof fileUrl === 'string' && fileUrl.startsWith('data:')) {
           uint8Data = dataUrlToUint8Array(fileUrl);
         }
-        // 2. Blob URL: Fetch on main thread or recover from local cache
+        // 2. Blob URL: Fetch arrayBuffer on main thread, or IndexedDB recovery
         else if (typeof fileUrl === 'string' && fileUrl.startsWith('blob:')) {
-          let loaded = false;
           try {
             const resp = await fetch(fileUrl);
             if (resp.ok) {
               const buf = await resp.arrayBuffer();
               uint8Data = new Uint8Array(buf);
-              loaded = true;
             }
           } catch (_) {}
 
-          if (!loaded) {
-            // Attempt recovery from local IndexedDB cache
+          if (!uint8Data) {
             try {
               const cachedFile = await findCachedDocument(title);
               if (cachedFile) {
                 const buf = await cachedFile.arrayBuffer();
                 uint8Data = new Uint8Array(buf);
-                loaded = true;
               }
             } catch (_) {}
           }
-
-          if (!loaded) {
-            throw new Error('This document preview session has expired across browser sessions. Please re-upload or select the document in Course Studio.');
-          }
         }
         // 3. Remote URL or relative file path (/uploads/...)
-        else if (typeof fileUrl === 'string') {
+        else if (typeof fileUrl === 'string' && fileUrl.length > 0) {
           try {
             const resp = await fetch(fileUrl);
             if (resp.ok) {
               const buf = await resp.arrayBuffer();
               uint8Data = new Uint8Array(buf);
             }
-          } catch (_) {
-            // If fetch failed due to external CORS, we fallback to passing url directly to PDF.js
-          }
+          } catch (_) {}
         } else if (fileUrl instanceof Uint8Array) {
           uint8Data = fileUrl;
         }
 
         if (isCancelled) return;
 
-        // Check if data is a PPTX file (magic bytes: PK = 0x50, 0x4B)
+        // Check if data is a PPTX file (PK = 0x50, 0x4B)
         const isZipOrPptx = uint8Data && uint8Data.length > 4 && uint8Data[0] === 0x50 && uint8Data[1] === 0x4B;
 
         if (isZipOrPptx) {
@@ -197,29 +207,71 @@ export const DocumentCanvasViewbox = ({
           }
         }
 
-        // Configure PDF.js loading task with raw byte array (transferred to worker without network request)
-        const docConfig = uint8Data
-          ? { data: uint8Data }
-          : { url: fileUrl };
+        // If PDF binary data is available
+        if (uint8Data) {
+          loadingTask = pdfjsLib.getDocument({
+            data: uint8Data,
+            cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/',
+            cMapPacked: true,
+          });
 
-        loadingTask = pdfjsLib.getDocument({
-          ...docConfig,
-          withCredentials: false,
-          cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/',
-          cMapPacked: true,
-        });
-
-        const loadedPdf = await loadingTask.promise;
-        if (!isCancelled) {
-          setPdfDoc(loadedPdf);
-          setTotalPages(loadedPdf.numPages);
-          setCurrentPage(1);
-          setIsLoading(false);
+          const loadedPdf = await loadingTask.promise;
+          if (!isCancelled) {
+            setPdfDoc(loadedPdf);
+            setTotalPages(loadedPdf.numPages);
+            setCurrentPage(1);
+            setIsLoading(false);
+            return;
+          }
         }
+
+        // If direct non-blob remote URL
+        if (typeof fileUrl === 'string' && fileUrl.length > 0 && !fileUrl.startsWith('blob:')) {
+          loadingTask = pdfjsLib.getDocument({
+            url: fileUrl,
+            withCredentials: false,
+            cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/',
+            cMapPacked: true,
+          });
+
+          const loadedPdf = await loadingTask.promise;
+          if (!isCancelled) {
+            setPdfDoc(loadedPdf);
+            setTotalPages(loadedPdf.numPages);
+            setCurrentPage(1);
+            setIsLoading(false);
+            return;
+          }
+        }
+
+        // Fallback presentation slide creation or clean reader
+        if (fallbackContent) {
+          if (isPresentation) {
+            const slides = parseTextIntoSlides(fallbackContent, title);
+            if (slides && slides.length > 0 && !isCancelled) {
+              setPptxSlides(slides);
+              setTotalPages(slides.length);
+              setCurrentPage(1);
+              setIsLoading(false);
+              return;
+            }
+          }
+          setIsLoading(false);
+          return;
+        }
+
+        setIsLoading(false);
       } catch (err) {
         if (!isCancelled) {
-          console.warn('[PDF.js Canvas Viewbox Notice]', err);
-          setLoadError(err.message || 'Unable to load document viewbox.');
+          console.warn('[DocumentCanvasViewbox Notice]', err);
+          if (fallbackContent && isPresentation) {
+            const slides = parseTextIntoSlides(fallbackContent, title);
+            if (slides && slides.length > 0) {
+              setPptxSlides(slides);
+              setTotalPages(slides.length);
+              setCurrentPage(1);
+            }
+          }
           setIsLoading(false);
         }
       }
@@ -235,7 +287,7 @@ export const DocumentCanvasViewbox = ({
         } catch (_) {}
       }
     };
-  }, [fileUrl]);
+  }, [fileUrl, fallbackContent, isPresentation, title]);
 
   // Render current PDF page onto HTML5 Canvas
   const renderCurrentPage = useCallback(async () => {
@@ -441,37 +493,16 @@ export const DocumentCanvasViewbox = ({
           </div>
         )}
 
-        {loadError && !isLoading && (
-          <div className="w-full max-w-3xl space-y-4">
-            <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 text-center space-y-3 shadow-xl">
-              <AlertCircle className="h-8 w-8 text-amber-400 mx-auto" />
-              <h4 className="text-sm font-bold text-white">Document Preview Notice</h4>
-              <p className="text-xs text-slate-400 leading-relaxed max-w-md mx-auto">{loadError}</p>
-            </div>
-            {fallbackContent && (
-              <div className="p-6 sm:p-8 rounded-2xl bg-slate-900 border border-slate-800 text-left space-y-4 text-slate-200 text-sm leading-relaxed whitespace-pre-line shadow-xl">
-                <h3 className="text-base font-bold text-white border-b border-slate-800 pb-3">{title}</h3>
-                <div>{fallbackContent}</div>
-              </div>
-            )}
-          </div>
-        )}
-
         {/* 1. PDF Canvas Mode */}
-        {!isLoading && !loadError && !isPptxMode && (
+        {!isLoading && !isPptxMode && pdfDoc && (
           <div className="relative shadow-2xl rounded-lg overflow-hidden border border-slate-800/80 transition-transform duration-150">
             <canvas ref={canvasRef} className="block max-w-full h-auto bg-white" />
           </div>
         )}
 
         {/* 2. PPTX High-Fidelity Slide Presentation Mode */}
-        {!isLoading && !loadError && isPptxMode && activeSlide && (
-          <div className="w-full max-w-4xl aspect-[16/10] bg-slate-900/90 rounded-2xl border border-slate-800 p-8 sm:p-12 flex flex-col justify-between shadow-2xl text-left relative overflow-hidden">
-            {/* Subtle slide background watermark */}
-            <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none">
-              <Presentation className="h-48 w-48 text-white" />
-            </div>
-
+        {!isLoading && isPptxMode && activeSlide && (
+          <div className="w-full max-w-4xl aspect-[16/10] bg-slate-900/95 rounded-2xl border border-slate-800 p-8 sm:p-12 flex flex-col justify-between shadow-2xl text-left relative overflow-hidden">
             {/* Slide Title */}
             <div className="space-y-2 relative z-10">
               <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-[#3B82F6]">
@@ -495,15 +526,27 @@ export const DocumentCanvasViewbox = ({
                 </ul>
               ) : (
                 <div className="text-slate-300 text-sm sm:text-base leading-relaxed whitespace-pre-line font-medium">
-                  {activeSlide.allLines.join('\n\n')}
+                  {activeSlide.allLines?.join('\n\n')}
                 </div>
               )}
             </div>
 
-            {/* Slide Footer */}
-            <div className="pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-500 relative z-10">
-              <span className="font-semibold text-slate-400">{title}</span>
-              <span>ACFIT Academy</span>
+            {/* Slide Minimal Header/Footer */}
+            <div className="pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400 relative z-10">
+              <span className="font-semibold text-slate-300">{title}</span>
+              <span className="font-mono text-slate-500">ACFIT Professional</span>
+            </div>
+          </div>
+        )}
+
+        {/* 3. Document Reading Viewbox (Clean content layout when canvas PDF not loaded or direct document text) */}
+        {!isLoading && !pdfDoc && !isPptxMode && (
+          <div className="w-full max-w-4xl bg-white text-slate-900 rounded-2xl shadow-2xl p-8 sm:p-14 space-y-6 text-left my-auto">
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 border-b border-slate-200 pb-4">
+              {title}
+            </h1>
+            <div className="text-slate-800 text-sm sm:text-base leading-relaxed whitespace-pre-line font-sans">
+              {fallbackContent || 'Document content is currently being prepared.'}
             </div>
           </div>
         )}

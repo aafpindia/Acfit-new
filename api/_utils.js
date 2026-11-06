@@ -38,7 +38,7 @@ export function sendResponse(res, statusCode, data) {
   res.end(JSON.stringify(data));
 }
 
-export function handleCors(req, res, allowedMethods = 'POST, GET, OPTIONS') {
+export function handleCors(req, res, allowedMethods = 'POST, GET, OPTIONS, DELETE') {
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
     res.setHeader('Access-Control-Allow-Origin', '*');

@@ -29,8 +29,8 @@ export const fetchUsers = async () => {
           bio: p.bio || '',
           role: (p.role || 'user').toLowerCase(),
           status: p.status || 'active',
-          is_deleted: Boolean(p.is_deleted),
-          deleted_at: p.deleted_at || null,
+          is_deleted: p.status === 'suspended',
+          deleted_at: p.status === 'suspended' ? (p.deleted_at || p.created_at || new Date().toISOString()) : null,
           avatarUrl: p.avatar_url || null,
           createdAt: p.created_at || new Date().toISOString(),
           source: 'database'
@@ -86,15 +86,15 @@ export const fetchUsers = async () => {
         phone: existing.phone || u.phone || '',
         location: existing.location || u.location || '',
         bio: existing.bio || u.bio || '',
-        is_deleted: existing.is_deleted !== undefined ? existing.is_deleted : Boolean(u.is_deleted),
-        deleted_at: existing.deleted_at || u.deleted_at || null,
-        status: existing.status || u.status || 'active'
+        status: existing.status || u.status || 'active',
+        is_deleted: (existing.status || u.status) === 'suspended',
+        deleted_at: (existing.status || u.status) === 'suspended' ? (existing.deleted_at || u.deleted_at || new Date().toISOString()) : null
       });
     }
   });
 
   // Cross-check with revoked blacklist so revoked users are flagged as archived/suspended
-  // If the user's database status is active and not deleted, the database takes precedence (un-revoked / restored)
+  // If the user's database status is active, the database takes precedence (un-revoked / restored)
   try {
     const revokedRaw = localStorage.getItem('_lms_revoked_users');
     if (revokedRaw) {
@@ -105,17 +105,19 @@ export const fetchUsers = async () => {
         if (!revMail || revMail === 'admin@gmail.com') return false; // Admin is never in revoked list
         if (mergedMap.has(revMail)) {
           const usr = mergedMap.get(revMail);
-          // If Supabase DB marked this user as active & !is_deleted, the DB takes precedence: user was restored
-          if (usr.source === 'database' && usr.status === 'active' && !usr.is_deleted) {
+          // If Supabase DB marked this user as active, the DB takes precedence: user was restored
+          if (usr.source === 'database' && usr.status === 'active') {
             listChanged = true;
             return false; // remove from revoked list
           }
-          mergedMap.set(revMail, {
-            ...usr,
-            status: 'suspended',
-            is_deleted: true,
-            deleted_at: usr.deleted_at || r.revokedAt || new Date().toISOString()
-          });
+          if (usr.status === 'suspended') {
+            mergedMap.set(revMail, {
+              ...usr,
+              status: 'suspended',
+              is_deleted: true,
+              deleted_at: usr.deleted_at || r.revokedAt || new Date().toISOString()
+            });
+          }
         }
         return true;
       });
@@ -237,20 +239,38 @@ export const createUser = async ({ email, fullName, role = 'user', status = 'act
         .eq('email', cleanEmail)
         .maybeSingle();
 
-      const targetId = existing?.id || crypto.randomUUID();
+      let profileData = null;
+      let profileErr = null;
 
-      const { data: profileData, error: profileErr } = await supabase
-        .from('profiles')
-        .upsert({
-          id: targetId,
-          email: cleanEmail,
-          full_name: cleanName,
-          role: cleanRole,
-          status: status || 'active',
-          created_at: existing?.created_at || new Date().toISOString(),
-        }, { onConflict: 'email' })
-        .select()
-        .maybeSingle();
+      if (existing?.id) {
+        const res = await supabase
+          .from('profiles')
+          .update({
+            full_name: cleanName,
+            role: cleanRole,
+            status: status || 'active',
+          })
+          .eq('id', existing.id)
+          .select()
+          .maybeSingle();
+        profileData = res.data;
+        profileErr = res.error;
+      } else {
+        const res = await supabase
+          .from('profiles')
+          .insert({
+            id: targetId,
+            email: cleanEmail,
+            full_name: cleanName,
+            role: cleanRole,
+            status: status || 'active',
+            created_at: new Date().toISOString(),
+          })
+          .select()
+          .maybeSingle();
+        profileData = res.data;
+        profileErr = res.error;
+      }
 
       if (!profileErr && profileData) {
         return handleSuccess({
@@ -264,7 +284,7 @@ export const createUser = async ({ email, fullName, role = 'user', status = 'act
         });
       }
     } catch (dbErr) {
-      console.warn('[userService] Fallback database profile upsert notice:', dbErr);
+      console.warn('[userService] Fallback database profile insert/update notice:', dbErr);
     }
   }
 
@@ -304,13 +324,7 @@ export const updateUser = async (userId, updates, targetEmail = null) => {
       const dbUpdates = {};
       if (updates.fullName !== undefined) dbUpdates.full_name = updates.fullName;
       if (updates.role !== undefined) dbUpdates.role = updates.role.toLowerCase();
-      if (updates.status !== undefined) {
-        dbUpdates.status = updates.status;
-        if (updates.status === 'active') {
-          dbUpdates.is_deleted = false;
-          dbUpdates.deleted_at = null;
-        }
-      }
+      if (updates.status !== undefined) dbUpdates.status = updates.status;
       if (updates.avatarUrl !== undefined) dbUpdates.avatar_url = updates.avatarUrl;
       if (updates.phone !== undefined) dbUpdates.phone = updates.phone;
       if (updates.location !== undefined) dbUpdates.location = updates.location;
@@ -503,36 +517,21 @@ export const archiveUser = async (userId, email = null) => {
     console.warn('[userService] /api/admin/delete-user archive notice:', apiErr.message);
   }
 
-  // 2. Try Supabase Edge Function `delete-user`
-  if (isSupabaseConfigured && supabase.functions) {
-    try {
-      await supabase.functions.invoke('delete-user', {
-        body: { userId, email: cleanEmail, action: 'archive' },
-      });
-    } catch (funcErr) {
-      console.warn('[userService] Edge function archive invocation notice:', funcErr.message);
-    }
-  }
-
-  // 3. Fallback client-side Supabase database soft-delete (Never DELETE rows!)
+  // 2. Update Supabase database profile (status = 'suspended' preserves all historical data)
   if (isSupabaseConfigured) {
-    const archivePayload = {
-      status: 'suspended',
-      is_deleted: true,
-      deleted_at: nowIso,
-    };
+    const archivePayload = { status: 'suspended' };
     if (cleanEmail) {
       try {
         await supabase.from('profiles').update(archivePayload).eq('email', cleanEmail);
       } catch (dbErr) {
-        console.warn('[userService] DB soft-delete profile by email notice:', dbErr.message);
+        console.warn('[userService] DB archive profile by email notice:', dbErr.message);
       }
     }
     if (isUUID) {
       try {
         await supabase.from('profiles').update(archivePayload).eq('id', userId);
       } catch (dbErr) {
-        console.warn('[userService] DB soft-delete profile by UUID notice:', dbErr.message);
+        console.warn('[userService] DB archive profile by UUID notice:', dbErr.message);
       }
     }
   }
@@ -652,24 +651,9 @@ export const restoreUser = async (userId, email = null) => {
     console.warn('[userService] /api/admin/delete-user restore notice:', apiErr.message);
   }
 
-  // 2. Try Supabase Edge Function `delete-user` with restore action
-  if (isSupabaseConfigured && supabase.functions) {
-    try {
-      await supabase.functions.invoke('delete-user', {
-        body: { userId, email: cleanEmail, action: 'restore' },
-      });
-    } catch (funcErr) {
-      console.warn('[userService] Edge function restore invocation notice:', funcErr.message);
-    }
-  }
-
-  // 3. Fallback client-side Supabase database update
+  // 2. Direct client-side Supabase database update (status = 'active')
   if (isSupabaseConfigured) {
-    const restorePayload = {
-      status: 'active',
-      is_deleted: false,
-      deleted_at: null,
-    };
+    const restorePayload = { status: 'active' };
     if (cleanEmail) {
       try {
         await supabase.from('profiles').update(restorePayload).eq('email', cleanEmail);

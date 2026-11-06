@@ -278,9 +278,10 @@ export const AuthProvider = ({ children }) => {
             'postgres_changes',
             { event: 'DELETE', schema: 'public', table: 'profiles' },
             (payload) => {
+              const myEmail = (user?.email || '').toLowerCase().trim();
+              if (myEmail === 'admin@gmail.com' || (user?.role || '').toLowerCase() === 'admin') return;
               const oldId = payload.old?.id;
               const oldEmail = (payload.old?.email || '').toLowerCase().trim();
-              const myEmail = (user?.email || '').toLowerCase().trim();
               if ((oldId && oldId === user?.id) || (oldEmail && oldEmail === myEmail)) {
                 console.warn('[Realtime Security] Profile deleted from Supabase. Immediate session termination.');
                 signOut();
@@ -292,9 +293,10 @@ export const AuthProvider = ({ children }) => {
             'postgres_changes',
             { event: 'UPDATE', schema: 'public', table: 'profiles' },
             (payload) => {
+              const myEmail = (user?.email || '').toLowerCase().trim();
+              if (myEmail === 'admin@gmail.com' || (user?.role || '').toLowerCase() === 'admin') return;
               const newId = payload.new?.id;
               const newEmail = (payload.new?.email || '').toLowerCase().trim();
-              const myEmail = (user?.email || '').toLowerCase().trim();
               if ((newId && newId === user?.id) || (newEmail && newEmail === myEmail)) {
                 if (payload.new?.status === 'suspended') {
                   console.warn('[Realtime Security] Profile suspended in Supabase. Immediate session termination.');
