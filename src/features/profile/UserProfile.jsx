@@ -67,8 +67,12 @@ export const UserProfile = () => {
     }
   }, [user, syncFromSupabase]);
 
-  // User certificates synced from DB
-  const userCertificates = certificates.filter(c => c.userId === userId || c.userId === user?.email);
+  // User certificates synced from DB (unique per courseId so no duplicates are displayed)
+  const userCertificates = certificates
+    .filter(c => c.userId === userId || c.userId === user?.email)
+    .filter((cert, index, self) =>
+      index === self.findIndex((c) => c.courseId === cert.courseId)
+    );
 
   // File upload handler for Avatar Image
   const handleImageFileChange = (e) => {
@@ -190,7 +194,7 @@ export const UserProfile = () => {
                 <span className="flex items-center gap-1.5"><Mail className="h-4 w-4 text-[#2563EB]" /> {formData.email}</span>
                 <span className="flex items-center gap-1.5"><Phone className="h-4 w-4 text-emerald-600" /> {formData.phone || <span className="text-slate-400 font-normal italic">No phone added</span>}</span>
                 <span className="flex items-center gap-1.5"><MapPin className="h-4 w-4 text-rose-500" /> {formData.location || <span className="text-slate-400 font-normal italic">No location added</span>}</span>
-                <span className="flex items-center gap-1.5"><Calendar className="h-4 w-4 text-amber-500" /> Joined {user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'Recent'}</span>
+                <span className="flex items-center gap-1.5"><Calendar className="h-4 w-4 text-amber-500" /> Joined {(user?.createdAt || user?.created_at || user?.joinedAt) ? new Date(user.createdAt || user.created_at || user.joinedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recent'}</span>
               </div>
             </div>
 
@@ -272,7 +276,13 @@ export const UserProfile = () => {
                                 OFFICIAL CREDENTIAL
                               </span>
                               <span className="text-xs font-bold text-slate-500 font-mono">
-                                {cert.issueDate ? new Date(cert.issueDate).toLocaleDateString() : 'Aug 2026'}
+                                {(() => {
+                                  const rawDate = cert.issuedAt || cert.date || cert.issueDate || cert.created_at || cert.issued_at;
+                                  const d = rawDate ? new Date(rawDate) : new Date();
+                                  return isNaN(d.getTime())
+                                    ? new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                                    : d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+                                })()}
                               </span>
                             </div>
                             <h3 className="font-extrabold text-base text-slate-900 leading-snug">

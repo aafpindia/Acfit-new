@@ -91,12 +91,17 @@ export const CertificatePage = () => {
     );
   }
 
-  const issueDate = cert.issuedAt || cert.date || cert.created_at || new Date().toISOString();
-  const formattedDate = new Date(issueDate).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
+  const issueDate = cert.issuedAt || cert.date || cert.issueDate || cert.created_at || cert.issued_at || new Date().toISOString();
+  const parsedDate = new Date(issueDate);
+  const formattedDate = isNaN(parsedDate.getTime())
+    ? new Date().toLocaleString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : parsedDate.toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+      });
 
   return (
     <div className="min-h-screen graph-paper-bg font-sans py-6 px-3 sm:py-12 sm:px-6 flex flex-col items-center text-[#202124]">

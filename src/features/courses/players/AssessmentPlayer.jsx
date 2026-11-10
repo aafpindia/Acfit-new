@@ -13,7 +13,7 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
   const navigate = useNavigate();
   const { user } = useAuth();
   const { success, error } = useToast();
-  const { courses, submitAssessmentAttempt, submitFinalAssessmentAttempt, certificates } = useLmsStore();
+  const { courses, attempts = [], submitAssessmentAttempt, submitFinalAssessmentAttempt, certificates } = useLmsStore();
 
   const course = courseData || courses.find((c) => c.id === courseId);
   
@@ -142,7 +142,38 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
   const timeLimit = quiz.timerSeconds || 120;
   const passingScore = quiz.passingPercentage || 60;
 
+  // Enforce single-pass & single-certificate completion lock per user/course
+  const isAdminUser = (user?.role || '').toUpperCase() === 'ADMIN';
+  const existingCourseCert = certificates.find(
+    (c) => c.courseId === courseId && (!user?.id || c.userId === user.id || c.userId === user.email || !c.userId)
+  );
+  const matchingPassedAttempt = attempts.find((a) => {
+    if (!a.passed || a.courseId !== courseId) return false;
+    if (user?.id && a.userId && a.userId !== user.id && a.userId !== user.email) return false;
+    if (isFinal) return a.moduleId === null;
+    if (quiz?.id && (a.assessmentId === quiz.id || a.quizId === quiz.id)) return true;
+    if (resolvedModuleId && a.moduleId === resolvedModuleId && !lessonId) return true;
+    return false;
+  });
+  const finalPassedAttempt = attempts.find(
+    (a) => a.passed && a.courseId === courseId && a.moduleId === null && (!user?.id || !a.userId || a.userId === user.id || a.userId === user.email)
+  );
+
+  const isCourseAlreadyCompleted = Boolean(existingCourseCert || finalPassedAttempt);
+  const isAssessmentLockedCompleted = !isAdminUser && (isCourseAlreadyCompleted || Boolean(matchingPassedAttempt));
+
+  const formatRealTimestamp = (rawTs) => {
+    const d = rawTs ? new Date(rawTs) : new Date();
+    return isNaN(d.getTime())
+      ? new Date().toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+      : d.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  };
+
   const startQuiz = () => {
+    if (isAssessmentLockedCompleted) {
+      error('This assessment is already completed. Retaking the exam is disabled.');
+      return;
+    }
     setQuizState('quizzing');
     setCurrentQuestionIdx(0);
     setSelectedOptions({});
@@ -175,7 +206,7 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
   };
 
   const handleSubmitQuiz = async (isTimeout = false) => {
-    if (isSubmitting) return;
+    if (isSubmitting || isAssessmentLockedCompleted) return;
     if (timerRef.current) clearInterval(timerRef.current);
     setShowSubmitConfirm(false);
 
@@ -242,6 +273,73 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
 
   // INTRO STATE VIEW
   if (quizState === 'intro') {
+    if (isAssessmentLockedCompleted) {
+      const completionTs = existingCourseCert?.issuedAt || existingCourseCert?.date || existingCourseCert?.issueDate || matchingPassedAttempt?.date || finalPassedAttempt?.date;
+      const recordedScore = existingCourseCert?.score ?? matchingPassedAttempt?.score ?? finalPassedAttempt?.score;
+
+      return (
+        <Card className="border-emerald-200 bg-white font-sans max-w-xl mx-auto shadow-md rounded-2xl overflow-hidden">
+          <CardHeader className="text-center pb-2">
+            <div className="p-4 bg-emerald-50 rounded-2xl text-emerald-600 border border-emerald-200 w-fit mx-auto mb-3">
+              <CheckCircle2 className="h-8 w-8" />
+            </div>
+            <span className="inline-block mx-auto mb-2 px-3 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-mono text-[10px] font-black uppercase tracking-wider">
+              {isCourseAlreadyCompleted ? '✓ Course Completed & Certified' : '✓ Assessment Already Passed'}
+            </span>
+            <CardTitle className="text-xl font-extrabold text-[#202124]">{quiz.title}</CardTitle>
+            <CardDescription className="text-xs text-slate-500">
+              {isCourseAlreadyCompleted
+                ? 'You have already completed this course and claimed your official credential.'
+                : 'You have already cleared this assessment.'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5 pt-2">
+            <div className="grid grid-cols-2 gap-3 border border-slate-200 p-3.5 rounded-xl text-center text-xs bg-slate-50/70">
+              <div className="space-y-0.5">
+                <span className="text-slate-400 font-bold uppercase tracking-wider block text-[10px]">Completion Timestamp</span>
+                <span className="text-xs font-extrabold text-slate-800 block">
+                  {formatRealTimestamp(completionTs)}
+                </span>
+              </div>
+              <div className="space-y-0.5 border-l border-slate-200">
+                <span className="text-slate-400 font-bold uppercase tracking-wider block text-[10px]">Recorded Result</span>
+                <span className="text-sm font-extrabold text-emerald-600 block">
+                  {recordedScore !== undefined && recordedScore !== null ? `${recordedScore}% (Passed)` : 'Passed ✓'}
+                </span>
+              </div>
+            </div>
+
+            <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 p-3.5 rounded-xl leading-relaxed text-center">
+              Retaking the exam or re-claiming a certificate after completion is locked to preserve official accreditation integrity.
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2.5">
+              {existingCourseCert && (
+                <Button
+                  variant="primary"
+                  onClick={() => navigate(`/certificates/${existingCourseCert.id}`)}
+                  className="flex-1 justify-center h-10 text-xs font-extrabold bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 cursor-pointer"
+                >
+                  <Award className="h-4 w-4" />
+                  <span>View Official Certificate</span>
+                </Button>
+              )}
+              {onPassed && !isFinal && (
+                <Button
+                  variant="outline"
+                  onClick={onPassed}
+                  rightIcon={<ChevronRight className="h-4 w-4" />}
+                  className="flex-1 justify-center h-10 text-xs font-bold border-slate-200 text-slate-700 cursor-pointer"
+                >
+                  Continue Next Step
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
     return (
       <Card className="border-border bg-white font-sans max-w-xl mx-auto shadow-md">
         <CardHeader className="text-center">
@@ -506,7 +604,7 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
               <div className="space-y-0.5 border-t sm:border-t-0 sm:border-x border-slate-200 pt-2 sm:pt-0 sm:px-3">
                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Issue Date</span>
                 <span className="font-bold text-slate-800 block">
-                  {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+                  {formatRealTimestamp(existingCourseCert?.issuedAt || existingCourseCert?.date || existingCourseCert?.issueDate)}
                 </span>
               </div>
               <div className="space-y-0.5 border-t sm:border-t-0 border-slate-200 pt-2 sm:pt-0">
@@ -519,7 +617,7 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
               <Button
                 variant="primary"
                 onClick={() => {
-                  const targetCert = certificates.find(c => c.courseId === courseId && (c.userId === user?.id || !c.userId)) || certificates[certificates.length - 1];
+                  const targetCert = existingCourseCert || certificates.find(c => c.courseId === courseId && (!user?.id || c.userId === user.id || !c.userId));
                   if (targetCert) {
                     navigate(`/certificates/${targetCert.id}`);
                   } else if (onPassed) {
@@ -595,21 +693,23 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
                 {showReview ? 'Hide Answers' : 'Review Answers'}
               </Button>
 
-              <Button
-                variant="outline"
-                onClick={startQuiz}
-                leftIcon={<RotateCcw className="h-4 w-4" />}
-                className="flex-1 justify-center text-xs h-10 font-bold border-slate-200 text-slate-700"
-              >
-                Retake Quiz
-              </Button>
+              {!scoreResult.passed && !isAssessmentLockedCompleted && (
+                <Button
+                  variant="outline"
+                  onClick={startQuiz}
+                  leftIcon={<RotateCcw className="h-4 w-4" />}
+                  className="flex-1 justify-center text-xs h-10 font-bold border-slate-200 text-slate-700"
+                >
+                  Retake Quiz
+                </Button>
+              )}
 
               {scoreResult.passed && (
                 <Button
                   variant="primary"
                   onClick={() => {
                     if (isFinal) {
-                      const targetCert = certificates.find(c => c.courseId === courseId && (c.userId === user?.id || !c.userId)) || certificates[certificates.length - 1];
+                      const targetCert = existingCourseCert || certificates.find(c => c.courseId === courseId && (!user?.id || c.userId === user.id || !c.userId));
                       if (targetCert) {
                         navigate(`/certificates/${targetCert.id}`);
                         return;
@@ -620,7 +720,7 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
                   rightIcon={<ChevronRight className="h-4 w-4" />}
                   className="w-full justify-center text-xs h-10 font-bold bg-[#1E65B8] hover:bg-[#1976D2] text-white"
                 >
-                  {isFinal ? 'Claim Official Certificate 🎓' : 'Continue Next Step'}
+                  {isFinal ? 'View Official Certificate 🎓' : 'Continue Next Step'}
                 </Button>
               )}
             </div>

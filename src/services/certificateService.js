@@ -1,5 +1,16 @@
 import { supabase, isSupabaseConfigured, handleSupabaseError, handleSuccess, getCurrentUserId, isValidUuid } from './supabaseService';
 
+const mapCertificateRow = (c) => ({
+  id: c.id,
+  userId: c.user_id,
+  courseId: c.course_id,
+  fullName: c.full_name,
+  courseTitle: c.course_title,
+  date: c.issued_at,
+  issuedAt: c.issued_at,
+  issueDate: c.issued_at,
+});
+
 /**
  * Issue a certificate for the current user on a course.
  */
@@ -9,15 +20,15 @@ export const issueCertificate = async (courseId, fullName, courseTitle) => {
   const userId = await getCurrentUserId();
   if (!userId || !isValidUuid(userId) || !isValidUuid(courseId)) return { success: false, error: 'Not authenticated or valid IDs.' };
 
-  // Check if already issued
+  // Check if already issued (enforce single claim per user/course)
   const { data: existing } = await supabase
     .from('certificates')
-    .select('id')
+    .select('*')
     .eq('user_id', userId)
     .eq('course_id', courseId)
     .maybeSingle();
 
-  if (existing) return handleSuccess(existing);
+  if (existing) return handleSuccess(mapCertificateRow(existing));
 
   const { data, error } = await supabase
     .from('certificates')
@@ -32,14 +43,7 @@ export const issueCertificate = async (courseId, fullName, courseTitle) => {
 
   if (error) return handleSupabaseError(error, 'issueCertificate');
 
-  return handleSuccess({
-    id: data.id,
-    userId: data.user_id,
-    courseId: data.course_id,
-    fullName: data.full_name,
-    courseTitle: data.course_title,
-    date: data.issued_at,
-  });
+  return handleSuccess(mapCertificateRow(data));
 };
 
 /**
@@ -59,14 +63,7 @@ export const fetchUserCertificates = async () => {
 
   if (error) return handleSupabaseError(error, 'fetchUserCertificates');
 
-  return handleSuccess(data.map(c => ({
-    id: c.id,
-    userId: c.user_id,
-    courseId: c.course_id,
-    fullName: c.full_name,
-    courseTitle: c.course_title,
-    date: c.issued_at,
-  })));
+  return handleSuccess(data.map(mapCertificateRow));
 };
 
 /**
@@ -82,14 +79,7 @@ export const fetchAllCertificates = async () => {
 
   if (error) return handleSupabaseError(error, 'fetchAllCertificates');
 
-  return handleSuccess(data.map(c => ({
-    id: c.id,
-    userId: c.user_id,
-    courseId: c.course_id,
-    fullName: c.full_name,
-    courseTitle: c.course_title,
-    date: c.issued_at,
-  })));
+  return handleSuccess(data.map(mapCertificateRow));
 };
 
 /**
@@ -127,13 +117,7 @@ export const verifyCertificate = async (certId) => {
   }
 
   return handleSuccess({
-    id: data.id,
-    userId: data.user_id,
-    courseId: data.course_id,
-    fullName: data.full_name,
-    courseTitle: data.course_title,
-    date: data.issued_at,
-    issuedAt: data.issued_at,
+    ...mapCertificateRow(data),
     created_at: data.issued_at,
     score: examScore,
   });

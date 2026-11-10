@@ -764,7 +764,19 @@ export const CoursePlayer = () => {
   };
 
   const handleFinishCourse = async () => {
-    if (!isCertificateUnlocked() && user) {
+    const alreadyCertified = isCertificateUnlocked();
+    if (alreadyCertified) {
+      selectItem({ type: 'complete', id: 'course-complete' });
+      return;
+    }
+
+    if (hasRealFinalExam && !isQuizPassed(finalExamObj?.id) && !isAdmin) {
+      error('Please pass the Final Certification Exam first to complete the course and unlock your certificate.');
+      selectItem({ type: 'final', id: finalExamObj.id });
+      return;
+    }
+
+    if (user) {
       const studentName = user?.fullName || user?.name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Graduate Member');
       try {
         await submitFinalAssessmentAttempt(courseId, 100, true, user.id, studentName, finalExamObj?.id || 'course-completion');
@@ -772,7 +784,7 @@ export const CoursePlayer = () => {
         console.warn('[CoursePlayer] Course completion save warning:', e);
       }
     }
-    setActiveItem({ type: 'complete', id: 'course-complete' });
+    selectItem({ type: 'complete', id: 'course-complete' });
     success('🎓 Congratulations! You have completed the entire course!');
   };
 
@@ -780,7 +792,9 @@ export const CoursePlayer = () => {
     const nextStep = completedStepIdx !== -1 ? learningSteps[completedStepIdx + 1] : null;
     if (nextStep) {
       if (nextStep.type === 'final') {
-        if (isCourseContentComplete(extraLessonId, extraQuizModuleId)) {
+        if (isCertificateUnlocked() || isQuizPassed(finalExamObj?.id)) {
+          selectItem({ type: 'complete', id: 'course-complete' });
+        } else if (isCourseContentComplete(extraLessonId, extraQuizModuleId)) {
           navigateToStep(nextStep);
           success('🎉 All lessons & quizzes complete! Opening Final Certification Exam...');
         } else {
@@ -792,7 +806,9 @@ export const CoursePlayer = () => {
       }
     } else {
       // No next step -> reached the end of course curriculum!
-      if (!hasRealFinalExam && isCourseContentComplete(extraLessonId, extraQuizModuleId)) {
+      if (isCertificateUnlocked()) {
+        selectItem({ type: 'complete', id: 'course-complete' });
+      } else if (!hasRealFinalExam && isCourseContentComplete(extraLessonId, extraQuizModuleId)) {
         handleFinishCourse();
       } else {
         const uncompleted = findFirstUncompletedLesson();
@@ -1409,6 +1425,10 @@ export const CoursePlayer = () => {
                 <button
                   type="button"
                   onClick={() => {
+                    if (isCertificateUnlocked() || isQuizPassed(finalExamObj.id)) {
+                      selectItem({ type: 'complete', id: 'course-complete' });
+                      return;
+                    }
                     if (!isFinalUnlocked()) {
                       const remaining = totalLessonsCount - completedLessonsCount;
                       error(`Certificate Exam Locked: Complete all ${totalLessonsCount} lessons first (${remaining} remaining).`);
@@ -1419,17 +1439,23 @@ export const CoursePlayer = () => {
                   className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs font-bold border cursor-pointer text-left transition-all ${
                     activeItem?.type === 'final'
                       ? 'bg-[#2563EB] text-white border-[#2563EB] shadow-xs'
+                      : isCertificateUnlocked() || isQuizPassed(finalExamObj.id)
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-900 hover:bg-emerald-100/80'
                       : isFinalUnlocked()
                       ? 'bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100/80'
                       : 'bg-slate-100 border-slate-200 text-slate-500'
                   }`}
                 >
                   <div className="flex items-center gap-2 min-w-0 pr-2">
-                    <Award className={`h-4 w-4 shrink-0 ${activeItem?.type === 'final' ? 'text-white' : 'text-amber-500'}`} />
-                    <span className="truncate">{finalExamObj.title || 'Final Certification Exam'}</span>
+                    <Award className={`h-4 w-4 shrink-0 ${activeItem?.type === 'final' ? 'text-white' : isCertificateUnlocked() || isQuizPassed(finalExamObj.id) ? 'text-emerald-600' : 'text-amber-500'}`} />
+                    <span className="truncate">
+                      {isCertificateUnlocked() || isQuizPassed(finalExamObj.id)
+                        ? `${finalExamObj.title || 'Final Exam'} (Certified)`
+                        : (finalExamObj.title || 'Final Certification Exam')}
+                    </span>
                   </div>
-                  {isQuizPassed(finalExamObj.id) ? (
-                    <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
+                  {isCertificateUnlocked() || isQuizPassed(finalExamObj.id) ? (
+                    <CheckCircle className={`h-4 w-4 shrink-0 ${activeItem?.type === 'final' ? 'text-white' : 'text-emerald-500'}`} />
                   ) : !isFinalUnlocked() ? (
                     <Lock className="h-3.5 w-3.5 text-slate-400 shrink-0" />
                   ) : null}
@@ -1676,14 +1702,26 @@ export const CoursePlayer = () => {
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 max-w-sm mx-auto bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-lg mx-auto bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs">
                     <div>
                       <span className="text-slate-400 font-bold uppercase text-[10px] block">Completion</span>
                       <span className="text-base font-black text-emerald-600">100%</span>
                     </div>
-                    <div className="border-l border-slate-200">
+                    <div className="sm:border-x border-slate-200">
                       <span className="text-slate-400 font-bold uppercase text-[10px] block">Lessons</span>
                       <span className="text-base font-black text-slate-900">{completedLessonsCount}/{totalLessonsCount}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-bold uppercase text-[10px] block">Certified On</span>
+                      <span className="text-xs font-extrabold text-slate-900 block pt-0.5">
+                        {(() => {
+                          const rawTs = userCourseCertificate?.issuedAt || userCourseCertificate?.date || userCourseCertificate?.issueDate || userCourseCertificate?.created_at;
+                          const d = rawTs ? new Date(rawTs) : new Date();
+                          return isNaN(d.getTime())
+                            ? new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                            : d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+                        })()}
+                      </span>
                     </div>
                   </div>
 
@@ -1776,13 +1814,14 @@ export const CoursePlayer = () => {
                 }
 
                 if (activeItem?.type === 'lesson' && currentLesson) {
+                  const alreadyCertified = isCertificateUnlocked();
                   let btnText = 'Complete & Continue';
                   if (isCurrentStepDone) {
                     btnText = isLastStepInCourse && !hasRealFinalExam
-                      ? 'Finish Course & Claim Certificate 🎓'
+                      ? (alreadyCertified ? 'View Completion & Certificate 🎓' : 'Finish Course & Claim Certificate 🎓')
                       : 'Next Step';
                   } else if (isLastStepInCourse && !hasRealFinalExam) {
-                    btnText = 'Complete Course & Claim Certificate 🎓';
+                    btnText = alreadyCertified ? 'View Completion & Certificate 🎓' : 'Complete Course & Claim Certificate 🎓';
                   }
 
                   return (

@@ -648,6 +648,26 @@ export const useLmsStore = create(
       },
 
       submitAssessmentAttempt: async (courseId, moduleId, score, passed, userId, assessmentId) => {
+        const currentState = get();
+        const alreadyCertified = currentState.certificates.some(
+          (c) => c.courseId === courseId && (c.userId === userId || !userId)
+        );
+        const alreadyPassedQuiz = currentState.attempts.some(
+          (a) =>
+            a.courseId === courseId &&
+            (a.userId === userId || !userId) &&
+            a.passed &&
+            (
+              (assessmentId && (a.assessmentId === assessmentId || a.quizId === assessmentId)) ||
+              (moduleId && a.moduleId === moduleId)
+            )
+        );
+
+        if (alreadyCertified || alreadyPassedQuiz) {
+          console.warn('[lmsStore] Quiz or course already completed/passed; ignoring retake submission.');
+          return;
+        }
+
         // Optimistically update local attempts immediately
         const newAttempt = {
           userId,
@@ -674,6 +694,19 @@ export const useLmsStore = create(
       },
 
       submitFinalAssessmentAttempt: async (courseId, score, passed, userId, fullName, assessmentId) => {
+        const currentState = get();
+        const alreadyCertified = currentState.certificates.some(
+          (c) => c.courseId === courseId && (c.userId === userId || !userId)
+        );
+        const alreadyPassedFinal = currentState.attempts.some(
+          (a) => a.courseId === courseId && (a.userId === userId || !userId) && a.moduleId === null && a.passed
+        );
+
+        if (alreadyCertified || alreadyPassedFinal) {
+          console.warn('[lmsStore] Course already completed and certified; blocking duplicate exam/certificate claim.');
+          return;
+        }
+
         // Optimistically update local attempts and certificates immediately
         const nowIso = new Date().toISOString();
         const newAttempt = {
@@ -694,28 +727,25 @@ export const useLmsStore = create(
               (c) => c.courseId === courseId && c.userId === userId
             );
 
-            const targetCourse = state.courses.find((c) => c.id === courseId);
-            const certId = certIndex !== -1 
-              ? state.certificates[certIndex].id 
-              : `CERT-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-
-            const certData = {
-              id: certId,
-              userId,
-              courseId,
-              fullName: fullName || 'Graduate Student',
-              courseTitle: targetCourse?.title || 'Certified Fitness Professional',
-              date: nowIso,
-              issuedAt: nowIso,
-              created_at: nowIso,
-              score,
-              credentialId: certId
-            };
-
             if (certIndex === -1) {
+              const targetCourse = state.courses.find((c) => c.id === courseId);
+              const certId = `CERT-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+
+              const certData = {
+                id: certId,
+                userId,
+                courseId,
+                fullName: fullName || 'Graduate Student',
+                courseTitle: targetCourse?.title || 'Certified Fitness Professional',
+                date: nowIso,
+                issuedAt: nowIso,
+                issueDate: nowIso,
+                created_at: nowIso,
+                score,
+                credentialId: certId
+              };
+
               updatedCertificates.push(certData);
-            } else {
-              updatedCertificates[certIndex] = { ...state.certificates[certIndex], ...certData };
             }
           }
 
