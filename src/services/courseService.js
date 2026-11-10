@@ -325,8 +325,8 @@ export const fetchCourses = async () => {
       students: course.students || 0,
       duration: course.duration,
       thumbnail: course.thumbnail,
-      featured: course.featured,
-      published: course.published,
+      featured: Boolean(course.featured),
+      published: Boolean(course.published),
       modules: modulesWithLessons,
       finalAssessment: finalAssessment ? {
         id: finalAssessment.id,

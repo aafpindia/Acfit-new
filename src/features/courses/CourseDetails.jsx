@@ -64,13 +64,17 @@ export const CourseDetails = () => {
     user?.location.trim().length >= 2
   );
 
-  if (!course) {
+  const isAdminUser = (user?.role || '').toUpperCase() === 'ADMIN';
+
+  if (!course || (!course.published && !isAdminUser)) {
     return (
       <div className="min-h-screen flex items-center justify-center flex-col gap-4 font-sans bg-background">
         <div className="p-4 bg-primary/10 rounded-full text-primary animate-pulse">
           <BookOpen className="h-10 w-10" />
         </div>
-        <h2 className="text-xl font-black text-text-main">Program not found</h2>
+        <h2 className="text-xl font-black text-text-main">
+          {course && !course.published ? 'Program is currently unavailable (Draft)' : 'Program not found'}
+        </h2>
         <Link to="/" className="text-primary hover:underline text-xs font-bold flex items-center gap-1.5 transition-all">
           <ArrowLeft className="h-4 w-4" /> Back to Gym Syllabus Catalog
         </Link>

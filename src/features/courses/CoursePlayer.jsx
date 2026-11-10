@@ -209,6 +209,15 @@ export const CoursePlayer = () => {
         return;
       }
 
+      // Draft courses must never be accessible on the user side
+      if (course && !course.published) {
+        if (active) {
+          setIsAuthorized(false);
+          setAuthChecking(false);
+        }
+        return;
+      }
+
       const matchesCourse = (c) => {
         const str1 = String(c || '').toLowerCase();
         const str2 = String(courseId || '').toLowerCase();
@@ -618,6 +627,34 @@ export const CoursePlayer = () => {
         <p className="font-mono text-xs font-bold text-slate-500 uppercase tracking-widest">
           [ Loading Blueprint Learning Workspace... ]
         </p>
+      </div>
+    );
+  }
+
+  if (course && !course.published && !isAdmin) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center graph-paper-bg text-[#202124] p-6 font-sans text-center">
+        <div className="max-w-md bg-white border border-border rounded-2xl p-8 shadow-tactile corner-crosshair space-y-5">
+          <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-600 flex items-center justify-center mx-auto shadow-xs">
+            <Lock className="h-6 w-6" />
+          </div>
+          <div className="space-y-1">
+            <span className="sticker-tag-yellow text-[9px]">[ DRAFT COURSE ]</span>
+            <h2 className="text-xl sm:text-2xl font-black tracking-tight text-[#202124]">Program Currently Unavailable</h2>
+          </div>
+          <p className="font-mono text-xs text-slate-500 leading-relaxed">
+            This course is currently in draft mode and is not published on the learner catalog. Please check back once it has been published live.
+          </p>
+          <div className="pt-2">
+            <Button
+              variant="outline"
+              onClick={() => navigate('/app/dashboard')}
+              className="rounded-xl w-full text-xs font-mono font-bold h-11 border-border text-slate-700 hover:bg-slate-50 bg-white"
+            >
+              Back to My Dashboard
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }

@@ -60,8 +60,8 @@ export const CoursesStudent = () => {
     return totalLessons;
   };
 
-  // Filter only published courses for students, unless they are admin
-  const visibleCourses = courses.filter((c) => c.published || user?.role === 'admin');
+  // Show only live published courses in the user-side course catalog
+  const visibleCourses = courses.filter((c) => Boolean(c.published));
 
   return (
     <div className="space-y-6 font-sans">

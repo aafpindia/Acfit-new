@@ -114,11 +114,10 @@ export const LandingPage = () => {
     return () => { cancelled = true; };
   }, [syncFromSupabase]);
 
-  // Combined real-time course list (prefer live API response, fallback to store if API returned empty)
+  // Only show live PUBLISHED courses on the public landing page (drafts remain hidden)
   const activeCourses = useMemo(() => {
-    if (liveCourses && liveCourses.length > 0) return liveCourses;
-    if (storeCourses && storeCourses.length > 0) return storeCourses;
-    return [];
+    const source = (liveCourses && liveCourses.length > 0) ? liveCourses : (storeCourses || []);
+    return source.filter((c) => Boolean(c.published));
   }, [liveCourses, storeCourses]);
 
   // Modal States

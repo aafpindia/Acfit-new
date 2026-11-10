@@ -49,9 +49,12 @@ export const UserDashboard = () => {
     return strId === uId || strId === uEmail;
   };
 
+  // Only published courses are visible in the user dashboard (hide drafts)
+  const publishedCourses = courses.filter((c) => Boolean(c.published));
+
   // Enrolled courses directly from user's database enrollments
   const userEnrolled = enrollments.filter((e) => isUserMatch(e.userId));
-  const enrolledCourses = courses.filter((c) =>
+  const enrolledCourses = publishedCourses.filter((c) =>
     userEnrolled.some((e) => e.courseId === c.id)
   );
 
@@ -411,26 +414,32 @@ export const UserDashboard = () => {
             </div>
 
             {enrolledCourses.length === 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {courses.slice(0, 2).map((course) => (
-                  <div key={course.id} className="tactile-card rounded-2xl bg-white p-4 space-y-3 corner-crosshair">
-                    <img src={course.thumbnail} alt={course.title} className="w-full h-32 object-cover rounded-xl border border-border" />
-                    <div className="space-y-1">
-                      <span className="sticker-tag-yellow text-[9px] uppercase">{course.category}</span>
-                      <h3 className="font-bold text-xs text-[#202124] truncate">{course.title}</h3>
-                      <span className="font-mono text-[10px] text-slate-500 block">₹{course.price > 0 ? course.price : 'Free'}</span>
+              publishedCourses.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {publishedCourses.slice(0, 2).map((course) => (
+                    <div key={course.id} className="tactile-card rounded-2xl bg-white p-4 space-y-3 corner-crosshair">
+                      <img src={course.thumbnail} alt={course.title} className="w-full h-32 object-cover rounded-xl border border-border" />
+                      <div className="space-y-1">
+                        <span className="sticker-tag-yellow text-[9px] uppercase">{course.category}</span>
+                        <h3 className="font-bold text-xs text-[#202124] truncate">{course.title}</h3>
+                        <span className="font-mono text-[10px] text-slate-500 block">₹{course.price > 0 ? course.price : 'Free'}</span>
+                      </div>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => navigate(`/courses/${course.id}`)}
+                        className="tactile-btn-primary w-full text-xs font-mono font-bold h-8 rounded-lg bg-primary text-white"
+                      >
+                        View Blueprint →
+                      </Button>
                     </div>
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={() => navigate(`/courses/${course.id}`)}
-                      className="tactile-btn-primary w-full text-xs font-mono font-bold h-8 rounded-lg bg-primary text-white"
-                    >
-                      View Blueprint →
-                    </Button>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="tactile-card rounded-2xl bg-white p-6 text-center space-y-2">
+                  <span className="font-mono text-xs text-slate-500">No published courses available yet.</span>
+                </div>
+              )
             ) : (
               <div className="grid grid-cols-1 gap-4">
                 {enrolledCourses.map((course) => {

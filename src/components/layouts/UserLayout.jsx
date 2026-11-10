@@ -72,7 +72,7 @@ export const UserLayout = () => {
   const userEnrolledCourseIds = useMemo(() => userEnrolled.map(e => e.courseId || e.course_id), [userEnrolled]);
   const userEnrolledCourseTitles = useMemo(() => {
     return courses
-      .filter(c => userEnrolledCourseIds.includes(c.id))
+      .filter(c => Boolean(c.published) && userEnrolledCourseIds.includes(c.id))
       .map(c => (c.title || '').toLowerCase());
   }, [courses, userEnrolledCourseIds]);
 
@@ -164,7 +164,10 @@ export const UserLayout = () => {
     }
     const query = searchQuery.toLowerCase();
     const matched = (courses || []).filter(
-      (c) => c.title.toLowerCase().includes(query) || (c.category && c.category.toLowerCase().includes(query))
+      (c) => Boolean(c.published) && (
+        (c.title || '').toLowerCase().includes(query) ||
+        (c.category && c.category.toLowerCase().includes(query))
+      )
     );
     setSearchResults(matched.slice(0, 5));
   }, [searchQuery, courses]);

@@ -10,7 +10,10 @@ export const UserProgress = () => {
   const { courses, enrollments, progress, certificates } = useLmsStore();
   const navigate = useNavigate();
 
-  const userEnrollments = user ? enrollments.filter(e => e.userId === user.id || e.userId === user.email) : [];
+  const publishedCourseIds = new Set(courses.filter(c => Boolean(c.published)).map(c => c.id));
+  const userEnrollments = user
+    ? enrollments.filter(e => (e.userId === user.id || e.userId === user.email) && publishedCourseIds.has(e.courseId))
+    : [];
   const userCertificates = user ? certificates.filter(c => c.userId === user.id || c.userId === user.email) : [];
 
   const getUserCourseProgress = (courseId) => {
