@@ -72,6 +72,31 @@ export const CoursePlayer = () => {
   const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'checklist' | 'discussion' | 'resources'
   const [completedTasks, setCompletedTasks] = useState({});
 
+  // Track sub-item completions within lessons: { [lessonId]: { [tabId]: true } }
+  const [completedLessonSubItems, setCompletedLessonSubItems] = useState(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const storageKey = `_lms_subitems_${courseId}_${user?.id || 'guest'}`;
+      const saved = localStorage.getItem(storageKey);
+      return saved ? JSON.parse(saved) : {};
+    } catch (_) {
+      return {};
+    }
+  });
+
+  const markSubItemComplete = (lessonId, tabId) => {
+    if (!lessonId || !tabId) return;
+    setCompletedLessonSubItems((prev) => {
+      const lessonItems = { ...(prev[lessonId] || {}), [tabId]: true };
+      const updated = { ...prev, [lessonId]: lessonItems };
+      try {
+        const storageKey = `_lms_subitems_${courseId}_${user?.id || 'guest'}`;
+        localStorage.setItem(storageKey, JSON.stringify(updated));
+      } catch (_) {}
+      return updated;
+    });
+  };
+
   // Helper to select a syllabus item and auto-close sidebar on mobile
   const selectItem = (item) => {
     setActiveItem(item);
@@ -341,15 +366,35 @@ export const CoursePlayer = () => {
     return tabs;
   }, [currentLesson]);
 
-  // Keep selected tab valid for current lesson (Hook called unconditionally)
+  const isTabCompleted = (lessonId, tabId) => {
+    if (!lessonId || !tabId) return false;
+    if (userProgress[lessonId]) return true;
+    return Boolean(completedLessonSubItems[lessonId]?.[tabId]);
+  };
+
+  const isTabUnlocked = (lessonId, tabId, tabIndex) => {
+    if (!lessonId) return true;
+    if (userProgress[lessonId]) return true;
+    if (tabIndex === 0) return true;
+    const prevTab = lessonMediaTabs[tabIndex - 1];
+    if (!prevTab) return true;
+    return isTabCompleted(lessonId, prevTab.id);
+  };
+
+  // Keep selected tab valid and advance to first uncompleted tab for current lesson (Hook called unconditionally)
   useEffect(() => {
-    if (lessonMediaTabs.length > 0) {
-      const exists = lessonMediaTabs.some((t) => t.id === selectedLessonMediaTab);
-      if (!exists) {
-        setSelectedLessonMediaTab(lessonMediaTabs[0].id);
+    if (lessonMediaTabs.length > 0 && currentLesson) {
+      const currentIdx = lessonMediaTabs.findIndex((t) => t.id === selectedLessonMediaTab);
+      const isCurrentUnlocked = currentIdx !== -1 && isTabUnlocked(currentLesson.id, selectedLessonMediaTab, currentIdx);
+
+      if (!isCurrentUnlocked) {
+        const firstAvailable = lessonMediaTabs.find(
+          (t, idx) => !isTabCompleted(currentLesson.id, t.id) && isTabUnlocked(currentLesson.id, t.id, idx)
+        ) || lessonMediaTabs[0];
+        setSelectedLessonMediaTab(firstAvailable.id);
       }
     }
-  }, [currentLesson?.id, lessonMediaTabs, selectedLessonMediaTab]);
+  }, [currentLesson?.id, lessonMediaTabs]);
 
   if (authChecking || courseLoading) {
     return (
@@ -482,6 +527,34 @@ export const CoursePlayer = () => {
       markLessonComplete(courseId, currentLessonId, user.id);
       success('Lesson marked complete!');
       loadNextItem(currentLessonId);
+    }
+  };
+
+  const handleSubItemOrLessonComplete = () => {
+    if (!currentLesson) return;
+
+    if (lessonMediaTabs.length <= 1) {
+      handleMarkComplete();
+      return;
+    }
+
+    const currentTabIndex = lessonMediaTabs.findIndex((t) => t.id === selectedLessonMediaTab);
+    if (currentTabIndex === -1) {
+      handleMarkComplete();
+      return;
+    }
+
+    // Mark current sub-item complete
+    markSubItemComplete(currentLesson.id, selectedLessonMediaTab);
+
+    // If there is another sub-item in this lesson, advance to it
+    if (currentTabIndex < lessonMediaTabs.length - 1) {
+      const nextTab = lessonMediaTabs[currentTabIndex + 1];
+      setSelectedLessonMediaTab(nextTab.id);
+      success(`✓ ${lessonMediaTabs[currentTabIndex].label} completed! Next: ${nextTab.label}`);
+    } else {
+      // Last sub-item in this lesson -> complete the entire lesson!
+      handleMarkComplete();
     }
   };
 
@@ -1038,43 +1111,86 @@ export const CoursePlayer = () => {
                     <span className="hidden sm:inline">Full Screen</span>
                   </button>
 
-                  <Button
-                    type="button"
-                    onClick={handleMarkComplete}
-                    className={`rounded-xl text-xs font-bold h-9 sm:h-10 px-3.5 sm:px-4 gap-1.5 sm:gap-2 cursor-pointer transition-all ${
-                      userProgress[currentLesson.id]
-                        ? 'bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100'
-                        : 'bg-[#2563EB] hover:bg-[#1D4ED8] text-white shadow-xs font-extrabold'
-                    }`}
-                  >
-                    <CheckCircle className="h-4 w-4 shrink-0" />
-                    <span>{userProgress[currentLesson.id] ? 'Completed ✓' : 'Mark Complete & Next'}</span>
-                  </Button>
+                  {(() => {
+                    const currentTabIndex = lessonMediaTabs.findIndex((t) => t.id === selectedLessonMediaTab);
+                    const isMulti = lessonMediaTabs.length > 1;
+                    const isLessonDone = Boolean(userProgress[currentLesson.id]);
+                    const isCurrentTabDone = isTabCompleted(currentLesson.id, selectedLessonMediaTab);
+                    const isLastTab = currentTabIndex === lessonMediaTabs.length - 1;
+
+                    let btnText = isLessonDone ? 'Completed ✓' : 'Mark Complete & Next';
+                    if (!isLessonDone && isMulti) {
+                      if (!isLastTab) {
+                        btnText = isCurrentTabDone ? 'Next Material →' : 'Complete & Next Material →';
+                      } else {
+                        btnText = 'Complete Lesson & Next →';
+                      }
+                    }
+
+                    return (
+                      <Button
+                        type="button"
+                        onClick={isMulti ? handleSubItemOrLessonComplete : handleMarkComplete}
+                        className={`rounded-xl text-xs font-bold h-9 sm:h-10 px-3.5 sm:px-4 gap-1.5 sm:gap-2 cursor-pointer transition-all ${
+                          isLessonDone
+                            ? 'bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                            : 'bg-[#2563EB] hover:bg-[#1D4ED8] text-white shadow-xs font-extrabold'
+                        }`}
+                      >
+                        <CheckCircle className="h-4 w-4 shrink-0" />
+                        <span>{btnText}</span>
+                      </Button>
+                    );
+                  })()}
                 </div>
               </div>
 
-              {/* ─── MULTIMEDIA SWITCHER TABS (When lesson combines 2+ media formats) ─── */}
+              {/* ─── MULTIMEDIA SWITCHER TABS (Sequential one-by-one completion) ─── */}
               {lessonMediaTabs.length > 1 && (
                 <div className={`p-1.5 bg-slate-900 rounded-2xl border border-slate-800 shadow-md flex items-center gap-2 overflow-x-auto ${
                   isFullscreenMode ? 'm-3' : ''
                 }`}>
-                  {lessonMediaTabs.map((tab) => {
+                  {lessonMediaTabs.map((tab, idx) => {
                     const Icon = tab.icon;
                     const isActive = selectedLessonMediaTab === tab.id;
+                    const isDone = isTabCompleted(currentLesson.id, tab.id);
+                    const isUnlocked = isTabUnlocked(currentLesson.id, tab.id, idx);
+
                     return (
                       <button
                         key={tab.id}
                         type="button"
-                        onClick={() => setSelectedLessonMediaTab(tab.id)}
-                        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                        disabled={!isUnlocked}
+                        onClick={() => {
+                          if (!isUnlocked) {
+                            error('Please complete the previous material first to unlock this step.');
+                            return;
+                          }
+                          setSelectedLessonMediaTab(tab.id);
+                        }}
+                        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
                           isActive
-                            ? 'bg-[#2563EB] text-white shadow-sm'
-                            : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
+                            ? 'bg-[#2563EB] text-white shadow-sm cursor-pointer'
+                            : isDone
+                            ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-900/40 cursor-pointer'
+                            : isUnlocked
+                            ? 'text-slate-300 hover:text-white hover:bg-slate-800/80 cursor-pointer'
+                            : 'text-slate-500 bg-slate-900/50 opacity-60 cursor-not-allowed'
                         }`}
+                        title={!isUnlocked ? 'Complete previous material to unlock' : tab.label}
                       >
-                        <Icon className="h-3.5 w-3.5" />
+                        {isDone ? (
+                          <CheckCircle className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                        ) : !isUnlocked ? (
+                          <Lock className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                        ) : (
+                          <Icon className="h-3.5 w-3.5 shrink-0" />
+                        )}
                         <span>{tab.label}</span>
-                        {tab.count && (
+                        {isDone && (
+                          <span className="text-[10px] font-mono text-emerald-400">✓</span>
+                        )}
+                        {tab.count && !isDone && (
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${isActive ? 'bg-blue-700 text-white' : 'bg-slate-800 text-slate-300'}`}>
                             {tab.count}
                           </span>
@@ -1107,7 +1223,7 @@ export const CoursePlayer = () => {
                             moduleId={activeItem.moduleId}
                             courseId={courseId}
                             isFinal={false}
-                            onPassed={handleMarkComplete}
+                            onPassed={handleSubItemOrLessonComplete}
                             lessonId={currentLesson.id}
                           />
                         ) : selectedLessonMediaTab === 'video' ? (
@@ -1117,36 +1233,75 @@ export const CoursePlayer = () => {
                               bunnyVideoId: currentLesson.bunnyVideoId || videoItem?.bunnyVideoId || '',
                               title: currentLesson.title
                             }}
-                            onComplete={handleMarkComplete}
+                            onComplete={handleSubItemOrLessonComplete}
                           />
                         ) : selectedLessonMediaTab === 'ppt' ? (
-                          <PptPlayer
-                            content={{
-                              title: currentLesson.title,
-                              fileUrl: currentLesson.pptUrl || pptItem?.fileUrl || (currentLesson.type === 'ppt' ? currentLesson.fileUrl : '') || '',
-                              pdfUrl: currentLesson.pptPdfUrl || pptItem?.pdfUrl || (currentLesson.type === 'ppt' ? currentLesson.pdfUrl : '') || '',
-                              fileName: currentLesson.pptFileName || pptItem?.fileName || currentLesson.fileName || 'presentation.pptx',
-                              slides: currentLesson.slides || pptItem?.slides || [],
-                              duration: currentLesson.duration || pptItem?.duration || ''
-                            }}
-                            onComplete={handleMarkComplete}
-                          />
+                          <div className="space-y-3">
+                            <PptPlayer
+                              content={{
+                                title: currentLesson.title,
+                                fileUrl: currentLesson.pptUrl || pptItem?.fileUrl || (currentLesson.type === 'ppt' ? currentLesson.fileUrl : '') || '',
+                                pdfUrl: currentLesson.pptPdfUrl || pptItem?.pdfUrl || (currentLesson.type === 'ppt' ? currentLesson.pdfUrl : '') || '',
+                                fileName: currentLesson.pptFileName || pptItem?.fileName || currentLesson.fileName || 'presentation.pptx',
+                                slides: currentLesson.slides || pptItem?.slides || [],
+                                duration: currentLesson.duration || pptItem?.duration || ''
+                              }}
+                              onComplete={handleSubItemOrLessonComplete}
+                            />
+                            {lessonMediaTabs.length > 1 && !isFullscreenMode && (
+                              <div className="bg-slate-900/90 text-white p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                                <span className="text-xs text-slate-300 font-medium">Finished reviewing this presentation?</span>
+                                <Button
+                                  type="button"
+                                  onClick={handleSubItemOrLessonComplete}
+                                  className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-bold h-8 px-3.5 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs"
+                                >
+                                  <span>{lessonMediaTabs.findIndex(t => t.id === 'ppt') === lessonMediaTabs.length - 1 ? 'Complete Lesson & Next →' : 'Complete & Next Material →'}</span>
+                                </Button>
+                              </div>
+                            )}
+                          </div>
                         ) : selectedLessonMediaTab === 'pdf' ? (
-                          <PdfPlayer
-                            content={{
-                              title: currentLesson.title,
-                              fileUrl: currentLesson.pdfUrl || pdfItem?.fileUrl || (currentLesson.type === 'pdf' ? currentLesson.fileUrl : '') || '',
-                              fileName: currentLesson.pdfFileName || pdfItem?.fileName || currentLesson.fileName || 'document.pdf',
-                              duration: currentLesson.duration || pdfItem?.duration || ''
-                            }}
-                            onComplete={handleMarkComplete}
-                          />
+                          <div className="space-y-3">
+                            <PdfPlayer
+                              content={{
+                                title: currentLesson.title,
+                                fileUrl: currentLesson.pdfUrl || pdfItem?.fileUrl || (currentLesson.type === 'pdf' ? currentLesson.fileUrl : '') || '',
+                                fileName: currentLesson.pdfFileName || pdfItem?.fileName || currentLesson.fileName || 'document.pdf',
+                                duration: currentLesson.duration || pdfItem?.duration || ''
+                              }}
+                              onComplete={handleSubItemOrLessonComplete}
+                            />
+                            {lessonMediaTabs.length > 1 && !isFullscreenMode && (
+                              <div className="bg-slate-900/90 text-white p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                                <span className="text-xs text-slate-300 font-medium">Finished reading this document?</span>
+                                <Button
+                                  type="button"
+                                  onClick={handleSubItemOrLessonComplete}
+                                  className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-bold h-8 px-3.5 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs"
+                                >
+                                  <span>{lessonMediaTabs.findIndex(t => t.id === 'pdf') === lessonMediaTabs.length - 1 ? 'Complete Lesson & Next →' : 'Complete & Next Material →'}</span>
+                                </Button>
+                              </div>
+                            )}
+                          </div>
                         ) : selectedLessonMediaTab === 'text' ? (
                           <div className="p-6 sm:p-8 bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-sm leading-relaxed whitespace-pre-wrap font-sans text-sm">
                             <p>{lessonNotes || 'No written notes provided for this lesson.'}</p>
+                            {lessonMediaTabs.length > 1 && (
+                              <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-end">
+                                <Button
+                                  type="button"
+                                  onClick={handleSubItemOrLessonComplete}
+                                  className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-bold h-9 px-4 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs"
+                                >
+                                  <span>{lessonMediaTabs.findIndex(t => t.id === 'text') === lessonMediaTabs.length - 1 ? 'Complete Lesson & Next →' : 'Complete Notes & Next Material →'}</span>
+                                </Button>
+                              </div>
+                            )}
                           </div>
                         ) : (
-                          renderContentItem(currentLesson.type, currentLesson.content || currentLesson, currentLesson.title, handleMarkComplete, currentLesson)
+                          renderContentItem(currentLesson.type, currentLesson.content || currentLesson, currentLesson.title, handleSubItemOrLessonComplete, currentLesson)
                         )}
                       </div>
                     </div>
@@ -1207,20 +1362,35 @@ export const CoursePlayer = () => {
             <span>Prev</span>
           </button>
 
-          {activeItem?.type === 'lesson' && currentLesson && (
-            <button
-              type="button"
-              onClick={handleMarkComplete}
-              className={`h-9 px-3 flex-1 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-xs cursor-pointer truncate transition-all ${
-                userProgress[currentLesson.id]
-                  ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
-                  : 'bg-[#2563EB] hover:bg-[#1D4ED8] text-white'
-              }`}
-            >
-              <CheckCircle className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{userProgress[currentLesson.id] ? 'Completed ✓' : 'Mark Complete'}</span>
-            </button>
-          )}
+          {activeItem?.type === 'lesson' && currentLesson && (() => {
+            const currentTabIndex = lessonMediaTabs.findIndex((t) => t.id === selectedLessonMediaTab);
+            const isMulti = lessonMediaTabs.length > 1;
+            const isLessonDone = Boolean(userProgress[currentLesson.id]);
+            const isCurrentTabDone = isTabCompleted(currentLesson.id, selectedLessonMediaTab);
+            const isLastTab = currentTabIndex === lessonMediaTabs.length - 1;
+
+            let btnText = isLessonDone ? 'Completed ✓' : 'Mark Complete';
+            if (!isLessonDone && isMulti) {
+              btnText = !isLastTab
+                ? (isCurrentTabDone ? 'Next Material →' : 'Complete & Next →')
+                : 'Complete Lesson & Next →';
+            }
+
+            return (
+              <button
+                type="button"
+                onClick={isMulti ? handleSubItemOrLessonComplete : handleMarkComplete}
+                className={`h-9 px-3 flex-1 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-xs cursor-pointer truncate transition-all ${
+                  isLessonDone
+                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
+                    : 'bg-[#2563EB] hover:bg-[#1D4ED8] text-white'
+                }`}
+              >
+                <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{btnText}</span>
+              </button>
+            );
+          })()}
 
           <button
             type="button"
