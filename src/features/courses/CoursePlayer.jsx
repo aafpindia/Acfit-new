@@ -68,6 +68,7 @@ export const CoursePlayer = () => {
   });
   const [isFullscreenMode, setIsFullscreenMode] = useState(false);
   const [activeItem, setActiveItem] = useState(null); // { type: 'lesson' | 'quiz' | 'final', id, moduleId }
+  const [selectedLessonMediaTab, setSelectedLessonMediaTab] = useState('video');
   const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'checklist' | 'discussion' | 'resources'
   const [completedTasks, setCompletedTasks] = useState({});
 
@@ -468,6 +469,80 @@ export const CoursePlayer = () => {
       }
     });
   }
+
+  // Multi-Media tabs available in current lesson (Combined Video, PPT, PDF, Text Notes & Quiz)
+  const lessonMediaTabs = useMemo(() => {
+    if (!currentLesson) return [];
+    const tabs = [];
+
+    const hasVideo = Boolean(
+      currentLesson.videoUrl ||
+      currentLesson.bunnyVideoId ||
+      currentLesson.type === 'video' ||
+      currentLesson.items?.some((i) => i.type === 'video')
+    );
+    if (hasVideo) {
+      tabs.push({ id: 'video', label: 'Video Lecture', icon: Play, count: null });
+    }
+
+    const hasPpt = Boolean(
+      currentLesson.pptUrl ||
+      currentLesson.type === 'ppt' ||
+      (currentLesson.fileUrl && (currentLesson.fileUrl.endsWith('.ppt') || currentLesson.fileUrl.endsWith('.pptx'))) ||
+      currentLesson.items?.some((i) => i.type === 'ppt')
+    );
+    if (hasPpt) {
+      tabs.push({ id: 'ppt', label: 'Presentation', icon: BookOpen, count: null });
+    }
+
+    const hasPdf = Boolean(
+      currentLesson.pdfUrl ||
+      currentLesson.type === 'pdf' ||
+      (currentLesson.fileUrl && currentLesson.fileUrl.endsWith('.pdf')) ||
+      currentLesson.items?.some((i) => i.type === 'pdf')
+    );
+    if (hasPdf) {
+      tabs.push({ id: 'pdf', label: 'PDF Manual', icon: FileText, count: null });
+    }
+
+    const hasText = Boolean(
+      (currentLesson.body && currentLesson.body.trim()) ||
+      currentLesson.type === 'text' ||
+      currentLesson.type === 'rich-text' ||
+      currentLesson.items?.some((i) => i.type === 'text' || i.type === 'rich-text')
+    );
+    if (hasText) {
+      tabs.push({ id: 'text', label: 'Study Notes', icon: FileText, count: null });
+    }
+
+    const quizQuestions = currentLesson.questions || currentLesson.assessment?.questions || currentLesson.items?.find((i) => i.type === 'quiz')?.questions || [];
+    const hasQuiz = Boolean(
+      quizQuestions.length > 0 ||
+      currentLesson.assessment ||
+      currentLesson.type === 'quiz' ||
+      currentLesson.items?.some((i) => i.type === 'quiz')
+    );
+    if (hasQuiz) {
+      tabs.push({
+        id: 'quiz',
+        label: 'Lesson Quiz',
+        icon: Award,
+        count: quizQuestions.length > 0 ? `${quizQuestions.length} Qs` : null
+      });
+    }
+
+    return tabs;
+  }, [currentLesson]);
+
+  // Keep selected tab valid for current lesson
+  useEffect(() => {
+    if (lessonMediaTabs.length > 0) {
+      const exists = lessonMediaTabs.some((t) => t.id === selectedLessonMediaTab);
+      if (!exists) {
+        setSelectedLessonMediaTab(lessonMediaTabs[0].id);
+      }
+    }
+  }, [currentLesson?.id, lessonMediaTabs, selectedLessonMediaTab]);
 
   const getLessonIcon = (type) => {
     switch (type) {
@@ -976,42 +1051,119 @@ export const CoursePlayer = () => {
                 </div>
               </div>
 
-              {/* Dynamic Content Player View Frame (Full Screen Capable) */}
-              <div className={`transition-all duration-300 ${
-                isFullscreenMode
-                  ? 'flex-1 w-full bg-black p-0 relative overflow-y-auto flex flex-col justify-center'
-                  : 'rounded-2xl bg-black border border-slate-800/80 shadow-2xl overflow-hidden relative'
-              }`}>
-                <div className={isFullscreenMode ? 'w-full h-full min-h-0 bg-black flex flex-col justify-center' : 'bg-black rounded-2xl overflow-hidden'}>
-                  {currentLesson.type === 'quiz' || currentLesson.assessment || currentLesson.items?.[0]?.type === 'quiz' ? (
-                    <AssessmentPlayer
-                      moduleId={activeItem.moduleId}
-                      courseId={courseId}
-                      isFinal={false}
-                      onPassed={handleMarkComplete}
-                      lessonId={currentLesson.id}
-                    />
-                  ) : Array.isArray(currentLesson.items) && currentLesson.items.length > 0 ? (
-                    <div className="space-y-6 p-4">
-                      {currentLesson.items.map((item, idx) => (
-                        <div key={item.id || idx} className="space-y-2">
-                          {currentLesson.items.length > 1 && (
-                            <div className="flex items-center gap-2 px-2 text-slate-400 font-mono text-xs font-bold">
-                              <span className="w-5 h-5 rounded-md bg-slate-800 text-white flex items-center justify-center text-[10px]">
-                                {idx + 1}
-                              </span>
-                              <span>{item.title || 'Content Item'}</span>
-                            </div>
-                          )}
-                          {renderContentItem(item.type || currentLesson.type, item.content || item, item.title || currentLesson.title, handleMarkComplete, { ...currentLesson, ...item })}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    renderContentItem(currentLesson.type, currentLesson.content || currentLesson, currentLesson.title, handleMarkComplete, currentLesson)
-                  )}
+              {/* ─── MULTIMEDIA SWITCHER TABS (When lesson combines 2+ media formats) ─── */}
+              {lessonMediaTabs.length > 1 && (
+                <div className={`p-1.5 bg-slate-900 rounded-2xl border border-slate-800 shadow-md flex items-center gap-2 overflow-x-auto ${
+                  isFullscreenMode ? 'm-3' : ''
+                }`}>
+                  {lessonMediaTabs.map((tab) => {
+                    const Icon = tab.icon;
+                    const isActive = selectedLessonMediaTab === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setSelectedLessonMediaTab(tab.id)}
+                        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                          isActive
+                            ? 'bg-[#2563EB] text-white shadow-sm'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
+                        }`}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                        <span>{tab.label}</span>
+                        {tab.count && (
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${isActive ? 'bg-blue-700 text-white' : 'bg-slate-800 text-slate-300'}`}>
+                            {tab.count}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
-              </div>
+              )}
+
+              {/* Dynamic Content Player View Frame (Full Screen Capable) */}
+              {(() => {
+                const lessonItems = Array.isArray(currentLesson.items) ? currentLesson.items : [];
+                const videoItem = lessonItems.find((i) => i.type === 'video');
+                const pptItem = lessonItems.find((i) => i.type === 'ppt');
+                const pdfItem = lessonItems.find((i) => i.type === 'pdf');
+                const textItem = lessonItems.find((i) => i.type === 'text' || i.type === 'rich-text');
+                const lessonNotes = currentLesson.body || textItem?.body || currentLesson.notes || currentLesson.content || '';
+
+                return (
+                  <>
+                    <div className={`transition-all duration-300 ${
+                      isFullscreenMode
+                        ? 'flex-1 w-full bg-black p-0 relative overflow-y-auto flex flex-col justify-center'
+                        : 'rounded-2xl bg-black border border-slate-800/80 shadow-2xl overflow-hidden relative'
+                    }`}>
+                      <div className={isFullscreenMode ? 'w-full h-full min-h-0 bg-black flex flex-col justify-center' : 'bg-black rounded-2xl overflow-hidden'}>
+                        {selectedLessonMediaTab === 'quiz' ? (
+                          <AssessmentPlayer
+                            moduleId={activeItem.moduleId}
+                            courseId={courseId}
+                            isFinal={false}
+                            onPassed={handleMarkComplete}
+                            lessonId={currentLesson.id}
+                          />
+                        ) : selectedLessonMediaTab === 'video' ? (
+                          <VideoPlayer
+                            content={{
+                              videoUrl: currentLesson.videoUrl || videoItem?.videoUrl || (currentLesson.type === 'video' ? currentLesson.fileUrl : '') || '',
+                              bunnyVideoId: currentLesson.bunnyVideoId || videoItem?.bunnyVideoId || '',
+                              title: currentLesson.title
+                            }}
+                            onComplete={handleMarkComplete}
+                          />
+                        ) : selectedLessonMediaTab === 'ppt' ? (
+                          <PptPlayer
+                            content={{
+                              title: currentLesson.title,
+                              fileUrl: currentLesson.pptUrl || pptItem?.fileUrl || (currentLesson.type === 'ppt' ? currentLesson.fileUrl : '') || '',
+                              pdfUrl: currentLesson.pptPdfUrl || pptItem?.pdfUrl || (currentLesson.type === 'ppt' ? currentLesson.pdfUrl : '') || '',
+                              fileName: currentLesson.pptFileName || pptItem?.fileName || currentLesson.fileName || 'presentation.pptx',
+                              slides: currentLesson.slides || pptItem?.slides || [],
+                              duration: currentLesson.duration || pptItem?.duration || ''
+                            }}
+                            onComplete={handleMarkComplete}
+                          />
+                        ) : selectedLessonMediaTab === 'pdf' ? (
+                          <PdfPlayer
+                            content={{
+                              title: currentLesson.title,
+                              fileUrl: currentLesson.pdfUrl || pdfItem?.fileUrl || (currentLesson.type === 'pdf' ? currentLesson.fileUrl : '') || '',
+                              fileName: currentLesson.pdfFileName || pdfItem?.fileName || currentLesson.fileName || 'document.pdf',
+                              duration: currentLesson.duration || pdfItem?.duration || ''
+                            }}
+                            onComplete={handleMarkComplete}
+                          />
+                        ) : selectedLessonMediaTab === 'text' ? (
+                          <div className="p-6 sm:p-8 bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-sm leading-relaxed whitespace-pre-wrap font-sans text-sm">
+                            <p>{lessonNotes || 'No written notes provided for this lesson.'}</p>
+                          </div>
+                        ) : (
+                          renderContentItem(currentLesson.type, currentLesson.content || currentLesson, currentLesson.title, handleMarkComplete, currentLesson)
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Study Notes & Key Takeaways Card (Visible below video/slides if notes are provided) */}
+                    {lessonNotes && lessonNotes.trim() && selectedLessonMediaTab !== 'text' && !isFullscreenMode && (
+                      <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-2xs space-y-3">
+                        <div className="flex items-center gap-2 text-slate-900 font-bold text-sm border-b border-slate-100 pb-2.5">
+                          <FileText className="h-4 w-4 text-[#2563EB]" />
+                          <span>Lesson Study Notes & Key Concepts</span>
+                        </div>
+                        <div className="text-xs sm:text-sm text-slate-700 leading-relaxed font-sans whitespace-pre-wrap">
+                          {lessonNotes}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
             </div>
           )}

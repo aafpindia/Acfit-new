@@ -18,6 +18,7 @@ import {
   HelpCircle,
   FileText,
   Presentation,
+  Sparkles,
   ChevronDown,
   ChevronRight,
   Globe,
@@ -76,6 +77,14 @@ const LESSON_CONTENT_TYPES = [
   { id: 'pdf', title: 'PDF', desc: 'PDF manual & document upload', icon: FileText, color: 'text-rose-600 bg-rose-50' },
   { id: 'text', title: 'Text', desc: 'Written text & file import', icon: Type, color: 'text-amber-500 bg-amber-50' },
   { id: 'quiz', title: 'Quiz', desc: 'Interactive assessment & questions', icon: HelpCircle, color: 'text-cyan-500 bg-cyan-50' }
+];
+
+const LESSON_FORMAT_OPTIONS = [
+  { id: 'video', title: 'Video', icon: Video, color: 'text-orange-500' },
+  { id: 'ppt', title: 'PPT Presentation', icon: Presentation, color: 'text-blue-600' },
+  { id: 'pdf', title: 'PDF Document', icon: FileText, color: 'text-rose-600' },
+  { id: 'text', title: 'Notes / Text', icon: Type, color: 'text-amber-600' },
+  { id: 'quiz', title: 'Quiz', icon: HelpCircle, color: 'text-cyan-600' }
 ];
 
 export const ProgramStudioModal = ({
@@ -220,23 +229,60 @@ export const ProgramStudioModal = ({
     setEditingChapterId(null);
   };
 
-  // Editing Content Item Modal State
+  // Editing Content Item Modal State (Supports combined multi-media: Video + PPT + PDF + Text + Quiz in ONE lesson)
   const [editingContentItem, setEditingContentItem] = useState(null);
+  const [activeLessonStudioTab, setActiveLessonStudioTab] = useState('video');
+  const [activeLessonSections, setActiveLessonSections] = useState(['video']);
+
+  const handleAddSection = (secId) => {
+    if (!activeLessonSections.includes(secId)) {
+      setActiveLessonSections((prev) => [...prev, secId]);
+    }
+    setActiveLessonStudioTab(secId);
+  };
+
+  const handleRemoveSection = (secId) => {
+    if (activeLessonSections.length <= 1) return;
+    const updated = activeLessonSections.filter((id) => id !== secId);
+    setActiveLessonSections(updated);
+    if (activeLessonStudioTab === secId) {
+      setActiveLessonStudioTab(updated[0]);
+    }
+    // Safely clear data for removed format
+    if (secId === 'video') {
+      setContentFormData((prev) => ({ ...prev, videoUrl: '', bunnyVideoId: '' }));
+    } else if (secId === 'ppt') {
+      setContentFormData((prev) => ({ ...prev, pptUrl: '', pptFileName: '', pptFileSize: '' }));
+    } else if (secId === 'pdf') {
+      setContentFormData((prev) => ({ ...prev, pdfUrl: '', pdfFileName: '', pdfFileSize: '' }));
+    } else if (secId === 'text') {
+      setContentFormData((prev) => ({ ...prev, body: '' }));
+    } else if (secId === 'quiz') {
+      setContentFormData((prev) => ({ ...prev, questions: [] }));
+    }
+  };
   const [contentFormData, setContentFormData] = useState({
     title: '',
+    duration: '',
     body: '',
     videoUrl: '',
     bunnyVideoId: '',
     fileUrl: '',
     fileName: '',
     fileSize: '',
+    pptUrl: '',
+    pptFileName: '',
+    pptFileSize: '',
+    pdfUrl: '',
+    pdfFileName: '',
+    pdfFileSize: '',
     passingPercentage: 70,
     timerMinutes: 10,
     feedbackText: '',
     questions: []
   });
   const [bunnyProgress, setBunnyProgress] = useState(null);
-  const [docUploadProgress, setDocUploadProgress] = useState({ isUploading: false, percent: 0, fileName: '' });
+  const [docUploadProgress, setDocUploadProgress] = useState({ isUploading: false, percent: 0, fileName: '', type: '' });
 
   const totalLessons = useMemo(() => {
     return formData.modules.reduce((acc, mod) => acc + (mod.lessons ? mod.lessons.length : 0), 0);
@@ -273,26 +319,30 @@ export const ProgramStudioModal = ({
   // ----------------------------------------------------
   // LESSON HANDLERS
   // ----------------------------------------------------
-  const handleAddLessonWithType = (moduleId, contentTypeId) => {
+  const handleAddLessonWithType = (moduleId, contentTypeId = 'video') => {
     const targetModule = formData.modules.find((m) => m.id === moduleId) || formData.modules[0];
     if (!targetModule) return;
 
     const lesNum = (targetModule.lessons || []).length + 1;
-    const contentTypeObj = LESSON_CONTENT_TYPES.find((t) => t.id === contentTypeId) || LESSON_CONTENT_TYPES[0];
+    const initialTab = ['video', 'ppt', 'pdf', 'text', 'quiz'].includes(contentTypeId) ? contentTypeId : 'video';
 
     const newLesson = {
       id: `les-${Date.now()}`,
-      title: `${contentTypeObj.title} Lesson ${lesNum}`,
-      type: contentTypeId,
+      title: `Lesson ${lesNum}`,
+      type: initialTab,
       duration: '',
       commentsCount: 0,
-      items: [
-        {
-          id: `ci-${Date.now()}`,
-          type: contentTypeId,
-          title: `${contentTypeObj.title} Content`
-        }
-      ]
+      videoUrl: '',
+      bunnyVideoId: '',
+      pptUrl: '',
+      pptFileName: '',
+      pptFileSize: '',
+      pdfUrl: '',
+      pdfFileName: '',
+      pdfFileSize: '',
+      body: '',
+      questions: [],
+      items: []
     };
 
     setFormData((prev) => ({
@@ -305,26 +355,34 @@ export const ProgramStudioModal = ({
       })
     }));
 
-    // Open detail editor for the lesson
+    // Open detail editor focused on selected format
+    setActiveLessonSections([initialTab]);
+    setActiveLessonStudioTab(initialTab);
     setEditingContentItem({
       isNew: true,
-      type: contentTypeId,
+      type: initialTab,
       moduleId: targetModule.id,
-      lessonId: newLesson.id,
-      itemId: newLesson.items[0].id
+      lessonId: newLesson.id
     });
     setContentFormData({
-      title: '',
+      title: `Lesson ${lesNum}`,
+      duration: '',
       body: '',
       videoUrl: '',
       bunnyVideoId: '',
       fileUrl: '',
       fileName: '',
       fileSize: '',
-      passingPercentage: '',
-      timerMinutes: '',
+      pptUrl: '',
+      pptFileName: '',
+      pptFileSize: '',
+      pdfUrl: '',
+      pdfFileName: '',
+      pdfFileSize: '',
+      passingPercentage: 70,
+      timerMinutes: 10,
       feedbackText: '',
-      questions: contentTypeId === 'quiz' ? [
+      questions: initialTab === 'quiz' ? [
         {
           id: `q-${Date.now()}`,
           format: 'single-choice',
@@ -341,17 +399,16 @@ export const ProgramStudioModal = ({
   const handleEditLesson = (moduleId, lessonId) => {
     const targetModule = formData.modules.find((m) => m.id === moduleId);
     const targetLesson = targetModule?.lessons?.find((l) => l.id === lessonId);
-    const item = targetLesson?.items?.[0] || null;
+    if (!targetLesson) return;
 
-    setEditingContentItem({
-      isNew: !item,
-      type: targetLesson?.type || item?.type || 'video',
-      moduleId: moduleId,
-      lessonId: lessonId,
-      itemId: item?.id
-    });
+    const items = Array.isArray(targetLesson.items) ? targetLesson.items : [];
+    const videoItem = items.find((i) => i.type === 'video');
+    const pptItem = items.find((i) => i.type === 'ppt');
+    const pdfItem = items.find((i) => i.type === 'pdf');
+    const textItem = items.find((i) => i.type === 'text' || i.type === 'rich-text');
+    const quizItem = items.find((i) => i.type === 'quiz');
 
-    const rawQuestions = item?.questions || targetLesson?.assessment?.questions || targetLesson?.questions || [];
+    const rawQuestions = targetLesson.questions || targetLesson.assessment?.questions || quizItem?.questions || [];
     const normalizedQuestions = (rawQuestions || []).map((q, idx) => {
       const opts = (q.options || []).map((o) => {
         if (typeof o === 'object' && o !== null) {
@@ -361,7 +418,7 @@ export const ProgramStudioModal = ({
       });
       let correctIdx = q.correctIndex;
       if (correctIdx === undefined && Array.isArray(q.options)) {
-        const found = q.options.findIndex(o => typeof o === 'object' && o?.isCorrect);
+        const found = q.options.findIndex((o) => typeof o === 'object' && o?.isCorrect);
         if (found !== -1) correctIdx = found;
       }
       return {
@@ -376,17 +433,66 @@ export const ProgramStudioModal = ({
       };
     });
 
+    const videoUrl = targetLesson.videoUrl || videoItem?.videoUrl || (targetLesson.type === 'video' ? targetLesson.fileUrl : '') || '';
+    const bunnyVideoId = targetLesson.bunnyVideoId || videoItem?.bunnyVideoId || '';
+    const pptUrl = targetLesson.pptUrl || (targetLesson.type === 'ppt' ? targetLesson.fileUrl : '') || pptItem?.fileUrl || '';
+    const pptFileName = targetLesson.pptFileName || (targetLesson.type === 'ppt' ? targetLesson.fileName : '') || pptItem?.fileName || '';
+    const pptFileSize = targetLesson.pptFileSize || (targetLesson.type === 'ppt' ? targetLesson.fileSize : '') || pptItem?.fileSize || '';
+    const pdfUrl = targetLesson.pdfUrl || (targetLesson.type === 'pdf' ? targetLesson.fileUrl : '') || pdfItem?.fileUrl || '';
+    const pdfFileName = targetLesson.pdfFileName || (targetLesson.type === 'pdf' ? targetLesson.fileName : '') || pdfItem?.fileName || '';
+    const pdfFileSize = targetLesson.pdfFileSize || (targetLesson.type === 'pdf' ? targetLesson.fileSize : '') || pdfItem?.fileSize || '';
+    const body = targetLesson.body || textItem?.body || (targetLesson.type === 'text' ? targetLesson.content : '') || '';
+
+    // Choose default active tab based on attached content
+    let defaultTab = 'video';
+    if (videoUrl || bunnyVideoId) defaultTab = 'video';
+    else if (pptUrl) defaultTab = 'ppt';
+    else if (pdfUrl) defaultTab = 'pdf';
+    else if (body && body.trim()) defaultTab = 'text';
+    else if (normalizedQuestions.length > 0) defaultTab = 'quiz';
+    else if (targetLesson.type && ['video', 'ppt', 'pdf', 'text', 'quiz'].includes(targetLesson.type)) defaultTab = targetLesson.type;
+
+    const existingSections = [];
+    if (videoUrl || bunnyVideoId) existingSections.push('video');
+    if (pptUrl) existingSections.push('ppt');
+    if (pdfUrl) existingSections.push('pdf');
+    if (body && body.trim()) existingSections.push('text');
+    if (normalizedQuestions.length > 0) existingSections.push('quiz');
+
+    if (existingSections.length === 0) {
+      existingSections.push(defaultTab);
+    }
+    if (!existingSections.includes(defaultTab)) {
+      existingSections.unshift(defaultTab);
+    }
+
+    setActiveLessonSections(existingSections);
+    setActiveLessonStudioTab(defaultTab);
+    setEditingContentItem({
+      isNew: false,
+      type: defaultTab,
+      moduleId: moduleId,
+      lessonId: lessonId
+    });
+
     setContentFormData({
-      title: targetLesson?.title || item?.title || '',
-      body: item?.body || targetLesson?.body || '',
-      videoUrl: item?.videoUrl || targetLesson?.videoUrl || '',
-      bunnyVideoId: item?.bunnyVideoId || targetLesson?.bunnyVideoId || '',
-      fileUrl: item?.fileUrl || targetLesson?.fileUrl || '',
-      fileName: item?.fileName || targetLesson?.fileName || '',
-      fileSize: item?.fileSize || targetLesson?.fileSize || '',
-      passingPercentage: item?.passingPercentage !== undefined ? item.passingPercentage : (targetLesson?.passingPercentage !== undefined ? targetLesson.passingPercentage : ''),
-      timerMinutes: item?.timerMinutes !== undefined ? item.timerMinutes : (targetLesson?.timerMinutes !== undefined ? targetLesson.timerMinutes : ''),
-      feedbackText: item?.feedbackText || targetLesson?.feedbackText || '',
+      title: targetLesson.title || '',
+      duration: targetLesson.duration || '',
+      body: body,
+      videoUrl: videoUrl,
+      bunnyVideoId: bunnyVideoId,
+      fileUrl: targetLesson.fileUrl || '',
+      fileName: targetLesson.fileName || '',
+      fileSize: targetLesson.fileSize || '',
+      pptUrl: pptUrl,
+      pptFileName: pptFileName,
+      pptFileSize: pptFileSize,
+      pdfUrl: pdfUrl,
+      pdfFileName: pdfFileName,
+      pdfFileSize: pdfFileSize,
+      passingPercentage: targetLesson.passingPercentage !== undefined ? targetLesson.passingPercentage : (targetLesson.assessment?.passingPercentage ?? 70),
+      timerMinutes: targetLesson.timerMinutes !== undefined ? targetLesson.timerMinutes : (targetLesson.assessment?.timerSeconds ? Math.round(targetLesson.assessment.timerSeconds / 60) : 10),
+      feedbackText: targetLesson.feedbackText || targetLesson.assessment?.feedbackText || '',
       questions: normalizedQuestions
     });
   };
@@ -485,11 +591,11 @@ export const ProgramStudioModal = ({
     }
   };
 
-  const handleDocumentFileUpload = async (e) => {
+  const handlePptFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setDocUploadProgress({ isUploading: true, percent: 5, fileName: file.name });
+    setDocUploadProgress({ isUploading: true, percent: 5, fileName: file.name, type: 'ppt' });
     try {
       const uploadRes = await uploadDocumentFile(file, (percent) => {
         setDocUploadProgress((prev) => ({ ...prev, percent }));
@@ -498,30 +604,61 @@ export const ProgramStudioModal = ({
       if (uploadRes.success && uploadRes.url) {
         setContentFormData((prev) => ({
           ...prev,
-          fileUrl: uploadRes.url,
-          pdfUrl: uploadRes.pdfUrl || (uploadRes.url.toLowerCase().endsWith('.pdf') ? uploadRes.url : null),
-          originalUrl: uploadRes.originalUrl || uploadRes.url,
-          isConverted: Boolean(uploadRes.isConverted),
-          fileName: uploadRes.fileName || file.name,
-          fileSize: uploadRes.formattedSize || '',
+          pptUrl: uploadRes.url,
+          pptPdfUrl: uploadRes.pdfUrl || (uploadRes.url.toLowerCase().endsWith('.pdf') ? uploadRes.url : null),
+          pptFileName: uploadRes.fileName || file.name,
+          pptFileSize: uploadRes.formattedSize || '',
           title: prev.title || file.name.replace(/\.[^/.]+$/, '')
         }));
-        success(`File "${file.name}" uploaded successfully!`);
+        success(`Presentation "${file.name}" attached successfully!`);
       } else {
         error(uploadRes.error || 'Upload failed. Please try again.');
       }
     } catch (err) {
       console.error(err);
-      error(err?.message || 'Error uploading document.');
+      error(err?.message || 'Error uploading presentation.');
     } finally {
       setTimeout(() => {
-        setDocUploadProgress({ isUploading: false, percent: 0, fileName: '' });
+        setDocUploadProgress({ isUploading: false, percent: 0, fileName: '', type: '' });
       }, 1000);
       e.target.value = '';
     }
   };
 
-  const handlePptFileUpload = handleDocumentFileUpload;
+  const handlePdfFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setDocUploadProgress({ isUploading: true, percent: 5, fileName: file.name, type: 'pdf' });
+    try {
+      const uploadRes = await uploadDocumentFile(file, (percent) => {
+        setDocUploadProgress((prev) => ({ ...prev, percent }));
+      });
+
+      if (uploadRes.success && uploadRes.url) {
+        setContentFormData((prev) => ({
+          ...prev,
+          pdfUrl: uploadRes.url,
+          pdfFileName: uploadRes.fileName || file.name,
+          pdfFileSize: uploadRes.formattedSize || '',
+          title: prev.title || file.name.replace(/\.[^/.]+$/, '')
+        }));
+        success(`PDF manual "${file.name}" attached successfully!`);
+      } else {
+        error(uploadRes.error || 'Upload failed. Please try again.');
+      }
+    } catch (err) {
+      console.error(err);
+      error(err?.message || 'Error uploading PDF.');
+    } finally {
+      setTimeout(() => {
+        setDocUploadProgress({ isUploading: false, percent: 0, fileName: '', type: '' });
+      }, 1000);
+      e.target.value = '';
+    }
+  };
+
+  const handleDocumentFileUpload = handlePdfFileUpload;
 
   const handleTextFileUpload = (e) => {
     const file = e.target.files?.[0];
@@ -696,21 +833,84 @@ export const ProgramStudioModal = ({
       };
     });
 
-    const newItem = {
-      id: editingContentItem.itemId || `ci-${Date.now()}`,
-      type: editingContentItem.type,
-      title: contentFormData.title || 'Untitled Lesson',
-      body: contentFormData.body || '',
-      videoUrl: contentFormData.videoUrl || '',
-      bunnyVideoId: contentFormData.bunnyVideoId || '',
-      fileUrl: contentFormData.fileUrl || '',
-      fileName: contentFormData.fileName || '',
-      fileSize: contentFormData.fileSize || '',
+    const lessonTitle = contentFormData.title || 'Untitled Lesson';
+
+    // Build the items list for all attached formats
+    const items = [];
+
+    if (contentFormData.videoUrl || contentFormData.bunnyVideoId) {
+      items.push({
+        id: `ci-video-${editingContentItem.lessonId}`,
+        type: 'video',
+        title: `${lessonTitle} (Video)`,
+        videoUrl: contentFormData.videoUrl,
+        bunnyVideoId: contentFormData.bunnyVideoId,
+        duration: contentFormData.duration || ''
+      });
+    }
+
+    if (contentFormData.pptUrl) {
+      items.push({
+        id: `ci-ppt-${editingContentItem.lessonId}`,
+        type: 'ppt',
+        title: `${lessonTitle} (Presentation)`,
+        fileUrl: contentFormData.pptUrl,
+        pdfUrl: contentFormData.pptPdfUrl || (contentFormData.pptUrl.toLowerCase().endsWith('.pdf') ? contentFormData.pptUrl : null),
+        fileName: contentFormData.pptFileName || 'presentation.pptx',
+        fileSize: contentFormData.pptFileSize || ''
+      });
+    }
+
+    if (contentFormData.pdfUrl) {
+      items.push({
+        id: `ci-pdf-${editingContentItem.lessonId}`,
+        type: 'pdf',
+        title: `${lessonTitle} (PDF Manual)`,
+        fileUrl: contentFormData.pdfUrl,
+        fileName: contentFormData.pdfFileName || 'document.pdf',
+        fileSize: contentFormData.pdfFileSize || ''
+      });
+    }
+
+    if (contentFormData.body && contentFormData.body.trim()) {
+      items.push({
+        id: `ci-text-${editingContentItem.lessonId}`,
+        type: 'text',
+        title: `${lessonTitle} (Study Notes)`,
+        body: contentFormData.body
+      });
+    }
+
+    const hasQuiz = formattedQuestions.length > 0;
+    if (hasQuiz) {
+      items.push({
+        id: `ci-quiz-${editingContentItem.lessonId}`,
+        type: 'quiz',
+        title: `${lessonTitle} (Lesson Quiz)`,
+        passingPercentage: contentFormData.passingPercentage !== '' ? Number(contentFormData.passingPercentage) : 70,
+        timerMinutes: contentFormData.timerMinutes !== '' ? Number(contentFormData.timerMinutes) : 10,
+        feedbackText: contentFormData.feedbackText || '',
+        questions: formattedQuestions
+      });
+    }
+
+    // Determine primary type: 'combined' if multiple formats exist
+    let primaryType = 'video';
+    if (items.length > 1) {
+      primaryType = 'combined';
+    } else if (items.length === 1) {
+      primaryType = items[0].type;
+    } else {
+      primaryType = activeLessonStudioTab || 'video';
+    }
+
+    const constructedAssessment = hasQuiz ? {
+      id: `quiz-${editingContentItem.lessonId}`,
+      title: `${lessonTitle} Quiz`,
       passingPercentage: contentFormData.passingPercentage !== '' ? Number(contentFormData.passingPercentage) : 70,
-      timerMinutes: contentFormData.timerMinutes !== '' ? Number(contentFormData.timerMinutes) : 10,
-      feedbackText: contentFormData.feedbackText || '',
+      timerSeconds: (contentFormData.timerMinutes !== '' ? Number(contentFormData.timerMinutes) : 10) * 60,
       questions: formattedQuestions
-    };
+    } : null;
 
     setFormData((prev) => ({
       ...prev,
@@ -720,33 +920,27 @@ export const ProgramStudioModal = ({
             ...m,
             lessons: m.lessons.map((l) => {
               if (l.id === editingContentItem.lessonId) {
-                const isQuiz = editingContentItem.type === 'quiz';
-                const constructedAssessment = isQuiz ? {
-                  id: `quiz-${l.id}`,
-                  title: contentFormData.title || l.title || 'Lesson Quiz',
-                  passingPercentage: contentFormData.passingPercentage !== '' ? Number(contentFormData.passingPercentage) : 70,
-                  timerSeconds: (contentFormData.timerMinutes !== '' ? Number(contentFormData.timerMinutes) : 10) * 60,
-                  questions: formattedQuestions
-                } : l.assessment;
-
                 return {
                   ...l,
-                  title: contentFormData.title || l.title || 'Untitled Lesson',
-                  type: editingContentItem.type || l.type,
-                  fileUrl: contentFormData.fileUrl || l.fileUrl || '',
-                  fileName: contentFormData.fileName || l.fileName || '',
-                  fileSize: contentFormData.fileSize || l.fileSize || '',
-                  videoUrl: contentFormData.videoUrl || l.videoUrl || '',
-                  bunnyVideoId: contentFormData.bunnyVideoId || l.bunnyVideoId || '',
-                  body: contentFormData.body || l.body || '',
+                  title: lessonTitle,
+                  type: primaryType,
+                  duration: contentFormData.duration || l.duration || '',
+                  videoUrl: contentFormData.videoUrl || '',
+                  bunnyVideoId: contentFormData.bunnyVideoId || '',
+                  fileUrl: contentFormData.pptUrl || contentFormData.pdfUrl || contentFormData.fileUrl || '',
+                  pptUrl: contentFormData.pptUrl || '',
+                  pptFileName: contentFormData.pptFileName || '',
+                  pptFileSize: contentFormData.pptFileSize || '',
+                  pdfUrl: contentFormData.pdfUrl || '',
+                  pdfFileName: contentFormData.pdfFileName || '',
+                  pdfFileSize: contentFormData.pdfFileSize || '',
+                  body: contentFormData.body || '',
                   passingPercentage: contentFormData.passingPercentage,
                   timerMinutes: contentFormData.timerMinutes,
+                  feedbackText: contentFormData.feedbackText || '',
                   questions: formattedQuestions,
                   assessment: constructedAssessment,
-                  items: [{
-                    ...newItem,
-                    questions: formattedQuestions
-                  }]
+                  items: items
                 };
               }
               return l;
@@ -758,7 +952,8 @@ export const ProgramStudioModal = ({
     }));
 
     setEditingContentItem(null);
-    success('Lesson details saved');
+    const mediaCount = items.length;
+    success(`Lesson details saved! (${mediaCount > 1 ? `${mediaCount} formats combined` : 'Saved'})`);
   };
 
   // Save & Publish Handler
@@ -1523,40 +1718,16 @@ export const ProgramStudioModal = ({
                         )}
                       </div>
 
-                      {/* Right Module Actions: + Add Lesson Dropdown with Specific Icons */}
+                      {/* Right Module Actions: + Add Lesson Button (Direct click, no dropdown) */}
                       <div className="flex items-center gap-2">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button
-                              type="button"
-                              className="text-xs font-semibold text-[#2563EB] bg-[#EFF6FF] hover:bg-[#E5DFFF] px-3 py-1 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer"
-                            >
-                              <Plus className="h-3.5 w-3.5" />
-                              <span>Add Lesson</span>
-                              <ChevronDown className="h-3 w-3" />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-48 font-sans text-xs p-1">
-                            {LESSON_CONTENT_TYPES.map((ct) => {
-                              const Icon = ct.icon;
-                              return (
-                                <DropdownMenuItem
-                                  key={ct.id}
-                                  onClick={() => handleAddLessonWithType(moduleItem.id, ct.id)}
-                                  className="cursor-pointer flex items-center gap-2.5 p-2 rounded-md hover:bg-slate-50"
-                                >
-                                  <div className={`p-1 rounded ${ct.color}`}>
-                                    <Icon className="h-3.5 w-3.5" />
-                                  </div>
-                                  <div>
-                                    <span className="font-semibold text-[#202124] block">{ct.title}</span>
-                                    <span className="text-[10px] text-[#8A8F98] block">{ct.desc}</span>
-                                  </div>
-                                </DropdownMenuItem>
-                              );
-                            })}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                        <button
+                          type="button"
+                          onClick={() => handleAddLessonWithType(moduleItem.id, 'video')}
+                          className="text-xs font-semibold text-[#2563EB] bg-[#EFF6FF] hover:bg-[#DBEAFE] px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          <span>Add Lesson</span>
+                        </button>
 
                         <button
                           onClick={() => handleDeleteModule(moduleItem.id)}
@@ -1572,12 +1743,17 @@ export const ProgramStudioModal = ({
                     <div className="divide-y divide-slate-100">
                       {(moduleItem.lessons || []).length === 0 ? (
                         <div className="p-4 text-center text-xs text-slate-400 italic">
-                          No lessons added in this module yet. Click "+ Add Lesson" to choose Video, PPT, Text, or Quiz.
+                          No lessons added in this module yet. Click "+ Add Lesson" to create a lesson with Video, PPT, PDF, Notes, and Quiz combined.
                         </div>
                       ) : (
                         (moduleItem.lessons || []).map((lesson) => {
-                          const iconObj = LESSON_CONTENT_TYPES.find((t) => t.id === lesson.type) || LESSON_CONTENT_TYPES[0];
-                          const IconComp = iconObj.icon;
+                          const hasVideo = Boolean(lesson.videoUrl || lesson.bunnyVideoId || lesson.items?.some((i) => i.type === 'video'));
+                          const hasPpt = Boolean(lesson.pptUrl || lesson.type === 'ppt' || lesson.items?.some((i) => i.type === 'ppt'));
+                          const hasPdf = Boolean(lesson.pdfUrl || lesson.type === 'pdf' || lesson.items?.some((i) => i.type === 'pdf'));
+                          const hasText = Boolean((lesson.body && lesson.body.trim()) || lesson.items?.some((i) => i.type === 'text'));
+                          const hasQuiz = Boolean((lesson.questions && lesson.questions.length > 0) || lesson.assessment || lesson.type === 'quiz' || lesson.items?.some((i) => i.type === 'quiz'));
+                          const attachedCount = [hasVideo, hasPpt, hasPdf, hasText, hasQuiz].filter(Boolean).length;
+                          const isCombinedLesson = lesson.type === 'combined' || attachedCount > 1;
 
                           return (
                             <div
@@ -1589,29 +1765,53 @@ export const ProgramStudioModal = ({
 
                               <div className="flex items-center gap-3 min-w-0 pl-2">
                                 <GripVertical className="h-3.5 w-3.5 text-slate-300 group-hover:text-slate-500 cursor-grab shrink-0" />
-                                <div className={`p-1 rounded ${iconObj.color} shrink-0`}>
-                                  <IconComp className="h-3.5 w-3.5" />
-                                </div>
+                                
                                 <span
                                   onClick={() => handleEditLesson(moduleItem.id, lesson.id)}
                                   className="text-xs font-semibold text-[#202124] hover:text-[#2563EB] transition-colors cursor-pointer truncate"
                                 >
                                   {lesson.title}
                                 </span>
+
+                                {/* Media Badges */}
+                                <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                                  {hasVideo && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-50 text-orange-600 border border-orange-200/80">
+                                      <Video className="h-3 w-3" /> Video
+                                    </span>
+                                  )}
+                                  {hasPpt && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-600 border border-blue-200/80">
+                                      <Presentation className="h-3 w-3" /> PPT
+                                    </span>
+                                  )}
+                                  {hasPdf && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-600 border border-rose-200/80">
+                                      <FileText className="h-3 w-3" /> PDF
+                                    </span>
+                                  )}
+                                  {hasText && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-600 border border-amber-200/80">
+                                      <Type className="h-3 w-3" /> Notes
+                                    </span>
+                                  )}
+                                  {hasQuiz && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-50 text-cyan-600 border border-cyan-200/80">
+                                      <HelpCircle className="h-3 w-3" /> Quiz
+                                    </span>
+                                  )}
+                                </div>
+
                                 {lesson.duration && (
-                                  <span className="text-[11px] text-[#8A8F98] shrink-0">{lesson.duration}</span>
+                                  <span className="text-[11px] text-[#8A8F98] shrink-0 font-mono">{lesson.duration}</span>
                                 )}
-                                <span className="text-[11px] text-[#8A8F98] flex items-center gap-1 shrink-0">
-                                  <MessageSquare className="h-3 w-3 text-slate-300" />
-                                  <span>0</span>
-                                </span>
                               </div>
 
                               <div className="flex items-center gap-2 shrink-0">
                                 <button
                                   type="button"
                                   onClick={() => handleEditLesson(moduleItem.id, lesson.id)}
-                                  className="text-xs text-[#2563EB] hover:bg-[#EFF6FF] px-2.5 py-1 rounded font-medium transition-colors cursor-pointer"
+                                  className="text-xs text-[#2563EB] hover:bg-[#EFF6FF] px-2.5 py-1 rounded font-semibold transition-colors cursor-pointer"
                                 >
                                   Edit Content
                                 </button>
@@ -1674,7 +1874,7 @@ export const ProgramStudioModal = ({
         </div>
       </div>
 
-      {/* ─── CONTENT ITEM EDITOR (FULL SCREEN AUTHORING STUDIO FOR QUIZ, VIDEO, PPT & TEXT) ─ */}
+      {/* ─── CONTENT ITEM EDITOR (FULL SCREEN AUTHORING STUDIO FOR VIDEO, PPT, PDF, TEXT & QUIZ) ─ */}
       {editingContentItem && (
         <div className="fixed inset-0 z-[60] bg-[#F7F8FA] text-[#202124] flex flex-col font-sans overflow-hidden select-none animate-in fade-in duration-200">
           
@@ -1689,17 +1889,11 @@ export const ProgramStudioModal = ({
                 <ArrowLeft className="h-5 w-5" />
               </button>
               <div className="h-4 w-px bg-[#E4E7EB]" />
-              <Badge className="bg-[#2563EB] text-white uppercase text-[10px] font-bold px-2 py-0.5 tracking-wide">
-                {editingContentItem.type}
+              <Badge className="bg-slate-100 text-slate-700 font-semibold text-xs px-2.5 py-0.5 border border-slate-200">
+                Lesson Editor
               </Badge>
-              <h3 className="font-bold text-base text-[#202124]">
-                {editingContentItem.type === 'quiz'
-                  ? 'Quiz Authoring Studio'
-                  : editingContentItem.type === 'video'
-                  ? 'BunnyStream Video Setup'
-                  : editingContentItem.type === 'ppt'
-                  ? 'Presentation Deck Setup'
-                  : 'Text Lesson Editor'}
+              <h3 className="font-bold text-base text-[#202124] truncate max-w-md">
+                {contentFormData.title || 'Lesson Editor'}
               </h3>
             </div>
 
@@ -1724,6 +1918,7 @@ export const ProgramStudioModal = ({
           <div className="flex-1 overflow-y-auto p-6 sm:p-8 bg-[#F7F8FA]">
             <div className="max-w-4xl mx-auto bg-white rounded-xl border border-[#E4E7EB] p-6 sm:p-8 shadow-2xs space-y-6">
               
+              {/* Lesson Title */}
               <div className="space-y-1 pb-4 border-b border-[#E4E7EB]">
                 <label className="font-bold text-xs text-[#202124] uppercase tracking-wide">Lesson Title</label>
                 <Input
@@ -1734,8 +1929,144 @@ export const ProgramStudioModal = ({
                 />
               </div>
 
+              {/* Step-by-Step / Add One by One Content Section */}
+              {(() => {
+                const availableFormatsToAdd = LESSON_FORMAT_OPTIONS.filter(
+                  (f) => !activeLessonSections.includes(f.id)
+                );
+
+                return (
+                  <div className="space-y-3 pb-1">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <label className="font-bold text-xs text-[#202124] uppercase tracking-wide">
+                          Lesson Content
+                        </label>
+                        {activeLessonSections.length === 1 && (() => {
+                          const currentFormat = LESSON_FORMAT_OPTIONS.find((f) => f.id === activeLessonStudioTab);
+                          if (!currentFormat) return null;
+                          const CurrentIcon = currentFormat.icon;
+                          return (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-white text-slate-800 border border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer shadow-2xs"
+                                  title="Click to change format"
+                                >
+                                  <CurrentIcon className={`h-3.5 w-3.5 ${currentFormat.color}`} />
+                                  <span>{currentFormat.title}</span>
+                                  <ChevronDown className="h-3 w-3 text-slate-400" />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="start" className="w-44 text-xs p-1 shadow-md border-slate-200">
+                                <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                  Format
+                                </div>
+                                {LESSON_FORMAT_OPTIONS.map((f) => {
+                                  const FormatIcon = f.icon;
+                                  return (
+                                    <DropdownMenuItem
+                                      key={f.id}
+                                      onClick={() => {
+                                        setActiveLessonSections([f.id]);
+                                        setActiveLessonStudioTab(f.id);
+                                      }}
+                                      className="cursor-pointer flex items-center gap-2 p-1.5 rounded-md hover:bg-slate-50 transition-colors"
+                                    >
+                                      <FormatIcon className={`h-3.5 w-3.5 ${f.color}`} />
+                                      <span className="font-medium text-slate-800">{f.title}</span>
+                                    </DropdownMenuItem>
+                                  );
+                                })}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          );
+                        })()}
+                      </div>
+
+                      {/* '+ Add another item' dropdown */}
+                      {availableFormatsToAdd.length > 0 && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              className="text-xs font-semibold text-[#2563EB] bg-[#EFF6FF] hover:bg-[#DBEAFE] px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border border-[#2563EB]/20 shadow-2xs"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              <span>Add another item</span>
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-48 text-xs p-1 shadow-md border-slate-200">
+                            <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                              Attach Additional Format
+                            </div>
+                            {availableFormatsToAdd.map((f) => {
+                              const FormatIcon = f.icon;
+                              return (
+                                <DropdownMenuItem
+                                  key={f.id}
+                                  onClick={() => handleAddSection(f.id)}
+                                  className="cursor-pointer flex items-center gap-2.5 p-2 rounded-md hover:bg-slate-50 transition-colors"
+                                >
+                                  <FormatIcon className={`h-4 w-4 ${f.color}`} />
+                                  <span className="font-medium text-slate-800">{f.title}</span>
+                                </DropdownMenuItem>
+                              );
+                            })}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </div>
+
+                    {/* If multiple formats are attached, show clean switcher tabs with remove buttons */}
+                    {activeLessonSections.length > 1 && (
+                      <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-lg border border-slate-200 overflow-x-auto">
+                        {activeLessonSections.map((secId) => {
+                          const tab = LESSON_FORMAT_OPTIONS.find((f) => f.id === secId);
+                          if (!tab) return null;
+                          const TabIcon = tab.icon;
+                          const isActive = activeLessonStudioTab === tab.id;
+
+                          return (
+                            <div
+                              key={tab.id}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                                isActive
+                                  ? 'bg-white text-slate-900 shadow-xs border border-slate-200/80 font-bold'
+                                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => setActiveLessonStudioTab(tab.id)}
+                                className="flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <TabIcon className={`h-3.5 w-3.5 ${tab.color}`} />
+                                <span>{tab.title}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveSection(tab.id);
+                                }}
+                                className="text-slate-400 hover:text-rose-600 ml-1 p-0.5 rounded cursor-pointer transition-colors"
+                                title={`Remove ${tab.title}`}
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* 🎥 VIDEO CONTENT EDITOR (BunnyStream CDN Upload + Auto-Play Preview) */}
-              {editingContentItem.type === 'video' && (
+              {activeLessonStudioTab === 'video' && (
                 <div className="space-y-4 border-t border-[#E4E7EB] pt-3">
                   <div className="space-y-1.5">
                     <label className="font-semibold text-[#202124] flex items-center justify-between">
@@ -1797,23 +2128,23 @@ export const ProgramStudioModal = ({
               )}
 
               {/* 📊 PPT PRESENTATION EDITOR */}
-              {editingContentItem.type === 'ppt' && (
+              {activeLessonStudioTab === 'ppt' && (
                 <div className="space-y-4 border-t border-[#E4E7EB] pt-3">
                   <div className="space-y-1.5">
                     <label className="font-semibold text-[#202124]">📊 Upload Presentation (.ppt, .pptx, .pdf)</label>
                     <input
                       type="file"
                       accept=".ppt,.pptx,.pdf"
-                      onChange={handleDocumentFileUpload}
+                      onChange={handlePptFileUpload}
                       className="block w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[#EFF6FF] file:text-[#2563EB] hover:file:bg-[#E5DFFF] cursor-pointer"
                     />
                     <span className="text-[11px] text-slate-400">
-                      Upload PowerPoint decks or presentation slides. Files are uploaded smoothly and optimized for students.
+                      Upload PowerPoint decks or presentation slides for this lesson.
                     </span>
                   </div>
 
                   {/* Upload Progress Bar */}
-                  {docUploadProgress.isUploading && (
+                  {docUploadProgress.isUploading && docUploadProgress.type === 'ppt' && (
                     <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl space-y-2">
                       <div className="flex items-center justify-between text-xs font-semibold text-blue-700">
                         <span className="flex items-center gap-1.5">
@@ -1831,8 +2162,8 @@ export const ProgramStudioModal = ({
                     </div>
                   )}
 
-                  {/* Attached File Indicator */}
-                  {contentFormData.fileUrl && (
+                  {/* Attached PPT Indicator */}
+                  {contentFormData.pptUrl && (
                     <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
                       <div className="flex items-center gap-2.5 overflow-hidden">
                         <div className="p-2 bg-blue-100 text-blue-600 rounded-lg shrink-0">
@@ -1840,18 +2171,18 @@ export const ProgramStudioModal = ({
                         </div>
                         <div className="min-w-0">
                           <p className="font-semibold text-xs text-slate-800 truncate">
-                            {contentFormData.fileName || 'presentation.pptx'}
+                            {contentFormData.pptFileName || 'presentation.pptx'}
                           </p>
                           <p className="text-[10px] text-slate-500 font-mono truncate">
-                            {contentFormData.fileSize ? `${contentFormData.fileSize} • ` : ''}
-                            {contentFormData.fileUrl.startsWith('data:') ? 'Attached Data File' : contentFormData.fileUrl}
+                            {contentFormData.pptFileSize ? `${contentFormData.pptFileSize} • ` : ''}
+                            {contentFormData.pptUrl.startsWith('data:') ? 'Attached Data File' : contentFormData.pptUrl}
                           </p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        {(contentFormData.fileUrl.startsWith('http') || contentFormData.fileUrl.startsWith('/uploads/')) && (
+                        {(contentFormData.pptUrl.startsWith('http') || contentFormData.pptUrl.startsWith('/uploads/')) && (
                           <a
-                            href={contentFormData.fileUrl}
+                            href={contentFormData.pptUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-[11px] text-blue-600 font-semibold hover:underline flex items-center gap-1"
@@ -1862,9 +2193,9 @@ export const ProgramStudioModal = ({
                         )}
                         <button
                           type="button"
-                          onClick={() => setContentFormData((prev) => ({ ...prev, fileUrl: '', fileName: '', fileSize: '' }))}
+                          onClick={() => setContentFormData((prev) => ({ ...prev, pptUrl: '', pptFileName: '', pptFileSize: '' }))}
                           className="text-xs text-rose-500 hover:text-rose-700 font-semibold p-1 cursor-pointer"
-                          title="Remove file"
+                          title="Remove presentation"
                         >
                           <X className="h-4 w-4" />
                         </button>
@@ -1876,19 +2207,19 @@ export const ProgramStudioModal = ({
                     <label className="font-semibold text-[#202124]">Presentation Slide Embed / External URL (Optional)</label>
                     <Input
                       placeholder="https://docs.google.com/presentation/d/... or custom slide URL"
-                      value={contentFormData.fileUrl.startsWith('data:') ? '' : contentFormData.fileUrl}
-                      onChange={(e) => setContentFormData({ ...contentFormData, fileUrl: e.target.value })}
+                      value={contentFormData.pptUrl.startsWith('data:') ? '' : contentFormData.pptUrl}
+                      onChange={(e) => setContentFormData({ ...contentFormData, pptUrl: e.target.value })}
                       className="h-9 text-xs border-[#E4E7EB]"
                     />
                   </div>
 
-                  {contentFormData.fileUrl && (
+                  {contentFormData.pptUrl && (
                     <div className="space-y-1">
                       <div className="flex items-center justify-between">
                         <label className="font-semibold text-[#202124] text-[11px]">PPT Presentation Live Preview</label>
-                        {(contentFormData.fileUrl.startsWith('http') || contentFormData.fileUrl.startsWith('/uploads/')) && (
+                        {(contentFormData.pptUrl.startsWith('http') || contentFormData.pptUrl.startsWith('/uploads/')) && (
                           <a
-                            href={contentFormData.fileUrl}
+                            href={contentFormData.pptUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-[11px] text-blue-600 font-bold hover:underline"
@@ -1898,15 +2229,15 @@ export const ProgramStudioModal = ({
                         )}
                       </div>
                       <div className="h-56 bg-slate-900 rounded-xl border border-[#E4E7EB] overflow-hidden flex items-center justify-center text-white">
-                        {contentFormData.fileUrl.toLowerCase().endsWith('.pdf') || contentFormData.fileUrl.includes('.pdf?') || contentFormData.fileUrl.includes('docs.google.com') ? (
-                          <iframe src={contentFormData.fileUrl} className="w-full h-full border-0" title="Presentation Preview" />
+                        {contentFormData.pptUrl.toLowerCase().endsWith('.pdf') || contentFormData.pptUrl.includes('.pdf?') || contentFormData.pptUrl.includes('docs.google.com') ? (
+                          <iframe src={contentFormData.pptUrl} className="w-full h-full border-0" title="Presentation Preview" />
                         ) : (
                           <div className="text-center p-6 text-xs space-y-2">
                             <Presentation className="h-10 w-10 text-blue-400 mx-auto" />
                             <span className="font-bold block text-white text-sm">Presentation Deck Attached</span>
-                            <span className="text-slate-300 font-mono text-[11px] block">{contentFormData.fileName || 'Presentation Slide Deck (.pptx)'}</span>
+                            <span className="text-slate-300 font-mono text-[11px] block">{contentFormData.pptFileName || 'Presentation Slide Deck (.pptx)'}</span>
                             <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
-                              Students will be able to download and view this presentation deck along with interactive notes in the course player.
+                              Students will be able to view and download this presentation deck in the lesson player.
                             </p>
                           </div>
                         )}
@@ -1917,23 +2248,23 @@ export const ProgramStudioModal = ({
               )}
 
               {/* 📑 PDF DOCUMENT EDITOR */}
-              {editingContentItem.type === 'pdf' && (
+              {activeLessonStudioTab === 'pdf' && (
                 <div className="space-y-4 border-t border-[#E4E7EB] pt-3">
                   <div className="space-y-1.5">
                     <label className="font-semibold text-[#202124]">📑 Upload PDF Document (.pdf)</label>
                     <input
                       type="file"
                       accept=".pdf"
-                      onChange={handleDocumentFileUpload}
+                      onChange={handlePdfFileUpload}
                       className="block w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[#EFF6FF] file:text-[#2563EB] hover:file:bg-[#E5DFFF] cursor-pointer"
                     />
                     <span className="text-[11px] text-slate-400">
-                      Upload course reading documents, handouts, or reference guidelines.
+                      Upload course reading manual, handouts, or reference guidelines.
                     </span>
                   </div>
 
                   {/* Upload Progress Bar */}
-                  {docUploadProgress.isUploading && (
+                  {docUploadProgress.isUploading && docUploadProgress.type === 'pdf' && (
                     <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-2">
                       <div className="flex items-center justify-between text-xs font-semibold text-rose-700">
                         <span className="flex items-center gap-1.5">
@@ -1951,8 +2282,8 @@ export const ProgramStudioModal = ({
                     </div>
                   )}
 
-                  {/* Attached File Indicator */}
-                  {contentFormData.fileUrl && (
+                  {/* Attached PDF Indicator */}
+                  {contentFormData.pdfUrl && (
                     <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
                       <div className="flex items-center gap-2.5 overflow-hidden">
                         <div className="p-2 bg-rose-100 text-rose-600 rounded-lg shrink-0">
@@ -1960,18 +2291,18 @@ export const ProgramStudioModal = ({
                         </div>
                         <div className="min-w-0">
                           <p className="font-semibold text-xs text-slate-800 truncate">
-                            {contentFormData.fileName || 'document.pdf'}
+                            {contentFormData.pdfFileName || 'document.pdf'}
                           </p>
                           <p className="text-[10px] text-slate-500 font-mono truncate">
-                            {contentFormData.fileSize ? `${contentFormData.fileSize} • ` : ''}
-                            {contentFormData.fileUrl.startsWith('data:') ? 'Attached Data File' : contentFormData.fileUrl}
+                            {contentFormData.pdfFileSize ? `${contentFormData.pdfFileSize} • ` : ''}
+                            {contentFormData.pdfUrl.startsWith('data:') ? 'Attached Data File' : contentFormData.pdfUrl}
                           </p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        {(contentFormData.fileUrl.startsWith('http') || contentFormData.fileUrl.startsWith('/uploads/')) && (
+                        {(contentFormData.pdfUrl.startsWith('http') || contentFormData.pdfUrl.startsWith('/uploads/')) && (
                           <a
-                            href={contentFormData.fileUrl}
+                            href={contentFormData.pdfUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-[11px] text-rose-600 font-semibold hover:underline flex items-center gap-1"
@@ -1982,7 +2313,7 @@ export const ProgramStudioModal = ({
                         )}
                         <button
                           type="button"
-                          onClick={() => setContentFormData((prev) => ({ ...prev, fileUrl: '', fileName: '', fileSize: '' }))}
+                          onClick={() => setContentFormData((prev) => ({ ...prev, pdfUrl: '', pdfFileName: '', pdfFileSize: '' }))}
                           className="text-xs text-rose-500 hover:text-rose-700 font-semibold p-1 cursor-pointer"
                           title="Remove file"
                         >
@@ -1996,19 +2327,19 @@ export const ProgramStudioModal = ({
                     <label className="font-semibold text-[#202124]">PDF Document Embed / External URL (Optional)</label>
                     <Input
                       placeholder="https://.../document.pdf or attached PDF URL"
-                      value={contentFormData.fileUrl.startsWith('data:') ? '' : contentFormData.fileUrl}
-                      onChange={(e) => setContentFormData({ ...contentFormData, fileUrl: e.target.value })}
+                      value={contentFormData.pdfUrl.startsWith('data:') ? '' : contentFormData.pdfUrl}
+                      onChange={(e) => setContentFormData({ ...contentFormData, pdfUrl: e.target.value })}
                       className="h-9 text-xs border-[#E4E7EB]"
                     />
                   </div>
 
-                  {contentFormData.fileUrl && (
+                  {contentFormData.pdfUrl && (
                     <div className="space-y-1">
                       <div className="flex items-center justify-between">
                         <label className="font-semibold text-[#202124] text-[11px]">PDF Document Live Preview</label>
-                        {(contentFormData.fileUrl.startsWith('http') || contentFormData.fileUrl.startsWith('/uploads/')) && (
+                        {(contentFormData.pdfUrl.startsWith('http') || contentFormData.pdfUrl.startsWith('/uploads/')) && (
                           <a
-                            href={contentFormData.fileUrl}
+                            href={contentFormData.pdfUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-[11px] text-rose-600 font-bold hover:underline"
@@ -2018,7 +2349,7 @@ export const ProgramStudioModal = ({
                         )}
                       </div>
                       <div className="h-64 bg-slate-100 rounded-xl border border-[#E4E7EB] overflow-hidden">
-                        <iframe src={contentFormData.fileUrl} className="w-full h-full border-0" title="PDF Document Preview" />
+                        <iframe src={contentFormData.pdfUrl} className="w-full h-full border-0" title="PDF Document Preview" />
                       </div>
                     </div>
                   )}
@@ -2026,7 +2357,7 @@ export const ProgramStudioModal = ({
               )}
 
               {/* 📄 TEXT EXPLANATION EDITOR */}
-              {editingContentItem.type === 'text' && (
+              {activeLessonStudioTab === 'text' && (
                 <div className="space-y-4 border-t border-[#E4E7EB] pt-3">
                   <div className="space-y-1.5">
                     <label className="font-semibold text-[#202124]">📄 Import Content from .txt File</label>
@@ -2039,10 +2370,10 @@ export const ProgramStudioModal = ({
                   </div>
 
                   <div className="space-y-1">
-                    <label className="font-semibold text-[#202124]">Written Lesson Explanation Text</label>
+                    <label className="font-semibold text-[#202124]">Written Lesson Explanation & Study Notes</label>
                     <Textarea
                       rows={10}
-                      placeholder="Type or paste written lesson explanation text here..."
+                      placeholder="Type or paste written lesson explanation text and takeaways here..."
                       value={contentFormData.body}
                       onChange={(e) => setContentFormData({ ...contentFormData, body: e.target.value })}
                       className="text-xs border-[#E4E7EB] font-sans leading-relaxed"
@@ -2052,7 +2383,7 @@ export const ProgramStudioModal = ({
               )}
 
               {/* 🧠 INTERACTIVE QUIZ BUILDER */}
-              {editingContentItem.type === 'quiz' && (
+              {activeLessonStudioTab === 'quiz' && (
                 <div className="space-y-6 border-t border-[#E4E7EB] pt-4">
                   
                   {/* Quiz Settings Bar */}

@@ -27,21 +27,21 @@ export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed
       const lesson = m.lessons?.find((l) => l.id === lessonId);
       if (lesson) {
         resolvedModuleId = m.id;
-        if (lesson.assessment) {
+        const quizItem = (lesson.items || []).find(i => i.type === 'quiz') || lesson.items?.[0] || lesson;
+        const lessonQuestions = (lesson.questions && lesson.questions.length > 0) ? lesson.questions : (quizItem?.questions || []);
+        if (lesson.assessment && Array.isArray(lesson.assessment.questions) && lesson.assessment.questions.length > 0) {
           quiz = lesson.assessment;
         } else if (
           lesson.type === 'quiz' ||
-          lesson.items?.[0]?.type === 'quiz' ||
-          (lesson.questions && lesson.questions.length > 0) ||
-          (lesson.items?.[0]?.questions && lesson.items[0].questions.length > 0)
+          quizItem?.type === 'quiz' ||
+          lessonQuestions.length > 0
         ) {
-          const item = lesson.items?.[0] || lesson;
           quiz = {
             id: lesson.id,
             title: lesson.title,
-            passingPercentage: item.passingPercentage || lesson.passingPercentage || 70,
-            timerSeconds: (item.timerMinutes || lesson.timerMinutes || 10) * 60,
-            questions: item.questions || lesson.questions || []
+            passingPercentage: quizItem?.passingPercentage || lesson.passingPercentage || 70,
+            timerSeconds: (quizItem?.timerMinutes || lesson.timerMinutes || 10) * 60,
+            questions: lessonQuestions
           };
         }
       }
