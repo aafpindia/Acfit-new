@@ -1364,62 +1364,6 @@ export const CoursePlayer = () => {
                 </div>
               </div>
 
-              {/* ─── MULTIMEDIA SWITCHER TABS (Sequential one-by-one completion) ─── */}
-              {lessonMediaTabs.length > 1 && (
-                <div className={`p-1.5 bg-slate-900 rounded-2xl border border-slate-800 shadow-md flex items-center gap-2 overflow-x-auto ${
-                  isFullscreenMode ? 'm-3' : ''
-                }`}>
-                  {lessonMediaTabs.map((tab, idx) => {
-                    const Icon = tab.icon;
-                    const isActive = selectedLessonMediaTab === tab.id;
-                    const isDone = isTabCompleted(currentLesson.id, tab.id);
-                    const isUnlocked = isTabUnlocked(currentLesson.id, tab.id, idx);
-
-                    return (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        disabled={!isUnlocked}
-                        onClick={() => {
-                          if (!isUnlocked) {
-                            error('Please complete the previous material first to unlock this step.');
-                            return;
-                          }
-                          setSelectedLessonMediaTab(tab.id);
-                        }}
-                        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                          isActive
-                            ? 'bg-[#2563EB] text-white shadow-sm cursor-pointer'
-                            : isDone
-                            ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-900/40 cursor-pointer'
-                            : isUnlocked
-                            ? 'text-slate-300 hover:text-white hover:bg-slate-800/80 cursor-pointer'
-                            : 'text-slate-500 bg-slate-900/50 opacity-60 cursor-not-allowed'
-                        }`}
-                        title={!isUnlocked ? 'Complete previous material to unlock' : tab.label}
-                      >
-                        {isDone ? (
-                          <CheckCircle className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                        ) : !isUnlocked ? (
-                          <Lock className="h-3.5 w-3.5 text-slate-500 shrink-0" />
-                        ) : (
-                          <Icon className="h-3.5 w-3.5 shrink-0" />
-                        )}
-                        <span>{tab.label}</span>
-                        {isDone && (
-                          <span className="text-[10px] font-mono text-emerald-400">✓</span>
-                        )}
-                        {tab.count && !isDone && (
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${isActive ? 'bg-blue-700 text-white' : 'bg-slate-800 text-slate-300'}`}>
-                            {tab.count}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
               {/* Dynamic Content Player View Frame (Full Screen Capable) */}
               {(() => {
                 const lessonItems = Array.isArray(currentLesson.items) ? currentLesson.items : [];
