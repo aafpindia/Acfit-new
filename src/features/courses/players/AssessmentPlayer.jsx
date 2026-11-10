@@ -9,13 +9,13 @@ import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { submitAssessment } from '../../../services/assessmentService';
 
-export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed, lessonId }) => {
+export const AssessmentPlayer = ({ moduleId, courseId, isFinal = false, onPassed, lessonId, courseData = null }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { success, error } = useToast();
   const { courses, submitAssessmentAttempt, submitFinalAssessmentAttempt, certificates } = useLmsStore();
 
-  const course = courses.find((c) => c.id === courseId);
+  const course = courseData || courses.find((c) => c.id === courseId);
   
   let quiz = null;
   let resolvedModuleId = moduleId;

@@ -9,6 +9,7 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Menu,
   Lock,
   CheckCircle,
@@ -57,7 +58,7 @@ export const CoursePlayer = () => {
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
   const { success, error } = useToast();
-  const { courses, enrollments, payments = [], progress, attempts, certificates, markLessonComplete, syncFromSupabase } = useLmsStore();
+  const { courses, enrollments, payments = [], progress, attempts, certificates, markLessonComplete, submitFinalAssessmentAttempt, syncFromSupabase } = useLmsStore();
 
   // On mobile screens (< 1024px), sidebar defaults to closed so player content is immediately visible
   const [sidebarOpen, setSidebarOpen] = useState(() => {
@@ -67,10 +68,12 @@ export const CoursePlayer = () => {
     return false;
   });
   const [isFullscreenMode, setIsFullscreenMode] = useState(false);
-  const [activeItem, setActiveItem] = useState(null); // { type: 'lesson' | 'quiz' | 'final', id, moduleId }
+  const [activeItem, setActiveItem] = useState(null); // { type: 'lesson' | 'quiz' | 'final' | 'complete', id, moduleId }
   const [selectedLessonMediaTab, setSelectedLessonMediaTab] = useState('video');
   const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'checklist' | 'discussion' | 'resources'
   const [completedTasks, setCompletedTasks] = useState({});
+  const [collapsedModules, setCollapsedModules] = useState({});
+  const [expandedLessons, setExpandedLessons] = useState({});
 
   // Track sub-item completions within lessons: { [lessonId]: { [tabId]: true } }
   const [completedLessonSubItems, setCompletedLessonSubItems] = useState(() => {
@@ -83,6 +86,31 @@ export const CoursePlayer = () => {
       return {};
     }
   });
+
+  // Hydrate sub-item completions once user ID loads after refresh
+  useEffect(() => {
+    if (typeof window === 'undefined' || !courseId || !user?.id) return;
+    try {
+      const storageKey = `_lms_subitems_${courseId}_${user.id}`;
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setCompletedLessonSubItems((prev) => ({ ...prev, ...parsed }));
+      }
+    } catch (_) {}
+  }, [courseId, user?.id]);
+
+  // Auto-expand currently active lesson & module in the syllabus tree
+  useEffect(() => {
+    if (activeItem?.id) {
+      if (activeItem.type === 'lesson') {
+        setExpandedLessons((prev) => ({ ...prev, [activeItem.id]: true }));
+      }
+      if (activeItem.moduleId) {
+        setCollapsedModules((prev) => ({ ...prev, [activeItem.moduleId]: false }));
+      }
+    }
+  }, [activeItem?.id, activeItem?.moduleId, activeItem?.type]);
 
   const markSubItemComplete = (lessonId, tabId) => {
     if (!lessonId || !tabId) return;
@@ -302,6 +330,28 @@ export const CoursePlayer = () => {
     return { currentLesson: null, currentModule: null };
   }, [course, activeItem]);
 
+  // Trim redundant parent lesson prefixes like "Lesson 1 (Video)" -> "Video"
+  const formatSubLabel = (rawLabel, lessonTitle, defaultLabel) => {
+    if (!rawLabel) return defaultLabel;
+    const trimmed = String(rawLabel).trim();
+    const lTitle = String(lessonTitle || '').trim();
+    if (lTitle && trimmed.toLowerCase().startsWith(lTitle.toLowerCase())) {
+      const rest = trimmed.slice(lTitle.length).trim();
+      const parenMatch = rest.match(/^\((.+)\)$/);
+      if (parenMatch) return parenMatch[1].trim() || defaultLabel;
+      if (!rest) return defaultLabel;
+      return rest.replace(/^[-–—:]\s*/, '').trim() || defaultLabel;
+    }
+    return trimmed;
+  };
+
+  // Avoid duplicate prefixes like "1. Module" + "Module 1: Section Name"
+  const cleanModuleTitle = (title, modIdx) => {
+    const raw = String(title || `Module ${modIdx + 1}`).trim();
+    const stripped = raw.replace(/^(?:module\s*\d+\s*[:\-–—.]?\s*|\d+\.\s*(?:module\s*[:\-–—.]?\s*)?)/i, '').trim();
+    return stripped || raw;
+  };
+
   // Helper to extract multi-media sub-items/topics for ANY lesson
   const getLessonSubItems = (les) => {
     if (!les) return [];
@@ -309,33 +359,44 @@ export const CoursePlayer = () => {
 
     // Check if lesson has explicit multi-step items in les.items
     if (Array.isArray(les.items) && les.items.length > 0) {
+      const typeCounts = {};
+      les.items.forEach((it) => {
+        const t = it.type || 'text';
+        typeCounts[t] = (typeCounts[t] || 0) + 1;
+      });
+
       les.items.forEach((item, idx) => {
-        const type = item.type || 'text';
-        let label = item.title || item.name;
-        let icon = Play;
+        const mediaType = item.type || 'text';
+        let defaultLabel = 'Study Notes';
+        let icon = FileText;
         let count = null;
 
-        if (type === 'video') {
-          label = label || 'Video Lecture';
+        if (mediaType === 'video') {
+          defaultLabel = 'Video Lecture';
           icon = Play;
           count = item.duration || null;
-        } else if (type === 'ppt') {
-          label = label || 'Presentation Deck';
+        } else if (mediaType === 'ppt') {
+          defaultLabel = 'Presentation';
           icon = BookOpen;
-        } else if (type === 'pdf') {
-          label = label || 'PDF Document';
+        } else if (mediaType === 'pdf') {
+          defaultLabel = 'PDF Manual';
           icon = FileText;
-        } else if (type === 'quiz') {
-          label = label || 'Checkpoint Quiz';
+        } else if (mediaType === 'quiz') {
+          defaultLabel = 'Checkpoint Quiz';
           icon = Award;
           count = item.questions?.length ? `${item.questions.length} Qs` : null;
         } else {
-          label = label || 'Study Notes';
+          defaultLabel = 'Study Notes';
           icon = FileText;
         }
 
+        const label = formatSubLabel(item.title || item.name, les.title, defaultLabel);
+        const stepId = typeCounts[mediaType] > 1 ? `${mediaType}-${idx}` : mediaType;
+
         items.push({
-          id: type,
+          id: stepId,
+          mediaType,
+          itemData: item,
           label,
           icon,
           count
@@ -350,7 +411,7 @@ export const CoursePlayer = () => {
       les.type === 'video'
     );
     if (hasVideo) {
-      items.push({ id: 'video', label: 'Video Lecture', icon: Play, count: les.duration || null });
+      items.push({ id: 'video', mediaType: 'video', itemData: les, label: 'Video Lecture', icon: Play, count: les.duration || null });
     }
 
     const hasPpt = Boolean(
@@ -359,7 +420,7 @@ export const CoursePlayer = () => {
       (les.fileUrl && (les.fileUrl.endsWith('.ppt') || les.fileUrl.endsWith('.pptx')))
     );
     if (hasPpt) {
-      items.push({ id: 'ppt', label: 'Presentation Deck', icon: BookOpen, count: null });
+      items.push({ id: 'ppt', mediaType: 'ppt', itemData: les, label: 'Presentation', icon: BookOpen, count: null });
     }
 
     const hasPdf = Boolean(
@@ -368,7 +429,7 @@ export const CoursePlayer = () => {
       (les.fileUrl && les.fileUrl.endsWith('.pdf'))
     );
     if (hasPdf) {
-      items.push({ id: 'pdf', label: 'PDF Document', icon: FileText, count: null });
+      items.push({ id: 'pdf', mediaType: 'pdf', itemData: les, label: 'PDF Manual', icon: FileText, count: null });
     }
 
     const hasText = Boolean(
@@ -377,7 +438,7 @@ export const CoursePlayer = () => {
       les.type === 'rich-text'
     );
     if (hasText) {
-      items.push({ id: 'text', label: 'Study Notes', icon: FileText, count: null });
+      items.push({ id: 'text', mediaType: 'text', itemData: les, label: 'Study Notes', icon: FileText, count: null });
     }
 
     const quizQuestions = les.questions || les.assessment?.questions || [];
@@ -389,6 +450,8 @@ export const CoursePlayer = () => {
     if (hasQuiz) {
       items.push({
         id: 'quiz',
+        mediaType: 'quiz',
+        itemData: les,
         label: 'Lesson Quiz',
         icon: Award,
         count: quizQuestions.length > 0 ? `${quizQuestions.length} Qs` : null
@@ -398,6 +461,8 @@ export const CoursePlayer = () => {
     if (items.length === 0) {
       items.push({
         id: 'text',
+        mediaType: 'text',
+        itemData: les,
         label: les.title || 'Learning Content',
         icon: Play,
         count: les.duration || null
@@ -407,46 +472,106 @@ export const CoursePlayer = () => {
     return items;
   };
 
-  // Helper to extract assessment/quiz details for a module
+  // Only return REAL module-level assessments (never duplicate a multi-part lesson quiz or invent empty fallbacks)
   const getModuleAssessmentInfo = (mod) => {
-    if (!mod) return null;
-    if (mod.assessment) {
-      const qCount = mod.assessment.questions?.length || 10;
-      return {
-        id: mod.assessment.id || `quiz-mod-${mod.id}`,
-        title: mod.assessment.title || 'Module Assessment',
-        questionsCount: qCount,
-        hasAssessment: true,
-        raw: mod.assessment
-      };
-    }
-    const quizLesson = mod.lessons?.find(
-      (l) => l.type === 'quiz' || l.assessment || l.items?.some((i) => i.type === 'quiz') || (l.questions && l.questions.length > 0)
-    );
-    if (quizLesson) {
-      const qCount = quizLesson.questions?.length || quizLesson.assessment?.questions?.length || quizLesson.items?.find((i) => i.type === 'quiz')?.questions?.length || 10;
-      return {
-        id: quizLesson.id,
-        title: quizLesson.title || 'Module Quiz',
-        questionsCount: qCount,
-        hasAssessment: true,
-        isLesson: true,
-        raw: quizLesson
-      };
-    }
+    if (!mod || !mod.assessment) return null;
+    const qList = mod.assessment.questions || [];
+    if (!mod.assessment.title && qList.length === 0) return null;
+    if (qList.length === 0) return null;
     return {
-      id: `mod-quiz-${mod.id}`,
-      title: `${mod.title} Assessment Quiz`,
-      questionsCount: 10,
-      hasAssessment: false,
-      isFallback: true
+      id: mod.assessment.id || `quiz-mod-${mod.id}`,
+      title: mod.assessment.title || 'Module Assessment',
+      questionsCount: qList.length,
+      hasAssessment: true,
+      raw: mod.assessment
     };
   };
+
+  // Resolve real final certification exam only when configured with questions
+  const rawFinalExam = course?.finalAssessment || course?.finalExam;
+  const hasRealFinalExam = Boolean(rawFinalExam && Array.isArray(rawFinalExam.questions) && rawFinalExam.questions.length > 0);
+  const finalExamObj = hasRealFinalExam ? rawFinalExam : null;
+
+  // Unified ordered step sequence across all modules, lessons, sub-items, module quizzes, and final exam
+  const learningSteps = useMemo(() => {
+    if (!course?.modules) return [];
+    const steps = [];
+    course.modules.forEach((mod, modIdx) => {
+      const modLessons = mod.lessons || [];
+      modLessons.forEach((les, lIdx) => {
+        const subs = getLessonSubItems(les);
+        subs.forEach((sub, sIdx) => {
+          steps.push({
+            key: `lesson-${les.id}-${sub.id}`,
+            type: 'lesson',
+            lessonId: les.id,
+            subItemId: sub.id,
+            mediaType: sub.mediaType,
+            moduleId: mod.id,
+            modIdx,
+            lIdx,
+            sIdx,
+            totalSubsInLesson: subs.length,
+            code: subs.length > 1 ? `${modIdx + 1}.${lIdx + 1}.${sIdx + 1}` : `${modIdx + 1}.${lIdx + 1}`,
+            title: les.title,
+            subLabel: sub.label,
+          });
+        });
+      });
+
+      const modQuiz = getModuleAssessmentInfo(mod);
+      if (modQuiz) {
+        steps.push({
+          key: `quiz-${modQuiz.id}`,
+          type: 'quiz',
+          id: modQuiz.id,
+          moduleId: mod.id,
+          modIdx,
+          code: `${modIdx + 1}.Q`,
+          title: modQuiz.title,
+          subLabel: `${modQuiz.questionsCount} ${modQuiz.questionsCount === 1 ? 'Question' : 'Questions'}`,
+        });
+      }
+    });
+
+    if (hasRealFinalExam) {
+      steps.push({
+        key: `final-${finalExamObj.id}`,
+        type: 'final',
+        id: finalExamObj.id,
+        code: 'FINAL',
+        title: finalExamObj.title || 'Final Certification Exam',
+        subLabel: `${finalExamObj.questions.length} ${finalExamObj.questions.length === 1 ? 'Question' : 'Questions'}`,
+      });
+    }
+
+    return steps;
+  }, [course, hasRealFinalExam, finalExamObj]);
 
   // Multi-Media tabs available in current lesson (Hook called unconditionally)
   const lessonMediaTabs = useMemo(() => {
     return getLessonSubItems(currentLesson);
   }, [currentLesson]);
+
+  const currentStepIndex = useMemo(() => {
+    if (!learningSteps.length || !activeItem) return -1;
+    if (activeItem.type === 'lesson') {
+      const exact = learningSteps.findIndex(
+        (s) => s.type === 'lesson' && s.lessonId === activeItem.id && s.subItemId === selectedLessonMediaTab
+      );
+      if (exact !== -1) return exact;
+      return learningSteps.findIndex((s) => s.type === 'lesson' && s.lessonId === activeItem.id);
+    }
+    if (activeItem.type === 'quiz') {
+      return learningSteps.findIndex(
+        (s) => s.type === 'quiz' && (s.id === activeItem.id || s.moduleId === activeItem.moduleId)
+      );
+    }
+    if (activeItem.type === 'final') {
+      return learningSteps.findIndex((s) => s.type === 'final');
+    }
+    return -1;
+  }, [learningSteps, activeItem, selectedLessonMediaTab]);
 
   const isTabCompleted = (lessonId, tabId) => {
     if (!lessonId || !tabId) return false;
@@ -532,7 +657,6 @@ export const CoursePlayer = () => {
   }
 
   const userAttempts = (user && attempts.filter((a) => a.userId === user.id && a.courseId === courseId)) || attempts.filter((a) => a.courseId === courseId) || [];
-  const finalExamObj = course.finalAssessment || course.finalExam || { id: `fe-${course.id}`, title: 'Final Certification Exam' };
 
   const isQuizPassed = (quizId) => {
     return userAttempts.some((a) => {
@@ -558,29 +682,31 @@ export const CoursePlayer = () => {
     if (prevLessons.length === 0) return true;
 
     const prevLessonsComplete = prevLessons.every((l) => Boolean(userProgress[l.id]));
-    const prevQuizPassed = !prevModule.assessment || isQuizPassed(prevModule.assessment.id);
+    const prevQuiz = getModuleAssessmentInfo(prevModule);
+    const prevQuizPassed = !prevQuiz || isQuizPassed(prevQuiz.id) || isQuizPassed(prevModule.id);
 
     return prevLessonsComplete && prevQuizPassed;
   };
 
-  const isFinalUnlocked = (extraLessonId = null) => {
-    if (isAdmin) return true;
+  const isCourseContentComplete = (extraLessonId = null, extraQuizModuleId = null) => {
     if (!course?.modules || course.modules.length === 0) return true;
-    
     const allLessons = course.modules.flatMap((m) => m.lessons || []);
-    if (allLessons.length === 0) return true;
-
-    const allCompleted = allLessons.every((l) => {
+    const lessonsDone = allLessons.every((l) => {
       if (extraLessonId && l.id === extraLessonId) return true;
       return Boolean(userProgress[l.id] || userProgress[l.id?.toString()]);
     });
+    const quizzesDone = course.modules.every((m) => {
+      const modQuiz = getModuleAssessmentInfo(m);
+      if (!modQuiz) return true;
+      if (extraQuizModuleId && m.id === extraQuizModuleId) return true;
+      return isQuizPassed(modQuiz.id) || isQuizPassed(m.id);
+    });
+    return lessonsDone && quizzesDone;
+  };
 
-    const extraCount = (extraLessonId && !userProgress[extraLessonId]) ? 1 : 0;
-    const totalLessons = allLessons.length;
-    const completedCount = Object.keys(userProgress).filter(k => userProgress[k]).length + extraCount;
-    const countCompleted = totalLessons > 0 && completedCount >= totalLessons;
-
-    return allCompleted || countCompleted;
+  const isFinalUnlocked = (extraLessonId = null) => {
+    if (isAdmin) return true;
+    return isCourseContentComplete(extraLessonId);
   };
 
   const findFirstUncompletedLesson = () => {
@@ -594,23 +720,105 @@ export const CoursePlayer = () => {
     return null;
   };
 
+  const userCourseCertificate = certificates.find(
+    (c) => c.courseId === courseId && (c.userId === user?.id || !c.userId)
+  );
+
   const isCertificateUnlocked = () => {
-    return userAttempts.some((a) => a.moduleId === null && a.passed);
+    return Boolean(userCourseCertificate) || userAttempts.some((a) => a.moduleId === null && a.passed);
   };
 
-  const totalLessonsCount = course.modules?.flatMap((m) => m.lessons || []).length || 0;
-  const completedLessonsCount = Object.keys(userProgress).filter(k => userProgress[k]).length;
+  const allCourseLessons = course.modules?.flatMap((m) => m.lessons || []) || [];
+  const totalLessonsCount = allCourseLessons.length;
+  const completedLessonsCount = allCourseLessons.filter(l => Boolean(userProgress[l.id])).length;
   const overallProgressPercentage = totalLessonsCount > 0 
     ? Math.round((completedLessonsCount / totalLessonsCount) * 100) 
     : 0;
 
+  const isStepCompleted = (step) => {
+    if (!step) return false;
+    if (step.type === 'lesson') {
+      return Boolean(userProgress[step.lessonId]) || isTabCompleted(step.lessonId, step.subItemId);
+    }
+    if (step.type === 'quiz') {
+      return isQuizPassed(step.id) || isQuizPassed(step.moduleId);
+    }
+    if (step.type === 'final') {
+      return isQuizPassed(step.id) || isCertificateUnlocked();
+    }
+    return false;
+  };
+
+  const navigateToStep = (step) => {
+    if (!step) return;
+    if (step.type === 'lesson') {
+      selectItem({ type: 'lesson', id: step.lessonId, moduleId: step.moduleId });
+      setSelectedLessonMediaTab(step.subItemId);
+    } else if (step.type === 'quiz') {
+      selectItem({ type: 'quiz', id: step.id, moduleId: step.moduleId });
+    } else if (step.type === 'final') {
+      selectItem({ type: 'final', id: step.id });
+    } else if (step.type === 'complete') {
+      selectItem({ type: 'complete', id: 'course-complete' });
+    }
+  };
+
+  const handleFinishCourse = async () => {
+    if (!isCertificateUnlocked() && user) {
+      const studentName = user?.fullName || user?.name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Graduate Member');
+      try {
+        await submitFinalAssessmentAttempt(courseId, 100, true, user.id, studentName, finalExamObj?.id || 'course-completion');
+      } catch (e) {
+        console.warn('[CoursePlayer] Course completion save warning:', e);
+      }
+    }
+    setActiveItem({ type: 'complete', id: 'course-complete' });
+    success('🎓 Congratulations! You have completed the entire course!');
+  };
+
+  const advanceAfterStep = (completedStepIdx, extraLessonId = null, extraQuizModuleId = null) => {
+    const nextStep = completedStepIdx !== -1 ? learningSteps[completedStepIdx + 1] : null;
+    if (nextStep) {
+      if (nextStep.type === 'final') {
+        if (isCourseContentComplete(extraLessonId, extraQuizModuleId)) {
+          navigateToStep(nextStep);
+          success('🎉 All lessons & quizzes complete! Opening Final Certification Exam...');
+        } else {
+          const uncompleted = findFirstUncompletedLesson();
+          if (uncompleted) selectItem(uncompleted);
+        }
+      } else {
+        navigateToStep(nextStep);
+      }
+    } else {
+      // No next step -> reached the end of course curriculum!
+      if (!hasRealFinalExam && isCourseContentComplete(extraLessonId, extraQuizModuleId)) {
+        handleFinishCourse();
+      } else {
+        const uncompleted = findFirstUncompletedLesson();
+        if (uncompleted && uncompleted.id !== extraLessonId) {
+          selectItem(uncompleted);
+        } else {
+          handleFinishCourse();
+        }
+      }
+    }
+  };
+
   const handleMarkComplete = () => {
     if (activeItem?.type === 'lesson') {
       const currentLessonId = activeItem.id;
-      markLessonComplete(courseId, currentLessonId, user.id);
-      success('Lesson marked complete!');
-      loadNextItem(currentLessonId);
+      if (user?.id) {
+        markLessonComplete(courseId, currentLessonId, user.id);
+      }
+      success('Lesson completed ✓');
+      advanceAfterStep(currentStepIndex, currentLessonId);
     }
+  };
+
+  const handleModuleQuizPassed = () => {
+    const completedModId = activeItem?.moduleId;
+    advanceAfterStep(currentStepIndex, null, completedModId);
   };
 
   const handleSubItemOrLessonComplete = () => {
@@ -630,75 +838,52 @@ export const CoursePlayer = () => {
     // Mark current sub-item complete
     markSubItemComplete(currentLesson.id, selectedLessonMediaTab);
 
-    // If there is another sub-item in this lesson, advance to it
+    // If there is another sub-item in this lesson, advance cleanly to it
     if (currentTabIndex < lessonMediaTabs.length - 1) {
       const nextTab = lessonMediaTabs[currentTabIndex + 1];
       setSelectedLessonMediaTab(nextTab.id);
       success(`✓ ${lessonMediaTabs[currentTabIndex].label} completed! Next: ${nextTab.label}`);
     } else {
-      // Last sub-item in this lesson -> complete the entire lesson!
+      // Last sub-item in this lesson -> complete entire lesson and advance!
       handleMarkComplete();
     }
   };
 
   const handleFinalPassed = () => {
-    const cert = certificates.find(c => c.courseId === courseId && (c.userId === user?.id || !c.userId)) || certificates[certificates.length - 1];
-    if (cert) {
-      navigate(`/certificates/${cert.id}`);
-    } else {
-      success('Congratulations! Official Certificate is available in your sidebar.');
-    }
+    setActiveItem({ type: 'complete', id: 'course-complete' });
+    success('🎓 Official Certificate unlocked!');
   };
 
-  const getAllSyllabusItems = () => {
-    const items = [];
-    (course.modules || []).forEach((mod) => {
-      (mod.lessons || []).forEach((l) => {
-        items.push({ type: 'lesson', id: l.id, moduleId: mod.id, title: l.title });
-      });
-      if (mod.assessment && (mod.assessment.title || (mod.assessment.questions && mod.assessment.questions.length > 0))) {
-        items.push({ type: 'quiz', id: mod.assessment.id, moduleId: mod.id, title: mod.assessment.title });
-      }
-    });
-    return items;
-  };
+  const loadNextItem = () => {
+    if (currentStepIndex === -1) return;
+    const currentStep = learningSteps[currentStepIndex];
+    const nextStep = learningSteps[currentStepIndex + 1];
 
-  const loadNextItem = (justCompletedLessonId = null) => {
-    const allItems = getAllSyllabusItems();
-    const currentIndex = allItems.findIndex(
-      (item) => item.type === activeItem?.type && item.id === activeItem?.id
-    );
-
-    if (currentIndex !== -1 && currentIndex < allItems.length - 1) {
-      setActiveItem(allItems[currentIndex + 1]);
-    } else {
-      if (isFinalUnlocked(justCompletedLessonId) && finalExamObj) {
-        setActiveItem({ type: 'final', id: finalExamObj.id });
-        success('🎉 All syllabus lessons completed! Opening Final Certification Exam now...');
+    if (!isAdmin && !isStepCompleted(currentStep)) {
+      if (currentStep?.type === 'quiz' || currentStep?.type === 'final') {
+        error('Please pass this assessment first to unlock the next section.');
       } else {
-        const uncompleted = findFirstUncompletedLesson();
-        if (uncompleted && uncompleted.id !== justCompletedLessonId) {
-          setActiveItem(uncompleted);
-        }
-      }
-    }
-  };
-
-  const loadPrevItem = () => {
-    const allItems = getAllSyllabusItems();
-    if (activeItem?.type === 'final') {
-      if (allItems.length > 0) {
-        setActiveItem(allItems[allItems.length - 1]);
+        error('Click "Complete & Continue" to finish this step before advancing.');
       }
       return;
     }
 
-    const currentIndex = allItems.findIndex(
-      (item) => item.type === activeItem?.type && item.id === activeItem?.id
-    );
+    if (nextStep) {
+      navigateToStep(nextStep);
+    } else if (isCourseContentComplete()) {
+      handleFinishCourse();
+    }
+  };
 
-    if (currentIndex > 0) {
-      setActiveItem(allItems[currentIndex - 1]);
+  const loadPrevItem = () => {
+    if (activeItem?.type === 'complete') {
+      if (learningSteps.length > 0) {
+        navigateToStep(learningSteps[learningSteps.length - 1]);
+      }
+      return;
+    }
+    if (currentStepIndex > 0) {
+      navigateToStep(learningSteps[currentStepIndex - 1]);
     }
   };
 
@@ -840,320 +1025,334 @@ export const CoursePlayer = () => {
   return (
     <div className="h-screen w-screen max-h-screen overflow-hidden flex flex-col bg-[#F8FAFC] text-[#0F172A] font-sans selection:bg-[#2563EB] selection:text-white select-none">
       
-      {/* ─── STICKY FULL SCREEN LEARNING STUDIO HEADER BAR ─────────── */}
-      <header className="h-14 bg-white border-b border-slate-200 px-3 sm:px-6 flex items-center justify-between z-30 shrink-0 shadow-xs select-none gap-2">
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+      {/* ─── SLIM LEARNING STUDIO HEADER BAR ─────────────────────────── */}
+      <header className="h-14 bg-white border-b border-slate-200 px-3 sm:px-5 flex items-center justify-between z-30 shrink-0 shadow-2xs select-none gap-2">
+        <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
           <Button
             variant="outline"
             size="sm"
             onClick={() => navigate('/app/dashboard')}
-            className="rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 font-extrabold text-xs h-9 px-2.5 sm:px-3.5 gap-1.5 cursor-pointer shadow-2xs shrink-0"
-            leftIcon={<ArrowLeft className="h-4 w-4 text-slate-600 shrink-0" />}
+            className="rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 font-bold text-xs h-8.5 px-2.5 sm:px-3 gap-1.5 cursor-pointer shrink-0"
+            leftIcon={<ArrowLeft className="h-3.5 w-3.5 text-slate-600 shrink-0" />}
           >
-            <span className="hidden sm:inline">Back to Dashboard</span>
+            <span className="hidden sm:inline">Dashboard</span>
             <span className="sm:hidden">Back</span>
           </Button>
 
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className={`h-9 px-2.5 sm:px-3 rounded-xl border transition-colors focus:outline-none shrink-0 cursor-pointer flex items-center gap-1.5 text-xs font-bold ${
+            className={`h-8.5 px-2.5 sm:px-3 rounded-xl border transition-colors focus:outline-none shrink-0 cursor-pointer flex items-center gap-1.5 text-xs font-bold ${
               sidebarOpen
                 ? 'bg-[#EFF6FF] border-[#2563EB]/40 text-[#2563EB]'
                 : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
             }`}
             title="Toggle Course Syllabus"
           >
-            <Menu className="h-4 w-4" />
-            <span className="text-xs font-extrabold">Syllabus</span>
+            <Menu className="h-3.5 w-3.5" />
+            <span>Syllabus</span>
           </button>
 
-          <div className="hidden lg:flex items-center gap-2.5 border-l border-slate-200 pl-3 truncate">
-            <h1 className="font-extrabold text-sm text-slate-900 truncate max-w-xs xl:max-w-md">
+          <div className="hidden md:flex items-center gap-2 border-l border-slate-200 pl-3 min-w-0">
+            <h1 className="font-extrabold text-sm text-slate-900 truncate max-w-xs lg:max-w-md">
               {course.title}
             </h1>
           </div>
         </div>
 
-        {/* Header Right Actions & Quick Navigation */}
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          
-          {/* Progress Pill Indicator */}
-          <div className="hidden sm:flex items-center gap-2 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-xl font-sans text-xs font-bold">
-            <span className="text-slate-600">{completedLessonsCount}/{totalLessonsCount} Lessons</span>
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-emerald-600 font-extrabold">{overallProgressPercentage}%</span>
+        {/* Header Right: Progress Pill & Full Screen */}
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 bg-slate-100 border border-slate-200/80 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold">
+            <span className="hidden sm:inline text-slate-600">{completedLessonsCount}/{totalLessonsCount} Lessons</span>
+            <span className={`w-2 h-2 rounded-full ${overallProgressPercentage === 100 ? 'bg-emerald-500' : 'bg-[#2563EB] animate-pulse'}`} />
+            <span className="text-slate-900 font-extrabold">{overallProgressPercentage}%</span>
           </div>
 
-          {/* Full Screen Mode & Sequential Prev/Next Buttons */}
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setIsFullscreenMode(!isFullscreenMode);
-                if (!isFullscreenMode) setSidebarOpen(false);
-              }}
-              className={`h-9 px-2.5 sm:px-3 rounded-xl border text-xs font-extrabold flex items-center gap-1.5 cursor-pointer transition-all ${
-                isFullscreenMode
-                  ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100 shadow-2xs'
-                  : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200 shadow-2xs'
-              }`}
-              title={isFullscreenMode ? 'Exit Full Screen' : 'Enter Full Screen'}
-            >
-              {isFullscreenMode ? (
-                <>
-                  <Minimize className="h-4 w-4 text-rose-600" />
-                  <span className="hidden md:inline">Exit</span>
-                </>
-              ) : (
-                <>
-                  <Maximize className="h-4 w-4 text-[#2563EB]" />
-                  <span className="hidden md:inline">Full Screen</span>
-                </>
-              )}
-            </button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={loadPrevItem}
-              className="h-9 px-2.5 sm:px-3 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 font-bold text-xs gap-1 cursor-pointer shadow-2xs"
-            >
-              <ChevronLeft className="h-4 w-4" />
-              <span className="hidden md:inline">Prev</span>
-            </Button>
-            <Button
-              size="sm"
-              onClick={loadNextItem}
-              className="h-9 px-3 sm:px-4 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-extrabold text-xs gap-1 cursor-pointer shadow-xs"
-            >
-              <span className="hidden md:inline">Next</span>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setIsFullscreenMode(!isFullscreenMode);
+              if (!isFullscreenMode) setSidebarOpen(false);
+            }}
+            className={`h-8.5 px-2.5 sm:px-3 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+              isFullscreenMode
+                ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100'
+                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
+            title={isFullscreenMode ? 'Exit Full Screen' : 'Enter Full Screen'}
+          >
+            {isFullscreenMode ? (
+              <>
+                <Minimize className="h-3.5 w-3.5 text-rose-600" />
+                <span className="hidden sm:inline">Exit Fullscreen</span>
+              </>
+            ) : (
+              <>
+                <Maximize className="h-3.5 w-3.5 text-[#2563EB]" />
+                <span className="hidden sm:inline">Fullscreen</span>
+              </>
+            )}
+          </button>
         </div>
       </header>
 
-      {/* ─── MAIN PLAYER BODY LAYOUT (CATALOG SIDEBAR + CONTENT CANVAS) ────── */}
+      {/* ─── MAIN PLAYER BODY LAYOUT (COMPACT SIDEBAR + CONTENT WORKSPACE) ────── */}
       <div className="flex-1 flex flex-col lg:flex-row min-w-0 min-h-0 relative overflow-hidden">
         
         {/* Mobile Backdrop for Syllabus Overlay */}
         {sidebarOpen && !isFullscreenMode && (
           <div
             onClick={() => setSidebarOpen(false)}
-            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-40 lg:hidden transition-opacity"
+            className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-40 lg:hidden transition-opacity"
           />
         )}
 
-        {/* LEFT COURSE CATALOG SYLLABUS SIDEBAR: Responsive drawer on mobile, inline panel on lg */}
+        {/* COMPACT LEFT SYLLABUS SIDEBAR (lg:w-80) */}
         <aside
           className={`bg-white border-r border-slate-200 flex flex-col shrink-0 transition-all duration-300 ease-in-out h-full select-none ${
             isFullscreenMode ? 'hidden' : ''
           } ${
             sidebarOpen
-              ? 'fixed inset-y-0 left-0 z-50 w-[92vw] max-w-md shadow-2xl lg:shadow-none lg:static lg:w-[420px] lg:z-20'
+              ? 'fixed inset-y-0 left-0 z-50 w-[85vw] max-w-[330px] shadow-2xl lg:shadow-none lg:static lg:w-80 lg:z-20'
               : 'hidden lg:flex lg:w-0 lg:overflow-hidden lg:border-none'
           }`}
         >
-          {/* Syllabus Progress Card with mobile close button */}
-          <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50/70 space-y-3">
-            <div className="flex items-center justify-between font-sans text-xs font-bold text-slate-700">
+          {/* Compact Syllabus Progress Card */}
+          <div className="p-3.5 border-b border-slate-200 bg-slate-50/70 space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold text-slate-700">
               <span className="flex items-center gap-1.5 text-slate-900">
-                <Layers className="h-4 w-4 text-[#2563EB]" />
-                <span className="font-extrabold">Syllabus Completion</span>
+                <Layers className="h-3.5 w-3.5 text-[#2563EB]" />
+                <span className="font-extrabold">Course Syllabus</span>
               </span>
               <div className="flex items-center gap-2">
-                <span className="text-[#2563EB] font-black">{overallProgressPercentage}%</span>
+                <span className={`font-extrabold ${overallProgressPercentage === 100 ? 'text-emerald-600' : 'text-[#2563EB]'}`}>
+                  {overallProgressPercentage}%
+                </span>
                 <button
                   type="button"
                   onClick={() => setSidebarOpen(false)}
                   className="lg:hidden p-1 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-200 transition-colors cursor-pointer"
                   title="Close Syllabus"
                 >
-                  <X className="h-4.5 w-4.5" />
+                  <X className="h-4 w-4" />
                 </button>
               </div>
             </div>
             
-            <div className="h-2.5 bg-slate-200/80 rounded-full overflow-hidden">
+            <div className="h-1.5 bg-slate-200/90 rounded-full overflow-hidden">
               <div
-                className="h-full bg-[#2563EB] rounded-full transition-all duration-500"
+                className={`h-full rounded-full transition-all duration-500 ${
+                  overallProgressPercentage === 100 ? 'bg-emerald-500' : 'bg-[#2563EB]'
+                }`}
                 style={{ width: `${overallProgressPercentage}%` }}
               />
             </div>
 
-            <div className="flex items-center justify-between font-sans text-[10px] text-slate-500 font-semibold">
-              <span>{completedLessonsCount} of {totalLessonsCount} Items Completed</span>
-              <span className="text-emerald-600 font-bold">
-                {overallProgressPercentage === 100 ? '● COMPLETE' : 'IN PROGRESS'}
+            <div className="flex items-center justify-between text-[10px] text-slate-500 font-semibold">
+              <span>{completedLessonsCount} of {totalLessonsCount} Lessons</span>
+              <span className={overallProgressPercentage === 100 ? 'text-emerald-600 font-bold' : 'text-slate-500'}>
+                {overallProgressPercentage === 100 ? '✓ Completed' : 'In Progress'}
               </span>
             </div>
           </div>
 
-          {/* Modules List matching hierarchical layout */}
-          <div className="flex-1 overflow-y-auto p-3.5 space-y-6 font-sans">
+          {/* Compact Hierarchical Modules -> Lessons -> Sub-Items -> Quiz Tree */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-3 font-sans">
             {course.modules?.map((mod, modIdx) => {
               const unlocked = isModuleUnlocked(modIdx);
               const modLessons = mod.lessons || [];
               const modCompletedCount = modLessons.filter(l => Boolean(userProgress[l.id])).length;
               const allModLessonsComplete = modLessons.length > 0 && modCompletedCount === modLessons.length;
-              
+              const isModCollapsed = Boolean(collapsedModules[mod.id]);
+              const modQuiz = getModuleAssessmentInfo(mod);
+              const modQuizPassed = modQuiz ? (isQuizPassed(modQuiz.id) || isQuizPassed(mod.id)) : true;
+              const isModuleFullyDone = allModLessonsComplete && modQuizPassed;
+              const modTitleText = cleanModuleTitle(mod.title, modIdx);
+
               return (
-                <div key={mod.id || modIdx} className={`space-y-3 ${!unlocked ? 'opacity-65' : ''}`}>
+                <div key={mod.id || modIdx} className={`rounded-xl border border-slate-200/80 bg-slate-50/40 overflow-hidden ${!unlocked ? 'opacity-65' : ''}`}>
                   
-                  {/* 1. Module Header matching Diagram: "1. Module" */}
-                  <div
+                  {/* Module Accordion Header */}
+                  <button
+                    type="button"
                     onClick={() => {
                       if (!unlocked) {
-                        error(`Module ${modIdx + 1} is locked. Complete all lessons in Module ${modIdx} first.`);
+                        error(`Module ${modIdx + 1} is locked. Complete all items in Module ${modIdx} first.`);
                       }
+                      setCollapsedModules(prev => ({ ...prev, [mod.id]: !isModCollapsed }));
                     }}
-                    className="flex items-center justify-between pb-1.5 border-b border-slate-200/80 cursor-pointer select-none"
+                    className="w-full flex items-center justify-between px-3 py-2.5 bg-white hover:bg-slate-50/80 text-left cursor-pointer transition-colors border-b border-slate-100"
                   >
-                    <div className="space-y-0.5 min-w-0 pr-2">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-base font-black text-slate-900 tracking-tight">
-                          {modIdx + 1}. Module
-                        </span>
-                        {!unlocked && <Lock className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
+                    <div className="flex items-center gap-2 min-w-0 pr-2">
+                      <span className={`w-5 h-5 rounded-md flex items-center justify-center font-mono text-[10px] font-black shrink-0 ${
+                        isModuleFullyDone
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : !unlocked
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-blue-50 text-[#2563EB]'
+                      }`}>
+                        {isModuleFullyDone ? '✓' : modIdx + 1}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-extrabold text-slate-900 truncate">
+                          {modIdx + 1}. {modTitleText}
+                        </div>
                       </div>
-                      <h4 className="font-bold text-xs text-slate-600 truncate">
-                        {mod.title}
-                      </h4>
                     </div>
 
-                    <div className="text-right shrink-0">
-                      <span className="font-mono text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md">
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="font-mono text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
                         {modCompletedCount}/{modLessons.length}
                       </span>
+                      {!unlocked && <Lock className="h-3 w-3 text-amber-500" />}
+                      <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition-transform ${isModCollapsed ? '-rotate-90' : ''}`} />
                     </div>
-                  </div>
-                  
-                  {/* Lessons & Sub-Topics Tree */}
-                  <div className="space-y-2.5 pt-0.5">
-                    {modLessons.map((les, lIdx) => {
-                      const active = activeItem?.type === 'lesson' && activeItem.id === les.id;
-                      const complete = Boolean(userProgress[les.id]);
-                      const subItems = getLessonSubItems(les);
+                  </button>
 
-                      return (
-                        <div
-                          key={les.id || lIdx}
-                          className="flex flex-col sm:flex-row items-stretch gap-2"
-                        >
-                          {/* Left Blue Card: e.g. "1.1 Lesson" */}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (!unlocked) {
-                                error(`Module ${modIdx + 1} is locked. Complete previous modules first.`);
-                                return;
-                              }
-                              selectItem({ type: 'lesson', id: les.id, moduleId: mod.id });
-                              // Select first uncompleted or first sub-item
-                              const firstPending = subItems.find(s => !isTabCompleted(les.id, s.id)) || subItems[0];
-                              if (firstPending) {
-                                setSelectedLessonMediaTab(firstPending.id);
-                              }
-                            }}
-                            className={`sm:w-36 shrink-0 rounded-2xl p-3 text-left transition-all duration-200 cursor-pointer flex flex-col justify-between border ${
-                              active
-                                ? 'bg-[#1D4ED8] text-white border-[#1D4ED8] shadow-md shadow-blue-600/30 ring-2 ring-blue-400 scale-[1.01]'
-                                : complete
-                                ? 'bg-[#2563EB] text-white border-[#2563EB] hover:bg-[#1D4ED8] shadow-2xs'
-                                : 'bg-[#2563EB] text-white border-[#2563EB] hover:bg-[#1D4ED8] shadow-2xs'
-                            }`}
-                          >
-                            <div className="space-y-1">
-                              <div className="flex items-center justify-between">
-                                <span className="font-mono text-[11px] font-black tracking-wide uppercase text-white/95">
-                                  {modIdx + 1}.{lIdx + 1} Lesson
+                  {/* Module Contents: Lessons + Nested Sub-items + Module Quiz */}
+                  {!isModCollapsed && (
+                    <div className="p-2 space-y-1.5">
+                      {modLessons.map((les, lIdx) => {
+                        const active = activeItem?.type === 'lesson' && activeItem.id === les.id;
+                        const complete = Boolean(userProgress[les.id]);
+                        const subItems = getLessonSubItems(les);
+                        const hasMultiSubs = subItems.length > 1;
+                        const isLessonExpanded = hasMultiSubs && (expandedLessons[les.id] ?? active);
+
+                        return (
+                          <div key={les.id || lIdx} className="space-y-1">
+                            {/* Compact Lesson Row */}
+                            <div
+                              className={`flex items-center justify-between rounded-xl border px-2.5 py-2 transition-all ${
+                                active
+                                  ? 'bg-[#2563EB] text-white border-[#2563EB] shadow-xs'
+                                  : complete
+                                  ? 'bg-white border-emerald-200/80 text-slate-800 hover:bg-slate-50'
+                                  : 'bg-white border-slate-200/90 text-slate-800 hover:border-blue-300 hover:bg-slate-50/70'
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!unlocked) {
+                                    error(`Module ${modIdx + 1} is locked. Complete previous modules first.`);
+                                    return;
+                                  }
+                                  selectItem({ type: 'lesson', id: les.id, moduleId: mod.id });
+                                  setExpandedLessons(prev => ({ ...prev, [les.id]: true }));
+                                  const firstPending = subItems.find(s => !isTabCompleted(les.id, s.id)) || subItems[0];
+                                  if (firstPending) {
+                                    setSelectedLessonMediaTab(firstPending.id);
+                                  }
+                                }}
+                                className="flex-1 flex items-center gap-2 min-w-0 text-left cursor-pointer"
+                              >
+                                <span className={`font-mono text-[10px] font-extrabold px-1.5 py-0.5 rounded shrink-0 ${
+                                  active
+                                    ? 'bg-white/20 text-white'
+                                    : complete
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : 'bg-blue-50 text-[#2563EB]'
+                                }`}>
+                                  {modIdx + 1}.{lIdx + 1}
                                 </span>
-                                {complete && (
-                                  <CheckCircle className="h-3.5 w-3.5 text-emerald-300 shrink-0" />
+                                <span className="font-bold text-xs truncate">
+                                  {les.title}
+                                </span>
+                              </button>
+
+                              <div className="flex items-center gap-1.5 shrink-0 pl-1">
+                                {complete ? (
+                                  <CheckCircle className={`h-3.5 w-3.5 ${active ? 'text-white' : 'text-emerald-500'}`} />
+                                ) : (
+                                  <span className={`font-mono text-[10px] ${active ? 'text-white/80' : 'text-slate-400'}`}>
+                                    {les.duration || (hasMultiSubs ? `${subItems.length}p` : '10m')}
+                                  </span>
+                                )}
+
+                                {hasMultiSubs && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setExpandedLessons(prev => ({ ...prev, [les.id]: !isLessonExpanded }));
+                                    }}
+                                    className={`p-0.5 rounded cursor-pointer transition-colors ${
+                                      active ? 'hover:bg-white/20 text-white' : 'hover:bg-slate-100 text-slate-400'
+                                    }`}
+                                    title={isLessonExpanded ? 'Collapse parts' : 'Show parts'}
+                                  >
+                                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isLessonExpanded ? '' : '-rotate-90'}`} />
+                                  </button>
                                 )}
                               </div>
-                              <p className="font-extrabold text-xs text-white leading-tight line-clamp-2">
-                                {les.title}
-                              </p>
                             </div>
 
-                            <div className="pt-2 flex items-center justify-between text-[10px] text-white/75 font-mono">
-                              <span>{les.duration || '10m'}</span>
-                              <span>{subItems.length} {subItems.length === 1 ? 'part' : 'parts'}</span>
-                            </div>
-                          </button>
+                            {/* Compact Indented Sub-Items List (1.1.1, 1.1.2, ...) */}
+                            {hasMultiSubs && isLessonExpanded && (
+                              <div className="ml-3 pl-2.5 border-l-2 border-slate-200 space-y-0.5 py-0.5">
+                                {subItems.map((sub, sIdx) => {
+                                  const isSubComplete = isTabCompleted(les.id, sub.id);
+                                  const isSubUnlocked = isAdmin || (unlocked && (complete || sIdx === 0 || isTabCompleted(les.id, subItems[sIdx - 1]?.id)));
+                                  const isSubActive = active && selectedLessonMediaTab === sub.id;
 
-                          {/* Right Sub-Items List: • 1.1.1 Learning Objectives / Topic */}
-                          <div className="flex-1 bg-slate-100/80 border border-slate-200/90 rounded-2xl p-2 flex flex-col justify-center space-y-1 shadow-2xs">
-                            {subItems.map((sub, sIdx) => {
-                              const isSubComplete = isTabCompleted(les.id, sub.id);
-                              const isSubUnlocked = unlocked && (complete || sIdx === 0 || isTabCompleted(les.id, subItems[sIdx - 1]?.id));
-                              const isSubActive = active && selectedLessonMediaTab === sub.id;
+                                  return (
+                                    <button
+                                      key={sub.id || sIdx}
+                                      type="button"
+                                      onClick={() => {
+                                        if (!unlocked) {
+                                          error(`Module ${modIdx + 1} is locked.`);
+                                          return;
+                                        }
+                                        if (!isSubUnlocked) {
+                                          error(`Complete ${modIdx + 1}.${lIdx + 1}.${sIdx} first.`);
+                                          return;
+                                        }
+                                        selectItem({ type: 'lesson', id: les.id, moduleId: mod.id });
+                                        setSelectedLessonMediaTab(sub.id);
+                                      }}
+                                      disabled={!isSubUnlocked}
+                                      className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left text-[11px] transition-all cursor-pointer ${
+                                        isSubActive
+                                          ? 'bg-[#EFF6FF] text-[#1D4ED8] font-extrabold border border-blue-200'
+                                          : isSubComplete
+                                          ? 'text-slate-700 hover:bg-white font-semibold'
+                                          : isSubUnlocked
+                                          ? 'text-slate-600 hover:bg-white font-medium'
+                                          : 'opacity-50 cursor-not-allowed text-slate-400'
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-1.5 truncate pr-1">
+                                        <span className="font-mono text-[10px] font-bold text-slate-400 shrink-0">
+                                          {modIdx + 1}.{lIdx + 1}.{sIdx + 1}
+                                        </span>
+                                        <span className="truncate">{sub.label}</span>
+                                      </div>
 
-                              return (
-                                <button
-                                  key={sub.id || sIdx}
-                                  type="button"
-                                  onClick={() => {
-                                    if (!unlocked) {
-                                      error(`Module ${modIdx + 1} is locked.`);
-                                      return;
-                                    }
-                                    if (!isSubUnlocked) {
-                                      error(`Please complete ${modIdx + 1}.${lIdx + 1}.${sIdx} first.`);
-                                      return;
-                                    }
-                                    selectItem({ type: 'lesson', id: les.id, moduleId: mod.id });
-                                    setSelectedLessonMediaTab(sub.id);
-                                  }}
-                                  disabled={!isSubUnlocked}
-                                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-left text-xs transition-all cursor-pointer ${
-                                    isSubActive
-                                      ? 'bg-[#2563EB] text-white font-extrabold shadow-xs'
-                                      : isSubComplete
-                                      ? 'bg-white/80 hover:bg-white text-slate-800 font-bold border border-slate-200/60'
-                                      : isSubUnlocked
-                                      ? 'bg-white/50 hover:bg-white text-slate-700 font-semibold border border-transparent'
-                                      : 'opacity-50 cursor-not-allowed text-slate-400'
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-1.5 truncate pr-1">
-                                    <span className={`shrink-0 ${isSubActive ? 'text-white' : 'text-[#2563EB]'}`}>•</span>
-                                    <span className="font-mono text-[10px] font-bold opacity-80 shrink-0">
-                                      {modIdx + 1}.{lIdx + 1}.{sIdx + 1}
-                                    </span>
-                                    <span className="truncate text-[11px] leading-tight">
-                                      {sub.label}
-                                    </span>
-                                  </div>
-
-                                  <div className="shrink-0 ml-1">
-                                    {isSubComplete ? (
-                                      <CheckCircle className={`h-3.5 w-3.5 ${isSubActive ? 'text-white' : 'text-emerald-500'}`} />
-                                    ) : !isSubUnlocked ? (
-                                      <Lock className="h-3 w-3 text-slate-400" />
-                                    ) : isSubActive ? (
-                                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                                    ) : null}
-                                  </div>
-                                </button>
-                              );
-                            })}
+                                      <div className="shrink-0 ml-1">
+                                        {isSubComplete ? (
+                                          <CheckCircle className="h-3.5 w-3.5 text-emerald-500" />
+                                        ) : !isSubUnlocked ? (
+                                          <Lock className="h-3 w-3 text-slate-400" />
+                                        ) : isSubActive ? (
+                                          <span className="w-1.5 h-1.5 rounded-full bg-[#2563EB] block animate-pulse" />
+                                        ) : null}
+                                      </div>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
 
-                    {/* Bottom Module Quiz Card matching diagram */}
-                    {(() => {
-                      const modQuiz = getModuleAssessmentInfo(mod);
-                      const quizActive = activeItem?.type === 'quiz' && (activeItem.id === modQuiz.id || activeItem.moduleId === mod.id);
-                      const quizPassed = isQuizPassed(modQuiz.id) || isQuizPassed(mod.id);
-                      const isQuizUnlocked = unlocked && allModLessonsComplete;
+                      {/* Real Module Assessment Quiz Row (Only when mod.assessment is configured) */}
+                      {modQuiz && (() => {
+                        const quizActive = activeItem?.type === 'quiz' && (activeItem.id === modQuiz.id || activeItem.moduleId === mod.id);
+                        const isQuizUnlocked = isAdmin || (unlocked && allModLessonsComplete);
 
-                      return (
-                        <div className="flex flex-col sm:flex-row items-stretch gap-2 pt-1">
-                          {/* Left Quiz Blue Card */}
+                        return (
                           <button
                             type="button"
                             onClick={() => {
@@ -1161,105 +1360,73 @@ export const CoursePlayer = () => {
                                 error(`Module ${modIdx + 1} is locked.`);
                                 return;
                               }
-                              if (!allModLessonsComplete) {
+                              if (!isQuizUnlocked) {
                                 error(`Complete all lessons in Module ${modIdx + 1} first to unlock this Quiz.`);
                                 return;
                               }
-                              if (modQuiz.isLesson) {
-                                selectItem({ type: 'lesson', id: modQuiz.id, moduleId: mod.id });
-                              } else {
-                                selectItem({ type: 'quiz', id: modQuiz.id, moduleId: mod.id });
-                              }
+                              selectItem({ type: 'quiz', id: modQuiz.id, moduleId: mod.id });
                             }}
-                            className={`sm:w-36 shrink-0 rounded-2xl p-3 text-left transition-all duration-200 cursor-pointer flex flex-col justify-between border ${
+                            className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl border text-left text-xs transition-all cursor-pointer ${
                               quizActive
-                                ? 'bg-[#1D4ED8] text-white border-[#1D4ED8] shadow-md ring-2 ring-blue-400 scale-[1.01]'
-                                : quizPassed
-                                ? 'bg-[#2563EB] text-white border-[#2563EB]'
+                                ? 'bg-[#2563EB] text-white border-[#2563EB] shadow-xs font-extrabold'
+                                : modQuizPassed
+                                ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900 font-bold'
                                 : isQuizUnlocked
-                                ? 'bg-[#2563EB] text-white border-[#2563EB] hover:bg-[#1D4ED8]'
-                                : 'bg-slate-700 text-slate-200 border-slate-700 opacity-75'
+                                ? 'bg-amber-50/70 border-amber-200/80 text-amber-900 hover:bg-amber-100/70 font-bold'
+                                : 'bg-slate-100 border-slate-200 text-slate-500 opacity-75 font-semibold'
                             }`}
                           >
-                            <div className="space-y-0.5">
-                              <div className="flex items-center justify-between">
-                                <span className="font-mono text-[11px] font-black tracking-wide uppercase text-white/95">
-                                  Quiz
-                                </span>
-                                {quizPassed ? (
-                                  <CheckCircle className="h-3.5 w-3.5 text-emerald-300 shrink-0" />
-                                ) : !isQuizUnlocked ? (
-                                  <Lock className="h-3.5 w-3.5 text-amber-300 shrink-0" />
-                                ) : null}
-                              </div>
-                              <p className="font-extrabold text-xs text-white leading-tight">
-                                ca. {modQuiz.questionsCount} questions
-                              </p>
-                            </div>
-
-                            <div className="pt-2 flex items-center justify-between text-[10px] text-white/75 font-mono">
-                              <span>{quizPassed ? 'PASSED ✓' : isQuizUnlocked ? 'READY' : 'LOCKED'}</span>
-                              <span>70% min</span>
-                            </div>
-                          </button>
-
-                          {/* Right Details Box */}
-                          <div className="flex-1 bg-slate-100/80 border border-slate-200/90 rounded-2xl p-2.5 flex flex-col justify-center space-y-1 shadow-2xs">
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
-                                <Award className="h-3.5 w-3.5 text-amber-500" />
-                                <span>Module Assessment</span>
+                            <div className="flex items-center gap-2 min-w-0 pr-2">
+                              <Award className={`h-3.5 w-3.5 shrink-0 ${quizActive ? 'text-white' : 'text-amber-500'}`} />
+                              <span className="truncate">{modQuiz.title}</span>
+                              <span className={`font-mono text-[10px] shrink-0 ${quizActive ? 'text-white/80' : 'text-slate-400'}`}>
+                                ({modQuiz.questionsCount} Qs)
                               </span>
-                              {quizPassed && (
-                                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-mono text-[9px] font-bold">
-                                  PASSED ✓
-                                </span>
-                              )}
                             </div>
-                            <p className="text-[11px] text-slate-500 font-medium leading-snug">
-                              {quizPassed
-                                ? 'Knowledge checkpoint verified. You have mastered this module.'
-                                : isQuizUnlocked
-                                ? 'Test your retention of the core principles before advancing.'
-                                : `Complete all ${modLessons.length} lessons in Module ${modIdx + 1} to unlock.`}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
+
+                            {modQuizPassed ? (
+                              <CheckCircle className={`h-3.5 w-3.5 shrink-0 ${quizActive ? 'text-white' : 'text-emerald-500'}`} />
+                            ) : !isQuizUnlocked ? (
+                              <Lock className="h-3 w-3 shrink-0 text-slate-400" />
+                            ) : null}
+                          </button>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
               );
             })}
 
-            {/* Final Exam Access Section */}
-            {finalExamObj && (
-              <div className={`pt-4 border-t border-slate-200 space-y-2 ${!isFinalUnlocked() ? 'opacity-75' : ''}`}>
-                <div className="flex items-center justify-between px-2 font-mono text-[9px] font-bold text-slate-500 uppercase tracking-wider">
-                  <span>CERTIFICATION EXAM</span>
-                  {!isFinalUnlocked() && <Lock className="h-3.5 w-3.5 text-amber-500" />}
+            {/* Final Certification Exam OR Direct Course Completion Card */}
+            {hasRealFinalExam ? (
+              <div className={`pt-2 space-y-2 ${!isFinalUnlocked() ? 'opacity-80' : ''}`}>
+                <div className="flex items-center justify-between px-1 font-mono text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                  <span>Certification Exam</span>
+                  {!isFinalUnlocked() && <Lock className="h-3 w-3 text-amber-500" />}
                 </div>
 
                 <button
+                  type="button"
                   onClick={() => {
                     if (!isFinalUnlocked()) {
                       const remaining = totalLessonsCount - completedLessonsCount;
-                      error(`Certificate Exam Locked: Complete all ${totalLessonsCount} lessons first to unlock (${remaining} remaining).`);
+                      error(`Certificate Exam Locked: Complete all ${totalLessonsCount} lessons first (${remaining} remaining).`);
                       return;
                     }
                     selectItem({ type: 'final', id: finalExamObj.id });
                   }}
-                  className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-bold border cursor-pointer text-left transition-all ${
+                  className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs font-bold border cursor-pointer text-left transition-all ${
                     activeItem?.type === 'final'
-                      ? 'bg-[#2563EB] text-white border-[#2563EB] shadow-md'
+                      ? 'bg-[#2563EB] text-white border-[#2563EB] shadow-xs'
                       : isFinalUnlocked()
-                      ? 'bg-amber-50 border-amber-200/80 text-amber-900 hover:bg-amber-100/80'
+                      ? 'bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100/80'
                       : 'bg-slate-100 border-slate-200 text-slate-500'
                   }`}
                 >
-                  <div className="flex items-center gap-2.5">
-                    <Award className="h-4.5 w-4.5 shrink-0 text-amber-500" />
-                    <span>{finalExamObj.title || 'Final Certification Exam'}</span>
+                  <div className="flex items-center gap-2 min-w-0 pr-2">
+                    <Award className={`h-4 w-4 shrink-0 ${activeItem?.type === 'final' ? 'text-white' : 'text-amber-500'}`} />
+                    <span className="truncate">{finalExamObj.title || 'Final Certification Exam'}</span>
                   </div>
                   {isQuizPassed(finalExamObj.id) ? (
                     <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
@@ -1267,304 +1434,393 @@ export const CoursePlayer = () => {
                     <Lock className="h-3.5 w-3.5 text-slate-400 shrink-0" />
                   ) : null}
                 </button>
-
-                {/* View Certificate Link */}
-                {isCertificateUnlocked() && (
-                  <Link
-                    to={`/certificates/${(certificates.find(c => c.courseId === courseId && (c.userId === user?.id || !c.userId)) || certificates[certificates.length - 1])?.id}`}
-                    className="block w-full p-3 rounded-xl text-xs font-bold bg-emerald-50 border border-emerald-200 text-emerald-700 text-center hover:bg-emerald-100 transition-all shadow-2xs cursor-pointer"
-                  >
-                    View Official Certificate 🎓
-                  </Link>
-                )}
               </div>
+            ) : (
+              <div className="pt-2 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isCourseContentComplete() && !isAdmin) {
+                      const remaining = totalLessonsCount - completedLessonsCount;
+                      error(`Complete all remaining lessons (${remaining} left) to finish the course.`);
+                      return;
+                    }
+                    handleFinishCourse();
+                  }}
+                  className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs font-bold border cursor-pointer text-left transition-all ${
+                    activeItem?.type === 'complete'
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                      : isCourseContentComplete() || isCertificateUnlocked()
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100'
+                      : 'bg-slate-100 border-slate-200 text-slate-500'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0 pr-2">
+                    <Award className={`h-4 w-4 shrink-0 ${activeItem?.type === 'complete' ? 'text-white' : 'text-emerald-600'}`} />
+                    <span className="truncate">
+                      {isCertificateUnlocked() || isCourseContentComplete() ? 'Course Complete & Certificate' : 'Finish Course & Certify'}
+                    </span>
+                  </div>
+                  {isCertificateUnlocked() || isCourseContentComplete() ? (
+                    <CheckCircle className={`h-4 w-4 shrink-0 ${activeItem?.type === 'complete' ? 'text-white' : 'text-emerald-500'}`} />
+                  ) : (
+                    <Lock className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* Direct Certificate Link Once Unlocked */}
+            {userCourseCertificate && (
+              <Link
+                to={`/certificates/${userCourseCertificate.id}`}
+                className="block w-full p-2.5 rounded-xl text-xs font-extrabold bg-emerald-600 hover:bg-emerald-700 text-white text-center transition-all shadow-xs cursor-pointer"
+              >
+                View Official Certificate 🎓
+              </Link>
             )}
           </div>
         </aside>
 
-        {/* CENTER PLAYER VIEWER CANVAS (FULL SCREEN CAPABLE) */}
-        <main className={`flex-1 overflow-y-auto w-full font-sans transition-all duration-300 ${
-          isFullscreenMode ? 'p-0 bg-slate-950 flex flex-col h-full min-h-0' : 'p-4 sm:p-6 lg:p-8 space-y-6 pb-24 bg-[#F8FAFC]'
-        }`}>
-          
-          {/* Active Lesson View */}
-          {activeItem?.type === 'lesson' && currentLesson && (
-            <div className={isFullscreenMode ? 'h-full flex flex-col justify-between space-y-0 w-full' : 'space-y-6 max-w-5xl mx-auto'}>
-              
-              {/* Lesson Title Header Card */}
-              <div className={`bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4 ${
-                isFullscreenMode ? 'hidden' : ''
-              }`}>
-                <div className="space-y-1.5 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="px-2.5 py-0.5 rounded-md bg-[#EFF6FF] text-[#2563EB] font-mono text-[9px] font-extrabold uppercase tracking-wider">
-                      ● {currentLesson.type?.toUpperCase() || 'LESSON'}
-                    </span>
-                    {currentModule && (
-                      <span className="font-mono text-[10px] text-slate-500 font-bold uppercase tracking-wider truncate max-w-[220px] sm:max-w-none">
-                        [ MODULE: {currentModule.title} ]
-                      </span>
-                    )}
-                  </div>
+        {/* RIGHT WORKSPACE: SCROLLABLE PLAYER CANVAS + PERSISTENT BOTTOM NAV BAR */}
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
+          <main className={`flex-1 overflow-y-auto w-full font-sans transition-all duration-300 ${
+            isFullscreenMode ? 'p-0 bg-slate-950 flex flex-col h-full min-h-0' : 'p-3 sm:p-5 lg:p-6 space-y-4 bg-[#F8FAFC]'
+          }`}>
+            
+            {/* ─── ACTIVE LESSON VIEW ─── */}
+            {activeItem?.type === 'lesson' && currentLesson && (() => {
+              const activeSubItem = lessonMediaTabs.find((t) => t.id === selectedLessonMediaTab) || lessonMediaTabs[0];
+              const activeMediaType = activeSubItem?.mediaType || 'text';
+              const activeItemData = activeSubItem?.itemData || currentLesson;
+              const currentStep = currentStepIndex !== -1 ? learningSteps[currentStepIndex] : null;
+              const lessonNotes = currentLesson.body || currentLesson.items?.find((i) => i.type === 'text' || i.type === 'rich-text')?.body || currentLesson.notes || currentLesson.content || '';
+              const showSeparateNotesCard = Boolean(
+                lessonNotes &&
+                lessonNotes.trim() &&
+                activeMediaType !== 'text' &&
+                !lessonMediaTabs.some((t) => t.mediaType === 'text') &&
+                !isFullscreenMode
+              );
 
-                  <h2 className="text-xl sm:text-2xl lg:text-3xl font-extrabold text-slate-900 tracking-tight leading-snug">
-                    {currentLesson.title}
-                  </h2>
-                </div>
+              return (
+                <div className={isFullscreenMode ? 'h-full flex flex-col justify-between space-y-0 w-full' : 'space-y-4 max-w-5xl mx-auto'}>
+                  
+                  {/* Compact Step Breadcrumb Header Card */}
+                  {!isFullscreenMode && (
+                    <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {currentStep && (
+                            <span className="px-2 py-0.5 rounded-md bg-[#EFF6FF] text-[#2563EB] font-mono text-[10px] font-extrabold tracking-wide">
+                              {currentStep.code} · {activeSubItem?.label || 'Lesson'}
+                            </span>
+                          )}
+                          {currentModule && (
+                            <span className="text-[11px] font-semibold text-slate-500 truncate">
+                              {cleanModuleTitle(currentModule.title, currentStep?.modIdx || 0)}
+                            </span>
+                          )}
+                        </div>
+                        <h2 className="text-base sm:text-xl font-extrabold text-slate-900 tracking-tight truncate">
+                          {currentLesson.title}
+                        </h2>
+                      </div>
 
-                <div className="flex items-center gap-2 flex-wrap shrink-0">
-                  {currentLesson.duration && (
-                    <div className="px-2.5 py-1.5 bg-slate-100 rounded-xl font-mono text-xs font-bold text-slate-700 border border-slate-200 flex items-center gap-1.5">
-                      <Clock className="h-3.5 w-3.5 text-slate-500" />
-                      <span>{currentLesson.duration}</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {(activeItemData?.duration || currentLesson.duration) && (
+                          <span className="px-2.5 py-1 bg-slate-100 rounded-lg font-mono text-[11px] font-bold text-slate-600 border border-slate-200/80 flex items-center gap-1">
+                            <Clock className="h-3 w-3 text-slate-500" />
+                            <span>{activeItemData?.duration || currentLesson.duration}</span>
+                          </span>
+                        )}
+                        {Boolean(userProgress[currentLesson.id]) && (
+                          <span className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold text-[11px] flex items-center gap-1">
+                            <CheckCircle className="h-3.5 w-3.5" />
+                            <span>Completed</span>
+                          </span>
+                        )}
+                      </div>
                     </div>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={() => setIsFullscreenMode(!isFullscreenMode)}
-                    className="h-9 sm:h-10 px-3 rounded-xl border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                    title="Toggle Full Screen"
-                  >
-                    <Maximize className="h-4 w-4 text-[#2563EB]" />
-                    <span className="hidden sm:inline">Full Screen</span>
-                  </button>
-
-                  {(() => {
-                    const currentTabIndex = lessonMediaTabs.findIndex((t) => t.id === selectedLessonMediaTab);
-                    const isMulti = lessonMediaTabs.length > 1;
-                    const isLessonDone = Boolean(userProgress[currentLesson.id]);
-                    const isCurrentTabDone = isTabCompleted(currentLesson.id, selectedLessonMediaTab);
-                    const isLastTab = currentTabIndex === lessonMediaTabs.length - 1;
-
-                    let btnText = isLessonDone ? 'Completed ✓' : 'Mark Complete & Next';
-                    if (!isLessonDone && isMulti) {
-                      if (!isLastTab) {
-                        btnText = isCurrentTabDone ? 'Next Material →' : 'Complete & Next Material →';
-                      } else {
-                        btnText = 'Complete Lesson & Next →';
-                      }
-                    }
-
-                    return (
-                      <Button
-                        type="button"
-                        onClick={isMulti ? handleSubItemOrLessonComplete : handleMarkComplete}
-                        className={`rounded-xl text-xs font-bold h-9 sm:h-10 px-3.5 sm:px-4 gap-1.5 sm:gap-2 cursor-pointer transition-all ${
-                          isLessonDone
-                            ? 'bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100'
-                            : 'bg-[#2563EB] hover:bg-[#1D4ED8] text-white shadow-xs font-extrabold'
-                        }`}
-                      >
-                        <CheckCircle className="h-4 w-4 shrink-0" />
-                        <span>{btnText}</span>
-                      </Button>
-                    );
-                  })()}
-                </div>
-              </div>
-
-              {/* Dynamic Content Player View Frame (Full Screen Capable) */}
-              {(() => {
-                const lessonItems = Array.isArray(currentLesson.items) ? currentLesson.items : [];
-                const videoItem = lessonItems.find((i) => i.type === 'video');
-                const pptItem = lessonItems.find((i) => i.type === 'ppt');
-                const pdfItem = lessonItems.find((i) => i.type === 'pdf');
-                const textItem = lessonItems.find((i) => i.type === 'text' || i.type === 'rich-text');
-                const lessonNotes = currentLesson.body || textItem?.body || currentLesson.notes || currentLesson.content || '';
-
-                return (
-                  <>
-                    <div className={`transition-all duration-300 ${
-                      isFullscreenMode
-                        ? 'flex-1 w-full bg-black p-0 relative overflow-y-auto flex flex-col justify-center'
-                        : 'rounded-2xl bg-black border border-slate-800/80 shadow-2xl overflow-hidden relative'
-                    }`}>
-                      <div className={isFullscreenMode ? 'w-full h-full min-h-0 bg-black flex flex-col justify-center' : 'bg-black rounded-2xl overflow-hidden'}>
-                        {selectedLessonMediaTab === 'quiz' ? (
+                  {/* Dynamic Content Player Frame */}
+                  <div className={`transition-all duration-300 ${
+                    isFullscreenMode
+                      ? 'flex-1 w-full bg-black p-0 relative overflow-y-auto flex flex-col justify-center'
+                      : 'rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden relative'
+                  }`}>
+                    <div className={isFullscreenMode ? 'w-full h-full min-h-0 bg-black flex flex-col justify-center' : 'overflow-hidden'}>
+                      {activeMediaType === 'quiz' ? (
+                        <div className="p-3 sm:p-5 bg-[#F8FAFC]">
                           <AssessmentPlayer
+                            key={`quiz-${currentLesson.id}-${selectedLessonMediaTab}`}
                             moduleId={activeItem.moduleId}
                             courseId={courseId}
                             isFinal={false}
                             onPassed={handleSubItemOrLessonComplete}
                             lessonId={currentLesson.id}
+                            courseData={course}
                           />
-                        ) : selectedLessonMediaTab === 'video' ? (
+                        </div>
+                      ) : activeMediaType === 'video' ? (
+                        <div className="bg-black">
                           <VideoPlayer
+                            key={`video-${currentLesson.id}-${selectedLessonMediaTab}`}
                             content={{
-                              videoUrl: currentLesson.videoUrl || videoItem?.videoUrl || (currentLesson.type === 'video' ? currentLesson.fileUrl : '') || '',
-                              bunnyVideoId: currentLesson.bunnyVideoId || videoItem?.bunnyVideoId || '',
-                              title: currentLesson.title
+                              videoUrl: activeItemData?.videoUrl || currentLesson.videoUrl || (currentLesson.type === 'video' ? currentLesson.fileUrl : '') || '',
+                              bunnyVideoId: activeItemData?.bunnyVideoId || currentLesson.bunnyVideoId || '',
+                              title: activeSubItem?.label || currentLesson.title
                             }}
                             onComplete={handleSubItemOrLessonComplete}
                           />
-                        ) : selectedLessonMediaTab === 'ppt' ? (
-                          <div className="space-y-3">
-                            <PptPlayer
-                              content={{
-                                title: currentLesson.title,
-                                fileUrl: currentLesson.pptUrl || pptItem?.fileUrl || (currentLesson.type === 'ppt' ? currentLesson.fileUrl : '') || '',
-                                pdfUrl: currentLesson.pptPdfUrl || pptItem?.pdfUrl || (currentLesson.type === 'ppt' ? currentLesson.pdfUrl : '') || '',
-                                fileName: currentLesson.pptFileName || pptItem?.fileName || currentLesson.fileName || 'presentation.pptx',
-                                slides: currentLesson.slides || pptItem?.slides || [],
-                                duration: currentLesson.duration || pptItem?.duration || ''
-                              }}
-                              onComplete={handleSubItemOrLessonComplete}
-                            />
-                            {lessonMediaTabs.length > 1 && !isFullscreenMode && (
-                              <div className="bg-slate-900/90 text-white p-3 rounded-xl border border-slate-800 flex items-center justify-between">
-                                <span className="text-xs text-slate-300 font-medium">Finished reviewing this presentation?</span>
-                                <Button
-                                  type="button"
-                                  onClick={handleSubItemOrLessonComplete}
-                                  className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-bold h-8 px-3.5 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs"
-                                >
-                                  <span>{lessonMediaTabs.findIndex(t => t.id === 'ppt') === lessonMediaTabs.length - 1 ? 'Complete Lesson & Next →' : 'Complete & Next Material →'}</span>
-                                </Button>
-                              </div>
-                            )}
-                          </div>
-                        ) : selectedLessonMediaTab === 'pdf' ? (
-                          <div className="space-y-3">
-                            <PdfPlayer
-                              content={{
-                                title: currentLesson.title,
-                                fileUrl: currentLesson.pdfUrl || pdfItem?.fileUrl || (currentLesson.type === 'pdf' ? currentLesson.fileUrl : '') || '',
-                                fileName: currentLesson.pdfFileName || pdfItem?.fileName || currentLesson.fileName || 'document.pdf',
-                                duration: currentLesson.duration || pdfItem?.duration || ''
-                              }}
-                              onComplete={handleSubItemOrLessonComplete}
-                            />
-                            {lessonMediaTabs.length > 1 && !isFullscreenMode && (
-                              <div className="bg-slate-900/90 text-white p-3 rounded-xl border border-slate-800 flex items-center justify-between">
-                                <span className="text-xs text-slate-300 font-medium">Finished reading this document?</span>
-                                <Button
-                                  type="button"
-                                  onClick={handleSubItemOrLessonComplete}
-                                  className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-bold h-8 px-3.5 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs"
-                                >
-                                  <span>{lessonMediaTabs.findIndex(t => t.id === 'pdf') === lessonMediaTabs.length - 1 ? 'Complete Lesson & Next →' : 'Complete & Next Material →'}</span>
-                                </Button>
-                              </div>
-                            )}
-                          </div>
-                        ) : selectedLessonMediaTab === 'text' ? (
-                          <div className="p-6 sm:p-8 bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-sm leading-relaxed whitespace-pre-wrap font-sans text-sm">
-                            <p>{lessonNotes || 'No written notes provided for this lesson.'}</p>
-                            {lessonMediaTabs.length > 1 && (
-                              <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-end">
-                                <Button
-                                  type="button"
-                                  onClick={handleSubItemOrLessonComplete}
-                                  className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-bold h-9 px-4 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs"
-                                >
-                                  <span>{lessonMediaTabs.findIndex(t => t.id === 'text') === lessonMediaTabs.length - 1 ? 'Complete Lesson & Next →' : 'Complete Notes & Next Material →'}</span>
-                                </Button>
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          renderContentItem(currentLesson.type, currentLesson.content || currentLesson, currentLesson.title, handleSubItemOrLessonComplete, currentLesson)
-                        )}
+                        </div>
+                      ) : activeMediaType === 'ppt' ? (
+                        <PptPlayer
+                          key={`ppt-${currentLesson.id}-${selectedLessonMediaTab}`}
+                          content={{
+                            title: activeSubItem?.label || currentLesson.title,
+                            fileUrl: activeItemData?.fileUrl || currentLesson.pptUrl || (currentLesson.type === 'ppt' ? currentLesson.fileUrl : '') || '',
+                            pdfUrl: activeItemData?.pdfUrl || currentLesson.pptPdfUrl || (currentLesson.type === 'ppt' ? currentLesson.pdfUrl : '') || '',
+                            fileName: activeItemData?.fileName || currentLesson.pptFileName || currentLesson.fileName || 'presentation.pptx',
+                            slides: activeItemData?.slides || currentLesson.slides || [],
+                            duration: activeItemData?.duration || currentLesson.duration || ''
+                          }}
+                          onComplete={handleSubItemOrLessonComplete}
+                        />
+                      ) : activeMediaType === 'pdf' ? (
+                        <PdfPlayer
+                          key={`pdf-${currentLesson.id}-${selectedLessonMediaTab}`}
+                          content={{
+                            title: activeSubItem?.label || currentLesson.title,
+                            fileUrl: activeItemData?.fileUrl || currentLesson.pdfUrl || (currentLesson.type === 'pdf' ? currentLesson.fileUrl : '') || '',
+                            fileName: activeItemData?.fileName || currentLesson.pdfFileName || currentLesson.fileName || 'document.pdf',
+                            duration: activeItemData?.duration || currentLesson.duration || ''
+                          }}
+                          onComplete={handleSubItemOrLessonComplete}
+                        />
+                      ) : activeMediaType === 'text' ? (
+                        <RichTextPlayer
+                          key={`text-${currentLesson.id}-${selectedLessonMediaTab}`}
+                          content={{
+                            body: activeItemData?.body || lessonNotes || 'No written notes provided for this lesson.',
+                            title: activeSubItem?.label || currentLesson.title
+                          }}
+                        />
+                      ) : (
+                        renderContentItem(currentLesson.type, currentLesson.content || currentLesson, currentLesson.title, handleSubItemOrLessonComplete, currentLesson)
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Study Notes Card (only when lesson has notes alongside single video/slides without dedicated Notes step) */}
+                  {showSeparateNotesCard && (
+                    <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-2xs space-y-2">
+                      <div className="flex items-center gap-2 text-slate-900 font-bold text-xs uppercase tracking-wider border-b border-slate-100 pb-2">
+                        <FileText className="h-3.5 w-3.5 text-[#2563EB]" />
+                        <span>Study Notes</span>
+                      </div>
+                      <div className="text-xs sm:text-sm text-slate-700 leading-relaxed font-sans whitespace-pre-wrap">
+                        {lessonNotes}
                       </div>
                     </div>
+                  )}
+                </div>
+              );
+            })()}
 
-                    {/* Study Notes & Key Takeaways Card (Visible below video/slides if notes are provided) */}
-                    {lessonNotes && lessonNotes.trim() && selectedLessonMediaTab !== 'text' && !isFullscreenMode && (
-                      <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-2xs space-y-3">
-                        <div className="flex items-center gap-2 text-slate-900 font-bold text-sm border-b border-slate-100 pb-2.5">
-                          <FileText className="h-4 w-4 text-[#2563EB]" />
-                          <span>Lesson Study Notes & Key Concepts</span>
-                        </div>
-                        <div className="text-xs sm:text-sm text-slate-700 leading-relaxed font-sans whitespace-pre-wrap">
-                          {lessonNotes}
-                        </div>
-                      </div>
+            {/* ─── MODULE QUIZ VIEW ─── */}
+            {activeItem?.type === 'quiz' && (
+              <div className={isFullscreenMode ? 'h-full w-full p-4' : 'max-w-4xl mx-auto py-2'}>
+                <AssessmentPlayer
+                  key={`modquiz-${activeItem.moduleId}-${activeItem.id}`}
+                  moduleId={activeItem.moduleId}
+                  courseId={courseId}
+                  isFinal={false}
+                  onPassed={handleModuleQuizPassed}
+                  courseData={course}
+                />
+              </div>
+            )}
+
+            {/* ─── FINAL EXAM VIEW ─── */}
+            {activeItem?.type === 'final' && (
+              <div className={isFullscreenMode ? 'h-full w-full p-4' : 'max-w-4xl mx-auto py-2'}>
+                <AssessmentPlayer
+                  key={`final-${courseId}`}
+                  courseId={courseId}
+                  isFinal={true}
+                  onPassed={handleFinalPassed}
+                  courseData={course}
+                />
+              </div>
+            )}
+
+            {/* ─── COURSE COMPLETED & CERTIFICATE CELEBRATION VIEW ─── */}
+            {activeItem?.type === 'complete' && (
+              <div className="max-w-2xl mx-auto py-8">
+                <div className="bg-white border border-emerald-200 rounded-3xl p-6 sm:p-10 shadow-md text-center space-y-6">
+                  <div className="w-16 h-16 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center mx-auto shadow-xs">
+                    <Award className="h-8 w-8" />
+                  </div>
+
+                  <div className="space-y-2">
+                    <span className="inline-block px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-mono text-[11px] font-black uppercase tracking-wider">
+                      ✓ 100% Course Completed
+                    </span>
+                    <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+                      Congratulations, {user?.fullName || user?.name || 'Graduate'}!
+                    </h2>
+                    <p className="text-xs sm:text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
+                      You have completed all <span className="font-bold text-slate-900">{totalLessonsCount}</span> syllabus lessons and assessments for <span className="font-bold text-slate-900">{course.title}</span>.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 max-w-sm mx-auto bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs">
+                    <div>
+                      <span className="text-slate-400 font-bold uppercase text-[10px] block">Completion</span>
+                      <span className="text-base font-black text-emerald-600">100%</span>
+                    </div>
+                    <div className="border-l border-slate-200">
+                      <span className="text-slate-400 font-bold uppercase text-[10px] block">Lessons</span>
+                      <span className="text-base font-black text-slate-900">{completedLessonsCount}/{totalLessonsCount}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+                    {userCourseCertificate && (
+                      <Button
+                        type="button"
+                        onClick={() => navigate(`/certificates/${userCourseCertificate.id}`)}
+                        className="w-full sm:w-auto h-11 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs gap-2 cursor-pointer shadow-sm"
+                      >
+                        <Award className="h-4 w-4" />
+                        <span>View Official Certificate 🎓</span>
+                      </Button>
                     )}
-                  </>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => navigate('/app/dashboard')}
+                      className="w-full sm:w-auto h-11 px-6 rounded-xl border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs cursor-pointer"
+                    >
+                      Back to My Dashboard
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </main>
+
+          {/* ─── UNIFIED PERSISTENT BOTTOM STEP NAVIGATION BAR ─────────────────── */}
+          {!isFullscreenMode && (
+            <div className="shrink-0 bg-white border-t border-slate-200 px-3 sm:px-6 py-2.5 flex items-center justify-between gap-3 z-20 shadow-2xs">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={currentStepIndex <= 0 && activeItem?.type !== 'complete'}
+                onClick={loadPrevItem}
+                className="h-9 px-3 sm:px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                <span>Previous</span>
+              </Button>
+
+              {/* Step Context Pill */}
+              {currentStepIndex !== -1 && learningSteps[currentStepIndex] && (
+                <div className="hidden md:flex items-center gap-2 text-xs text-slate-500 font-semibold truncate">
+                  <span className="font-mono text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
+                    Step {currentStepIndex + 1} / {learningSteps.length}
+                  </span>
+                  <span className="truncate max-w-xs">
+                    {learningSteps[currentStepIndex].subLabel || learningSteps[currentStepIndex].title}
+                  </span>
+                </div>
+              )}
+
+              {/* Primary Contextual Next / Complete Action */}
+              {(() => {
+                if (activeItem?.type === 'complete') {
+                  return (
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => navigate('/app/dashboard')}
+                      className="h-9 px-4 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-extrabold text-xs gap-1.5 cursor-pointer shadow-xs shrink-0"
+                    >
+                      <span>Done · Go to Dashboard</span>
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  );
+                }
+
+                const currentStep = currentStepIndex !== -1 ? learningSteps[currentStepIndex] : null;
+                const isLastStepInCourse = currentStepIndex !== -1 && currentStepIndex === learningSteps.length - 1;
+                const isCurrentStepDone = isStepCompleted(currentStep);
+
+                const lessonHasRealQuiz = Boolean(
+                  (currentLesson?.questions && currentLesson.questions.length > 0) ||
+                  (currentLesson?.assessment?.questions && currentLesson.assessment.questions.length > 0) ||
+                  currentLesson?.items?.some((i) => i.type === 'quiz' && Array.isArray(i.questions) && i.questions.length > 0)
+                );
+
+                // For active unpassed quizzes/exams with questions, prompt taking the quiz
+                if ((activeItem?.type === 'quiz' || activeItem?.type === 'final' || (activeItem?.type === 'lesson' && currentStep?.mediaType === 'quiz' && lessonHasRealQuiz)) && !isCurrentStepDone && !isAdmin) {
+                  return (
+                    <div className="flex items-center gap-2 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl shrink-0">
+                      <span>Pass Quiz Above to Continue</span>
+                    </div>
+                  );
+                }
+
+                if (activeItem?.type === 'lesson' && currentLesson) {
+                  let btnText = 'Complete & Continue';
+                  if (isCurrentStepDone) {
+                    btnText = isLastStepInCourse && !hasRealFinalExam
+                      ? 'Finish Course & Claim Certificate 🎓'
+                      : 'Next Step';
+                  } else if (isLastStepInCourse && !hasRealFinalExam) {
+                    btnText = 'Complete Course & Claim Certificate 🎓';
+                  }
+
+                  return (
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={isCurrentStepDone ? loadNextItem : handleSubItemOrLessonComplete}
+                      className={`h-9 px-3.5 sm:px-5 rounded-xl font-extrabold text-xs gap-1.5 cursor-pointer shadow-xs shrink-0 transition-all ${
+                        isLastStepInCourse && !hasRealFinalExam
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                          : isCurrentStepDone
+                          ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'
+                          : 'bg-[#2563EB] hover:bg-[#1D4ED8] text-white'
+                      }`}
+                    >
+                      <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                      <span>{btnText}</span>
+                      <ChevronRight className="h-4 w-4 shrink-0" />
+                    </Button>
+                  );
+                }
+
+                return (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={loadNextItem}
+                    className="h-9 px-4 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-extrabold text-xs gap-1 cursor-pointer shadow-xs shrink-0"
+                  >
+                    <span>Next Step</span>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
                 );
               })()}
-
             </div>
           )}
-
-          {/* Module Quiz View in Player Canvas */}
-          {activeItem?.type === 'quiz' && (
-            <div className={isFullscreenMode ? 'h-full w-full' : 'max-w-4xl mx-auto'}>
-              <AssessmentPlayer
-                moduleId={activeItem.moduleId}
-                courseId={courseId}
-                isFinal={false}
-                onPassed={handleMarkComplete}
-              />
-            </div>
-          )}
-
-          {/* Final Exam View in Player Canvas */}
-          {activeItem?.type === 'final' && (
-            <div className={isFullscreenMode ? 'h-full w-full' : 'max-w-4xl mx-auto'}>
-              <AssessmentPlayer
-                courseId={courseId}
-                isFinal={true}
-                onPassed={handleFinalPassed}
-              />
-            </div>
-          )}
-        </main>
-      </div>
-
-      {/* ─── MOBILE STICKY BOTTOM QUICK ACTION DOCK ─────────────────── */}
-      {!isFullscreenMode && (
-        <div className="md:hidden shrink-0 bg-white/95 backdrop-blur-md border-t border-slate-200 px-3 py-2 flex items-center justify-between gap-2 z-30 shadow-lg">
-          <button
-            type="button"
-            onClick={loadPrevItem}
-            className="h-9 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center gap-1 cursor-pointer shadow-2xs shrink-0"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            <span>Prev</span>
-          </button>
-
-          {activeItem?.type === 'lesson' && currentLesson && (() => {
-            const currentTabIndex = lessonMediaTabs.findIndex((t) => t.id === selectedLessonMediaTab);
-            const isMulti = lessonMediaTabs.length > 1;
-            const isLessonDone = Boolean(userProgress[currentLesson.id]);
-            const isCurrentTabDone = isTabCompleted(currentLesson.id, selectedLessonMediaTab);
-            const isLastTab = currentTabIndex === lessonMediaTabs.length - 1;
-
-            let btnText = isLessonDone ? 'Completed ✓' : 'Mark Complete';
-            if (!isLessonDone && isMulti) {
-              btnText = !isLastTab
-                ? (isCurrentTabDone ? 'Next Material →' : 'Complete & Next →')
-                : 'Complete Lesson & Next →';
-            }
-
-            return (
-              <button
-                type="button"
-                onClick={isMulti ? handleSubItemOrLessonComplete : handleMarkComplete}
-                className={`h-9 px-3 flex-1 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-xs cursor-pointer truncate transition-all ${
-                  isLessonDone
-                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
-                    : 'bg-[#2563EB] hover:bg-[#1D4ED8] text-white'
-                }`}
-              >
-                <CheckCircle className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{btnText}</span>
-              </button>
-            );
-          })()}
-
-          <button
-            type="button"
-            onClick={loadNextItem}
-            className="h-9 px-3 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-extrabold text-xs flex items-center gap-1 cursor-pointer shadow-xs shrink-0"
-          >
-            <span>Next</span>
-            <ChevronRight className="h-4 w-4" />
-          </button>
         </div>
-      )}
+      </div>
 
     </div>
   );
