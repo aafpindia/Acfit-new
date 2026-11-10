@@ -302,60 +302,92 @@ export const CoursePlayer = () => {
     return { currentLesson: null, currentModule: null };
   }, [course, activeItem]);
 
-  // Multi-Media tabs available in current lesson (Hook called unconditionally)
-  const lessonMediaTabs = useMemo(() => {
-    if (!currentLesson) return [];
-    const tabs = [];
+  // Helper to extract multi-media sub-items/topics for ANY lesson
+  const getLessonSubItems = (les) => {
+    if (!les) return [];
+    const items = [];
+
+    // Check if lesson has explicit multi-step items in les.items
+    if (Array.isArray(les.items) && les.items.length > 0) {
+      les.items.forEach((item, idx) => {
+        const type = item.type || 'text';
+        let label = item.title || item.name;
+        let icon = Play;
+        let count = null;
+
+        if (type === 'video') {
+          label = label || 'Video Lecture';
+          icon = Play;
+          count = item.duration || null;
+        } else if (type === 'ppt') {
+          label = label || 'Presentation Deck';
+          icon = BookOpen;
+        } else if (type === 'pdf') {
+          label = label || 'PDF Document';
+          icon = FileText;
+        } else if (type === 'quiz') {
+          label = label || 'Checkpoint Quiz';
+          icon = Award;
+          count = item.questions?.length ? `${item.questions.length} Qs` : null;
+        } else {
+          label = label || 'Study Notes';
+          icon = FileText;
+        }
+
+        items.push({
+          id: type,
+          label,
+          icon,
+          count
+        });
+      });
+      return items;
+    }
 
     const hasVideo = Boolean(
-      currentLesson.videoUrl ||
-      currentLesson.bunnyVideoId ||
-      currentLesson.type === 'video' ||
-      currentLesson.items?.some((i) => i.type === 'video')
+      les.videoUrl ||
+      les.bunnyVideoId ||
+      les.type === 'video'
     );
     if (hasVideo) {
-      tabs.push({ id: 'video', label: 'Video Lecture', icon: Play, count: null });
+      items.push({ id: 'video', label: 'Video Lecture', icon: Play, count: les.duration || null });
     }
 
     const hasPpt = Boolean(
-      currentLesson.pptUrl ||
-      currentLesson.type === 'ppt' ||
-      (currentLesson.fileUrl && (currentLesson.fileUrl.endsWith('.ppt') || currentLesson.fileUrl.endsWith('.pptx'))) ||
-      currentLesson.items?.some((i) => i.type === 'ppt')
+      les.pptUrl ||
+      les.type === 'ppt' ||
+      (les.fileUrl && (les.fileUrl.endsWith('.ppt') || les.fileUrl.endsWith('.pptx')))
     );
     if (hasPpt) {
-      tabs.push({ id: 'ppt', label: 'Presentation', icon: BookOpen, count: null });
+      items.push({ id: 'ppt', label: 'Presentation Deck', icon: BookOpen, count: null });
     }
 
     const hasPdf = Boolean(
-      currentLesson.pdfUrl ||
-      currentLesson.type === 'pdf' ||
-      (currentLesson.fileUrl && currentLesson.fileUrl.endsWith('.pdf')) ||
-      currentLesson.items?.some((i) => i.type === 'pdf')
+      les.pdfUrl ||
+      les.type === 'pdf' ||
+      (les.fileUrl && les.fileUrl.endsWith('.pdf'))
     );
     if (hasPdf) {
-      tabs.push({ id: 'pdf', label: 'PDF Manual', icon: FileText, count: null });
+      items.push({ id: 'pdf', label: 'PDF Document', icon: FileText, count: null });
     }
 
     const hasText = Boolean(
-      (currentLesson.body && currentLesson.body.trim()) ||
-      currentLesson.type === 'text' ||
-      currentLesson.type === 'rich-text' ||
-      currentLesson.items?.some((i) => i.type === 'text' || i.type === 'rich-text')
+      (les.body && les.body.trim()) ||
+      les.type === 'text' ||
+      les.type === 'rich-text'
     );
     if (hasText) {
-      tabs.push({ id: 'text', label: 'Study Notes', icon: FileText, count: null });
+      items.push({ id: 'text', label: 'Study Notes', icon: FileText, count: null });
     }
 
-    const quizQuestions = currentLesson.questions || currentLesson.assessment?.questions || currentLesson.items?.find((i) => i.type === 'quiz')?.questions || [];
+    const quizQuestions = les.questions || les.assessment?.questions || [];
     const hasQuiz = Boolean(
       quizQuestions.length > 0 ||
-      currentLesson.assessment ||
-      currentLesson.type === 'quiz' ||
-      currentLesson.items?.some((i) => i.type === 'quiz')
+      les.assessment ||
+      les.type === 'quiz'
     );
     if (hasQuiz) {
-      tabs.push({
+      items.push({
         id: 'quiz',
         label: 'Lesson Quiz',
         icon: Award,
@@ -363,7 +395,57 @@ export const CoursePlayer = () => {
       });
     }
 
-    return tabs;
+    if (items.length === 0) {
+      items.push({
+        id: 'text',
+        label: les.title || 'Learning Content',
+        icon: Play,
+        count: les.duration || null
+      });
+    }
+
+    return items;
+  };
+
+  // Helper to extract assessment/quiz details for a module
+  const getModuleAssessmentInfo = (mod) => {
+    if (!mod) return null;
+    if (mod.assessment) {
+      const qCount = mod.assessment.questions?.length || 10;
+      return {
+        id: mod.assessment.id || `quiz-mod-${mod.id}`,
+        title: mod.assessment.title || 'Module Assessment',
+        questionsCount: qCount,
+        hasAssessment: true,
+        raw: mod.assessment
+      };
+    }
+    const quizLesson = mod.lessons?.find(
+      (l) => l.type === 'quiz' || l.assessment || l.items?.some((i) => i.type === 'quiz') || (l.questions && l.questions.length > 0)
+    );
+    if (quizLesson) {
+      const qCount = quizLesson.questions?.length || quizLesson.assessment?.questions?.length || quizLesson.items?.find((i) => i.type === 'quiz')?.questions?.length || 10;
+      return {
+        id: quizLesson.id,
+        title: quizLesson.title || 'Module Quiz',
+        questionsCount: qCount,
+        hasAssessment: true,
+        isLesson: true,
+        raw: quizLesson
+      };
+    }
+    return {
+      id: `mod-quiz-${mod.id}`,
+      title: `${mod.title} Assessment Quiz`,
+      questionsCount: 10,
+      hasAssessment: false,
+      isFallback: true
+    };
+  };
+
+  // Multi-Media tabs available in current lesson (Hook called unconditionally)
+  const lessonMediaTabs = useMemo(() => {
+    return getLessonSubItems(currentLesson);
   }, [currentLesson]);
 
   const isTabCompleted = (lessonId, tabId) => {
@@ -372,11 +454,12 @@ export const CoursePlayer = () => {
     return Boolean(completedLessonSubItems[lessonId]?.[tabId]);
   };
 
-  const isTabUnlocked = (lessonId, tabId, tabIndex) => {
+  const isTabUnlocked = (lessonId, tabId, tabIndex, customTabs = null) => {
     if (!lessonId) return true;
     if (userProgress[lessonId]) return true;
     if (tabIndex === 0) return true;
-    const prevTab = lessonMediaTabs[tabIndex - 1];
+    const tabs = customTabs || lessonMediaTabs;
+    const prevTab = tabs[tabIndex - 1];
     if (!prevTab) return true;
     return isTabCompleted(lessonId, prevTab.id);
   };
@@ -867,7 +950,7 @@ export const CoursePlayer = () => {
             isFullscreenMode ? 'hidden' : ''
           } ${
             sidebarOpen
-              ? 'fixed inset-y-0 left-0 z-50 w-[88vw] max-w-sm shadow-2xl lg:shadow-none lg:static lg:w-88 lg:z-20'
+              ? 'fixed inset-y-0 left-0 z-50 w-[92vw] max-w-md shadow-2xl lg:shadow-none lg:static lg:w-[420px] lg:z-20'
               : 'hidden lg:flex lg:w-0 lg:overflow-hidden lg:border-none'
           }`}
         >
@@ -906,108 +989,244 @@ export const CoursePlayer = () => {
             </div>
           </div>
 
-          {/* Modules Accordion List */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 font-sans">
+          {/* Modules List matching hierarchical layout */}
+          <div className="flex-1 overflow-y-auto p-3.5 space-y-6 font-sans">
             {course.modules?.map((mod, modIdx) => {
               const unlocked = isModuleUnlocked(modIdx);
               const modLessons = mod.lessons || [];
               const modCompletedCount = modLessons.filter(l => Boolean(userProgress[l.id])).length;
+              const allModLessonsComplete = modLessons.length > 0 && modCompletedCount === modLessons.length;
               
               return (
-                <div key={mod.id} className={`space-y-2 ${!unlocked ? 'opacity-65' : ''}`}>
+                <div key={mod.id || modIdx} className={`space-y-3 ${!unlocked ? 'opacity-65' : ''}`}>
                   
-                  {/* Module Header Pill */}
+                  {/* 1. Module Header matching Diagram: "1. Module" */}
                   <div
                     onClick={() => {
                       if (!unlocked) {
                         error(`Module ${modIdx + 1} is locked. Complete all lessons in Module ${modIdx} first.`);
                       }
                     }}
-                    className="flex items-center justify-between px-2 py-1 cursor-pointer select-none"
+                    className="flex items-center justify-between pb-1.5 border-b border-slate-200/80 cursor-pointer select-none"
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-[9px] font-extrabold text-slate-500 uppercase tracking-wider">
-                        MODULE 0{modIdx + 1}
-                      </span>
-                      <span className="font-mono text-[9px] font-bold text-slate-400">
-                        • {modCompletedCount}/{modLessons.length}
+                    <div className="space-y-0.5 min-w-0 pr-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-base font-black text-slate-900 tracking-tight">
+                          {modIdx + 1}. Module
+                        </span>
+                        {!unlocked && <Lock className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
+                      </div>
+                      <h4 className="font-bold text-xs text-slate-600 truncate">
+                        {mod.title}
+                      </h4>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <span className="font-mono text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md">
+                        {modCompletedCount}/{modLessons.length}
                       </span>
                     </div>
-                    {!unlocked && <Lock className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
                   </div>
-
-                  <h4 className="font-extrabold text-xs text-slate-900 leading-snug px-2 line-clamp-1">
-                    {mod.title}
-                  </h4>
                   
-                  {/* Lessons List */}
-                  <div className="space-y-1 pt-1">
-                    {modLessons.map((les) => {
+                  {/* Lessons & Sub-Topics Tree */}
+                  <div className="space-y-2.5 pt-0.5">
+                    {modLessons.map((les, lIdx) => {
                       const active = activeItem?.type === 'lesson' && activeItem.id === les.id;
                       const complete = Boolean(userProgress[les.id]);
-                      const LesIcon = les.assessment ? Award : getLessonIcon(les.type);
+                      const subItems = getLessonSubItems(les);
 
                       return (
-                        <button
-                          key={les.id}
-                          onClick={() => {
-                            if (!unlocked) {
-                              error(`Module ${modIdx + 1} is locked. Complete previous modules first.`);
-                              return;
-                            }
-                            selectItem({ type: 'lesson', id: les.id, moduleId: mod.id });
-                          }}
-                          className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-bold cursor-pointer border text-left transition-all duration-200 group ${
-                            active
-                              ? 'bg-[#2563EB] text-white border-[#2563EB] shadow-md shadow-[#2563EB]/20 scale-[1.01]'
-                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-slate-900 shadow-2xs'
-                          }`}
+                        <div
+                          key={les.id || lIdx}
+                          className="flex flex-col sm:flex-row items-stretch gap-2"
                         >
-                          <div className="flex items-center gap-2.5 min-w-0 pr-2">
-                            <div className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${
-                              active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500 group-hover:text-[#2563EB]'
-                            }`}>
-                              <LesIcon className="h-3.5 w-3.5" />
+                          {/* Left Blue Card: e.g. "1.1 Lesson" */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!unlocked) {
+                                error(`Module ${modIdx + 1} is locked. Complete previous modules first.`);
+                                return;
+                              }
+                              selectItem({ type: 'lesson', id: les.id, moduleId: mod.id });
+                              // Select first uncompleted or first sub-item
+                              const firstPending = subItems.find(s => !isTabCompleted(les.id, s.id)) || subItems[0];
+                              if (firstPending) {
+                                setSelectedLessonMediaTab(firstPending.id);
+                              }
+                            }}
+                            className={`sm:w-36 shrink-0 rounded-2xl p-3 text-left transition-all duration-200 cursor-pointer flex flex-col justify-between border ${
+                              active
+                                ? 'bg-[#1D4ED8] text-white border-[#1D4ED8] shadow-md shadow-blue-600/30 ring-2 ring-blue-400 scale-[1.01]'
+                                : complete
+                                ? 'bg-[#2563EB] text-white border-[#2563EB] hover:bg-[#1D4ED8] shadow-2xs'
+                                : 'bg-[#2563EB] text-white border-[#2563EB] hover:bg-[#1D4ED8] shadow-2xs'
+                            }`}
+                          >
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono text-[11px] font-black tracking-wide uppercase text-white/95">
+                                  {modIdx + 1}.{lIdx + 1} Lesson
+                                </span>
+                                {complete && (
+                                  <CheckCircle className="h-3.5 w-3.5 text-emerald-300 shrink-0" />
+                                )}
+                              </div>
+                              <p className="font-extrabold text-xs text-white leading-tight line-clamp-2">
+                                {les.title}
+                              </p>
                             </div>
-                            <span className="truncate leading-tight font-bold">{les.title}</span>
-                          </div>
 
-                          {complete ? (
-                            <CheckCircle className={`h-4 w-4 shrink-0 ${active ? 'text-white' : 'text-emerald-500'}`} />
-                          ) : (
-                            <span className={`font-mono text-[9px] ${active ? 'text-white/80' : 'text-slate-400'}`}>
-                              {les.duration || '10m'}
-                            </span>
-                          )}
-                        </button>
+                            <div className="pt-2 flex items-center justify-between text-[10px] text-white/75 font-mono">
+                              <span>{les.duration || '10m'}</span>
+                              <span>{subItems.length} {subItems.length === 1 ? 'part' : 'parts'}</span>
+                            </div>
+                          </button>
+
+                          {/* Right Sub-Items List: • 1.1.1 Learning Objectives / Topic */}
+                          <div className="flex-1 bg-slate-100/80 border border-slate-200/90 rounded-2xl p-2 flex flex-col justify-center space-y-1 shadow-2xs">
+                            {subItems.map((sub, sIdx) => {
+                              const isSubComplete = isTabCompleted(les.id, sub.id);
+                              const isSubUnlocked = unlocked && (complete || sIdx === 0 || isTabCompleted(les.id, subItems[sIdx - 1]?.id));
+                              const isSubActive = active && selectedLessonMediaTab === sub.id;
+
+                              return (
+                                <button
+                                  key={sub.id || sIdx}
+                                  type="button"
+                                  onClick={() => {
+                                    if (!unlocked) {
+                                      error(`Module ${modIdx + 1} is locked.`);
+                                      return;
+                                    }
+                                    if (!isSubUnlocked) {
+                                      error(`Please complete ${modIdx + 1}.${lIdx + 1}.${sIdx} first.`);
+                                      return;
+                                    }
+                                    selectItem({ type: 'lesson', id: les.id, moduleId: mod.id });
+                                    setSelectedLessonMediaTab(sub.id);
+                                  }}
+                                  disabled={!isSubUnlocked}
+                                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-left text-xs transition-all cursor-pointer ${
+                                    isSubActive
+                                      ? 'bg-[#2563EB] text-white font-extrabold shadow-xs'
+                                      : isSubComplete
+                                      ? 'bg-white/80 hover:bg-white text-slate-800 font-bold border border-slate-200/60'
+                                      : isSubUnlocked
+                                      ? 'bg-white/50 hover:bg-white text-slate-700 font-semibold border border-transparent'
+                                      : 'opacity-50 cursor-not-allowed text-slate-400'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-1.5 truncate pr-1">
+                                    <span className={`shrink-0 ${isSubActive ? 'text-white' : 'text-[#2563EB]'}`}>•</span>
+                                    <span className="font-mono text-[10px] font-bold opacity-80 shrink-0">
+                                      {modIdx + 1}.{lIdx + 1}.{sIdx + 1}
+                                    </span>
+                                    <span className="truncate text-[11px] leading-tight">
+                                      {sub.label}
+                                    </span>
+                                  </div>
+
+                                  <div className="shrink-0 ml-1">
+                                    {isSubComplete ? (
+                                      <CheckCircle className={`h-3.5 w-3.5 ${isSubActive ? 'text-white' : 'text-emerald-500'}`} />
+                                    ) : !isSubUnlocked ? (
+                                      <Lock className="h-3 w-3 text-slate-400" />
+                                    ) : isSubActive ? (
+                                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                                    ) : null}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
                       );
                     })}
 
-                    {/* Module Assessment Trigger */}
-                    {mod.assessment && (
-                      <button
-                        onClick={() => {
-                          if (!unlocked) {
-                            error(`Module ${modIdx + 1} is locked. Complete previous modules first.`);
-                            return;
-                          }
-                          selectItem({ type: 'quiz', id: mod.assessment.id, moduleId: mod.id });
-                        }}
-                        className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-bold cursor-pointer border text-left transition-all ${
-                          activeItem?.type === 'quiz' && activeItem.id === mod.assessment.id
-                            ? 'bg-[#2563EB] text-white border-[#2563EB] shadow-md'
-                            : 'bg-amber-50 border-amber-200/80 text-amber-900 hover:bg-amber-100/80'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Award className="h-4 w-4 shrink-0 text-amber-500" />
-                          <span>Module Assessment</span>
+                    {/* Bottom Module Quiz Card matching diagram */}
+                    {(() => {
+                      const modQuiz = getModuleAssessmentInfo(mod);
+                      const quizActive = activeItem?.type === 'quiz' && (activeItem.id === modQuiz.id || activeItem.moduleId === mod.id);
+                      const quizPassed = isQuizPassed(modQuiz.id) || isQuizPassed(mod.id);
+                      const isQuizUnlocked = unlocked && allModLessonsComplete;
+
+                      return (
+                        <div className="flex flex-col sm:flex-row items-stretch gap-2 pt-1">
+                          {/* Left Quiz Blue Card */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!unlocked) {
+                                error(`Module ${modIdx + 1} is locked.`);
+                                return;
+                              }
+                              if (!allModLessonsComplete) {
+                                error(`Complete all lessons in Module ${modIdx + 1} first to unlock this Quiz.`);
+                                return;
+                              }
+                              if (modQuiz.isLesson) {
+                                selectItem({ type: 'lesson', id: modQuiz.id, moduleId: mod.id });
+                              } else {
+                                selectItem({ type: 'quiz', id: modQuiz.id, moduleId: mod.id });
+                              }
+                            }}
+                            className={`sm:w-36 shrink-0 rounded-2xl p-3 text-left transition-all duration-200 cursor-pointer flex flex-col justify-between border ${
+                              quizActive
+                                ? 'bg-[#1D4ED8] text-white border-[#1D4ED8] shadow-md ring-2 ring-blue-400 scale-[1.01]'
+                                : quizPassed
+                                ? 'bg-[#2563EB] text-white border-[#2563EB]'
+                                : isQuizUnlocked
+                                ? 'bg-[#2563EB] text-white border-[#2563EB] hover:bg-[#1D4ED8]'
+                                : 'bg-slate-700 text-slate-200 border-slate-700 opacity-75'
+                            }`}
+                          >
+                            <div className="space-y-0.5">
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono text-[11px] font-black tracking-wide uppercase text-white/95">
+                                  Quiz
+                                </span>
+                                {quizPassed ? (
+                                  <CheckCircle className="h-3.5 w-3.5 text-emerald-300 shrink-0" />
+                                ) : !isQuizUnlocked ? (
+                                  <Lock className="h-3.5 w-3.5 text-amber-300 shrink-0" />
+                                ) : null}
+                              </div>
+                              <p className="font-extrabold text-xs text-white leading-tight">
+                                ca. {modQuiz.questionsCount} questions
+                              </p>
+                            </div>
+
+                            <div className="pt-2 flex items-center justify-between text-[10px] text-white/75 font-mono">
+                              <span>{quizPassed ? 'PASSED ✓' : isQuizUnlocked ? 'READY' : 'LOCKED'}</span>
+                              <span>70% min</span>
+                            </div>
+                          </button>
+
+                          {/* Right Details Box */}
+                          <div className="flex-1 bg-slate-100/80 border border-slate-200/90 rounded-2xl p-2.5 flex flex-col justify-center space-y-1 shadow-2xs">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
+                                <Award className="h-3.5 w-3.5 text-amber-500" />
+                                <span>Module Assessment</span>
+                              </span>
+                              {quizPassed && (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-mono text-[9px] font-bold">
+                                  PASSED ✓
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-slate-500 font-medium leading-snug">
+                              {quizPassed
+                                ? 'Knowledge checkpoint verified. You have mastered this module.'
+                                : isQuizUnlocked
+                                ? 'Test your retention of the core principles before advancing.'
+                                : `Complete all ${modLessons.length} lessons in Module ${modIdx + 1} to unlock.`}
+                            </p>
+                          </div>
                         </div>
-                        {isQuizPassed(mod.assessment.id) && (
-                          <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
-                        )}
-                      </button>
-                    )}
+                      );
+                    })()}
                   </div>
                 </div>
               );
