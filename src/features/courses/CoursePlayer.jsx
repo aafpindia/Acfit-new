@@ -1352,11 +1352,11 @@ export const CoursePlayer = () => {
                               <div className="flex items-center gap-1.5 shrink-0 pl-1">
                                 {complete ? (
                                   <CheckCircle className={`h-3.5 w-3.5 ${active ? 'text-white' : 'text-emerald-500'}`} />
-                                ) : (
+                                ) : hasMultiSubs ? (
                                   <span className={`font-mono text-[10px] ${active ? 'text-white/80' : 'text-slate-400'}`}>
-                                    {les.duration || (hasMultiSubs ? `${subItems.length}p` : '10m')}
+                                    {subItems.length}p
                                   </span>
-                                )}
+                                ) : null}
 
                                 {hasMultiSubs && (
                                   <button
@@ -1627,12 +1627,6 @@ export const CoursePlayer = () => {
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        {(activeItemData?.duration || currentLesson.duration) && (
-                          <span className="px-2.5 py-1 bg-slate-100 rounded-lg font-mono text-[11px] font-bold text-slate-600 border border-slate-200/80 flex items-center gap-1">
-                            <Clock className="h-3 w-3 text-slate-500" />
-                            <span>{activeItemData?.duration || currentLesson.duration}</span>
-                          </span>
-                        )}
                         {Boolean(userProgress[currentLesson.id]) && (
                           <span className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold text-[11px] flex items-center gap-1">
                             <CheckCircle className="h-3.5 w-3.5" />

@@ -22,12 +22,17 @@ import {
 } from 'lucide-react';
 
 export const StudentCoursePlayerPreviewModal = ({ isOpen, onClose, courseData }) => {
-  if (!isOpen || !courseData) return null;
-
-  const modules = courseData.modules || [];
-  const firstLesson = modules[0]?.lessons?.[0];
-  const [activeLesson, setActiveLesson] = useState(firstLesson || null);
+  const modules = courseData?.modules || [];
+  const firstLesson = modules[0]?.lessons?.[0] || null;
+  const [activeLesson, setActiveLesson] = useState(firstLesson);
   const [selectedMediaTab, setSelectedMediaTab] = useState('video');
+
+  // Sync first lesson whenever preview modal opens
+  useEffect(() => {
+    if (isOpen && firstLesson && !activeLesson) {
+      setActiveLesson(firstLesson);
+    }
+  }, [isOpen, firstLesson, activeLesson]);
 
   // Compute available formats for the active preview lesson
   const previewTabs = useMemo(() => {
@@ -95,6 +100,8 @@ export const StudentCoursePlayerPreviewModal = ({ isOpen, onClose, courseData })
     }
   }, [activeLesson?.id, previewTabs, selectedMediaTab]);
 
+  if (!isOpen || !courseData) return null;
+
   return (
     <div className="fixed inset-0 z-[70] bg-[#F7F8FA] text-[#202124] flex flex-col font-sans overflow-hidden select-none animate-in fade-in duration-200">
       
@@ -146,11 +153,6 @@ export const StudentCoursePlayerPreviewModal = ({ isOpen, onClose, courseData })
                     {activeLesson.title}
                   </h3>
                 </div>
-                {activeLesson.duration && (
-                  <span className="text-xs font-mono font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
-                    {activeLesson.duration}
-                  </span>
-                )}
               </div>
 
               {/* Multimedia Switcher Tabs (When lesson combines 2+ media formats) */}

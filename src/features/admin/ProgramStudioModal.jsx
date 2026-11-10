@@ -296,7 +296,7 @@ export const ProgramStudioModal = ({
     const newModule = {
       id: `mod-${Date.now()}`,
       title: `Module ${newChapNum}: Section Name`,
-      duration: '15 Mins',
+      duration: '',
       order: newChapNum,
       lessons: []
     };
@@ -1712,10 +1712,6 @@ export const ProgramStudioModal = ({
                             </button>
                           </div>
                         )}
-
-                        {moduleItem.duration && (
-                          <span className="text-xs text-[#8A8F98] font-normal shrink-0">{moduleItem.duration}</span>
-                        )}
                       </div>
 
                       {/* Right Module Actions: + Add Lesson Button (Direct click, no dropdown) */}
@@ -1801,10 +1797,6 @@ export const ProgramStudioModal = ({
                                     </span>
                                   )}
                                 </div>
-
-                                {lesson.duration && (
-                                  <span className="text-[11px] text-[#8A8F98] shrink-0 font-mono">{lesson.duration}</span>
-                                )}
                               </div>
 
                               <div className="flex items-center gap-2 shrink-0">

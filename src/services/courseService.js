@@ -269,7 +269,7 @@ export const fetchCourses = async () => {
             title: l.title,
             type: l.type,
             order: l.sort_order,
-            duration: contentObj.duration || '15 mins',
+            duration: contentObj.duration || '',
             videoUrl: contentObj.videoUrl || contentObj.embedUrl || contentObj.url || '',
             videoId: contentObj.videoId || contentObj.bunnyVideoId || contentObj.bunny_video_id || '',
             bunnyVideoId: contentObj.bunnyVideoId || contentObj.videoId || contentObj.bunny_video_id || '',
@@ -436,7 +436,7 @@ export const createCourse = async (courseData) => {
           const les = mod.lessons[lIdx];
           const lessonId = getOrGenerateUUID(les.id);
           const contentObj = {
-            duration: les.duration || '15 mins',
+            duration: les.duration || '',
             videoUrl: les.videoUrl || les.embedUrl || '',
             videoId: les.videoId || les.bunnyVideoId || '',
             bunnyVideoId: les.bunnyVideoId || les.videoId || '',
@@ -599,7 +599,7 @@ export const updateCourse = async (courseId, courseData) => {
             allRetainedLessonIds.add(lessonId);
 
             const contentObj = {
-              duration: les.duration || '15 mins',
+              duration: les.duration || '',
               videoUrl: les.videoUrl || les.embedUrl || '',
               videoId: les.videoId || les.bunnyVideoId || '',
               bunnyVideoId: les.bunnyVideoId || les.videoId || '',
