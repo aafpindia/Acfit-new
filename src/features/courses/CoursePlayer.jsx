@@ -263,6 +263,94 @@ export const CoursePlayer = () => {
     }
   }, [course?.id, activeItem?.id, user?.id, courseId]);
 
+  // Resolve current lesson and module cleanly (Hook called unconditionally)
+  const { currentLesson, currentModule } = useMemo(() => {
+    if (!course?.modules || activeItem?.type !== 'lesson') {
+      return { currentLesson: null, currentModule: null };
+    }
+    for (const m of course.modules) {
+      const found = (m.lessons || []).find((l) => l.id === activeItem.id);
+      if (found) {
+        return { currentLesson: found, currentModule: m };
+      }
+    }
+    return { currentLesson: null, currentModule: null };
+  }, [course, activeItem]);
+
+  // Multi-Media tabs available in current lesson (Hook called unconditionally)
+  const lessonMediaTabs = useMemo(() => {
+    if (!currentLesson) return [];
+    const tabs = [];
+
+    const hasVideo = Boolean(
+      currentLesson.videoUrl ||
+      currentLesson.bunnyVideoId ||
+      currentLesson.type === 'video' ||
+      currentLesson.items?.some((i) => i.type === 'video')
+    );
+    if (hasVideo) {
+      tabs.push({ id: 'video', label: 'Video Lecture', icon: Play, count: null });
+    }
+
+    const hasPpt = Boolean(
+      currentLesson.pptUrl ||
+      currentLesson.type === 'ppt' ||
+      (currentLesson.fileUrl && (currentLesson.fileUrl.endsWith('.ppt') || currentLesson.fileUrl.endsWith('.pptx'))) ||
+      currentLesson.items?.some((i) => i.type === 'ppt')
+    );
+    if (hasPpt) {
+      tabs.push({ id: 'ppt', label: 'Presentation', icon: BookOpen, count: null });
+    }
+
+    const hasPdf = Boolean(
+      currentLesson.pdfUrl ||
+      currentLesson.type === 'pdf' ||
+      (currentLesson.fileUrl && currentLesson.fileUrl.endsWith('.pdf')) ||
+      currentLesson.items?.some((i) => i.type === 'pdf')
+    );
+    if (hasPdf) {
+      tabs.push({ id: 'pdf', label: 'PDF Manual', icon: FileText, count: null });
+    }
+
+    const hasText = Boolean(
+      (currentLesson.body && currentLesson.body.trim()) ||
+      currentLesson.type === 'text' ||
+      currentLesson.type === 'rich-text' ||
+      currentLesson.items?.some((i) => i.type === 'text' || i.type === 'rich-text')
+    );
+    if (hasText) {
+      tabs.push({ id: 'text', label: 'Study Notes', icon: FileText, count: null });
+    }
+
+    const quizQuestions = currentLesson.questions || currentLesson.assessment?.questions || currentLesson.items?.find((i) => i.type === 'quiz')?.questions || [];
+    const hasQuiz = Boolean(
+      quizQuestions.length > 0 ||
+      currentLesson.assessment ||
+      currentLesson.type === 'quiz' ||
+      currentLesson.items?.some((i) => i.type === 'quiz')
+    );
+    if (hasQuiz) {
+      tabs.push({
+        id: 'quiz',
+        label: 'Lesson Quiz',
+        icon: Award,
+        count: quizQuestions.length > 0 ? `${quizQuestions.length} Qs` : null
+      });
+    }
+
+    return tabs;
+  }, [currentLesson]);
+
+  // Keep selected tab valid for current lesson (Hook called unconditionally)
+  useEffect(() => {
+    if (lessonMediaTabs.length > 0) {
+      const exists = lessonMediaTabs.some((t) => t.id === selectedLessonMediaTab);
+      if (!exists) {
+        setSelectedLessonMediaTab(lessonMediaTabs[0].id);
+      }
+    }
+  }, [currentLesson?.id, lessonMediaTabs, selectedLessonMediaTab]);
+
   if (authChecking || courseLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center graph-paper-bg text-[#202124] font-sans space-y-4">
@@ -457,92 +545,6 @@ export const CoursePlayer = () => {
       setActiveItem(allItems[currentIndex - 1]);
     }
   };
-
-  let currentLesson = null;
-  let currentModule = null;
-  if (activeItem?.type === 'lesson') {
-    course.modules.forEach((m) => {
-      const found = m.lessons.find((l) => l.id === activeItem.id);
-      if (found) {
-        currentLesson = found;
-        currentModule = m;
-      }
-    });
-  }
-
-  // Multi-Media tabs available in current lesson (Combined Video, PPT, PDF, Text Notes & Quiz)
-  const lessonMediaTabs = useMemo(() => {
-    if (!currentLesson) return [];
-    const tabs = [];
-
-    const hasVideo = Boolean(
-      currentLesson.videoUrl ||
-      currentLesson.bunnyVideoId ||
-      currentLesson.type === 'video' ||
-      currentLesson.items?.some((i) => i.type === 'video')
-    );
-    if (hasVideo) {
-      tabs.push({ id: 'video', label: 'Video Lecture', icon: Play, count: null });
-    }
-
-    const hasPpt = Boolean(
-      currentLesson.pptUrl ||
-      currentLesson.type === 'ppt' ||
-      (currentLesson.fileUrl && (currentLesson.fileUrl.endsWith('.ppt') || currentLesson.fileUrl.endsWith('.pptx'))) ||
-      currentLesson.items?.some((i) => i.type === 'ppt')
-    );
-    if (hasPpt) {
-      tabs.push({ id: 'ppt', label: 'Presentation', icon: BookOpen, count: null });
-    }
-
-    const hasPdf = Boolean(
-      currentLesson.pdfUrl ||
-      currentLesson.type === 'pdf' ||
-      (currentLesson.fileUrl && currentLesson.fileUrl.endsWith('.pdf')) ||
-      currentLesson.items?.some((i) => i.type === 'pdf')
-    );
-    if (hasPdf) {
-      tabs.push({ id: 'pdf', label: 'PDF Manual', icon: FileText, count: null });
-    }
-
-    const hasText = Boolean(
-      (currentLesson.body && currentLesson.body.trim()) ||
-      currentLesson.type === 'text' ||
-      currentLesson.type === 'rich-text' ||
-      currentLesson.items?.some((i) => i.type === 'text' || i.type === 'rich-text')
-    );
-    if (hasText) {
-      tabs.push({ id: 'text', label: 'Study Notes', icon: FileText, count: null });
-    }
-
-    const quizQuestions = currentLesson.questions || currentLesson.assessment?.questions || currentLesson.items?.find((i) => i.type === 'quiz')?.questions || [];
-    const hasQuiz = Boolean(
-      quizQuestions.length > 0 ||
-      currentLesson.assessment ||
-      currentLesson.type === 'quiz' ||
-      currentLesson.items?.some((i) => i.type === 'quiz')
-    );
-    if (hasQuiz) {
-      tabs.push({
-        id: 'quiz',
-        label: 'Lesson Quiz',
-        icon: Award,
-        count: quizQuestions.length > 0 ? `${quizQuestions.length} Qs` : null
-      });
-    }
-
-    return tabs;
-  }, [currentLesson]);
-
-  // Keep selected tab valid for current lesson
-  useEffect(() => {
-    if (lessonMediaTabs.length > 0) {
-      const exists = lessonMediaTabs.some((t) => t.id === selectedLessonMediaTab);
-      if (!exists) {
-        setSelectedLessonMediaTab(lessonMediaTabs[0].id);
-      }
-    }
-  }, [currentLesson?.id, lessonMediaTabs, selectedLessonMediaTab]);
 
   const getLessonIcon = (type) => {
     switch (type) {
