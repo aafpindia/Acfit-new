@@ -39,15 +39,19 @@ export const DocumentCanvasViewbox = ({
   fallbackContent = '',
   isPresentation = false,
   onComplete,
+  onProgressChange,
+  allowSkip = false,
   className = ''
 }) => {
   const containerRef = useRef(null);
+  const viewportRef = useRef(null);
   const canvasRef = useRef(null);
   const renderTaskRef = useRef(null);
 
   const [pdfDoc, setPdfDoc] = useState(null);
   const [pptxSlides, setPptxSlides] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [maxReachedPage, setMaxReachedPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [zoomScale, setZoomScale] = useState(1.15);
   const [isLoading, setIsLoading] = useState(true);
@@ -151,6 +155,9 @@ export const DocumentCanvasViewbox = ({
     setLoadError(null);
     setPdfDoc(null);
     setPptxSlides(null);
+    setCurrentPage(1);
+    setMaxReachedPage(1);
+    setTotalPages(0);
 
     const initDocument = async () => {
       try {
@@ -341,26 +348,83 @@ export const DocumentCanvasViewbox = ({
     }
   }, [pdfDoc, renderCurrentPage]);
 
-  // Completion trigger on final page
+  const isPptxMode = Boolean(pptxSlides && pptxSlides.length > 0);
+  const effectiveIsPres = Boolean(isPresentation || isPptxMode);
+  const activeSlide = isPptxMode ? pptxSlides[currentPage - 1] : null;
+
+  const goPrevPage = useCallback(() => {
+    setCurrentPage((p) => {
+      const next = Math.max(1, p - 1);
+      if (next !== p) {
+        viewportRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      return next;
+    });
+  }, []);
+
+  const goNextPage = useCallback(() => {
+    setCurrentPage((p) => {
+      const limit = totalPages || 1;
+      const next = Math.min(limit, p + 1);
+      if (next !== p) {
+        setMaxReachedPage((m) => Math.max(m, next));
+        viewportRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      return next;
+    });
+  }, [totalPages]);
+
+  const goToPage = useCallback(
+    (target) => {
+      const limit = totalPages || 1;
+      const clamped = Math.max(1, Math.min(limit, target));
+      if (!allowSkip && clamped > maxReachedPage) return;
+      setCurrentPage(clamped);
+      if (clamped > maxReachedPage) setMaxReachedPage(clamped);
+      viewportRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    },
+    [totalPages, maxReachedPage, allowSkip]
+  );
+
+  // Notify parent of page/slide progress so CoursePlayer navigates one-by-one without skipping
   useEffect(() => {
-    if (totalPages > 0 && currentPage === totalPages) {
+    if (typeof onProgressChange === 'function') {
+      onProgressChange({
+        currentPage,
+        totalPages,
+        maxReachedPage,
+        isPresentation: effectiveIsPres,
+        isLoading,
+        allViewed: !isLoading && (totalPages === 0 || maxReachedPage >= totalPages),
+        prevPage: goPrevPage,
+        nextPage: goNextPage,
+        goToPage,
+      });
+    }
+  }, [currentPage, totalPages, maxReachedPage, effectiveIsPres, isLoading, goPrevPage, goNextPage, goToPage, onProgressChange]);
+
+  // Keep onComplete reference harmless if a legacy caller omits onProgressChange (never auto-skip 1-page docs)
+  useEffect(() => {
+    if (typeof onProgressChange !== 'function' && totalPages > 1 && currentPage === totalPages && maxReachedPage >= totalPages) {
       onComplete?.();
     }
-  }, [currentPage, totalPages, onComplete]);
+  }, [currentPage, totalPages, maxReachedPage, onComplete, onProgressChange]);
 
-  // Keyboard navigation
+  // Keyboard navigation (strict sequential stepping)
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       if (e.key === 'ArrowRight' || e.key === 'PageDown') {
-        setCurrentPage((p) => Math.min(totalPages || 1, p + 1));
+        e.preventDefault();
+        goNextPage();
       } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
-        setCurrentPage((p) => Math.max(1, p - 1));
+        e.preventDefault();
+        goPrevPage();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [totalPages]);
+  }, [goNextPage, goPrevPage]);
 
   // Fullscreen tracking
   useEffect(() => {
@@ -380,9 +444,6 @@ export const DocumentCanvasViewbox = ({
     }
   };
 
-  const isPptxMode = Boolean(pptxSlides && pptxSlides.length > 0);
-  const activeSlide = isPptxMode ? pptxSlides[currentPage - 1] : null;
-
   return (
     <div
       ref={containerRef}
@@ -395,18 +456,18 @@ export const DocumentCanvasViewbox = ({
         {/* Document / Presentation Title */}
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-7 h-7 rounded-lg bg-blue-500/10 border border-blue-500/20 text-[#3B82F6] flex items-center justify-center shrink-0">
-            {isPresentation || isPptxMode ? (
+            {effectiveIsPres ? (
               <Presentation className="h-4 w-4" />
             ) : (
               <FileText className="h-4 w-4" />
             )}
           </div>
-          <span className="font-bold text-white text-xs truncate max-w-[200px] sm:max-w-xs md:max-w-md">
+          <span className="font-bold text-white text-xs truncate max-w-[180px] sm:max-w-xs md:max-w-md">
             {title}
           </span>
-          {(isPresentation || isPptxMode) && (
+          {effectiveIsPres && (
             <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-blue-500/20 text-blue-300 border border-blue-400/30">
-              Presentation
+              Slides
             </span>
           )}
         </div>
@@ -452,26 +513,26 @@ export const DocumentCanvasViewbox = ({
           {/* Page / Slide Previous */}
           <button
             type="button"
-            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            onClick={goPrevPage}
             disabled={currentPage <= 1}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-            title="Previous (Left Arrow)"
+            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+            title={`Previous ${effectiveIsPres ? 'Slide' : 'Page'} (Left Arrow)`}
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
 
           {/* Page Counter */}
-          <span className="font-mono text-xs text-slate-300 px-1 font-semibold">
+          <span className="font-mono text-xs text-slate-200 px-1.5 font-bold">
             {currentPage} <span className="text-slate-500 font-normal">/</span> {totalPages || 1}
           </span>
 
           {/* Page / Slide Next */}
           <button
             type="button"
-            onClick={() => setCurrentPage((p) => Math.min(totalPages || 1, p + 1))}
-            disabled={currentPage >= totalPages}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-            title="Next (Right Arrow)"
+            onClick={goNextPage}
+            disabled={currentPage >= (totalPages || 1)}
+            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+            title={`Next ${effectiveIsPres ? 'Slide' : 'Page'} (Right Arrow)`}
           >
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -491,7 +552,10 @@ export const DocumentCanvasViewbox = ({
       </div>
 
       {/* ─── MAIN VIEWPORT AREA (PURE CONTENT ONLY) ─── */}
-      <div className="flex-1 overflow-auto flex items-center justify-center p-4 sm:p-6 min-h-[460px] sm:min-h-[580px] lg:min-h-[680px] bg-[#0A0D13]">
+      <div
+        ref={viewportRef}
+        className="flex-1 overflow-auto flex items-center justify-center p-4 sm:p-6 min-h-[420px] sm:min-h-[540px] lg:min-h-[620px] bg-[#0A0D13]"
+      >
         {isLoading && (
           <div className="flex flex-col items-center justify-center space-y-3 text-slate-400">
             <Loader2 className="h-8 w-8 animate-spin text-[#3B82F6]" />
@@ -558,42 +622,61 @@ export const DocumentCanvasViewbox = ({
         )}
       </div>
 
-      {/* ─── SLIDE JUMP BAR (MULTI-PAGE NAVIGATION) ─── */}
+      {/* ─── SIMPLE SEQUENTIAL SLIDE / PAGE BAR (NO FORWARD SKIPPING) ─── */}
       {totalPages > 1 && (
-        <div className="h-10 bg-[#161C26] border-t border-slate-800/80 px-4 flex items-center justify-between text-xs text-slate-400">
+        <div className="h-12 bg-[#161C26] border-t border-slate-800/80 px-3 sm:px-4 flex items-center justify-between gap-3 text-xs shrink-0">
           <button
             type="button"
-            onClick={() => setCurrentPage(1)}
-            disabled={currentPage === 1}
-            className="hover:text-white font-medium disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            onClick={goPrevPage}
+            disabled={currentPage <= 1}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-200 font-bold disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer transition-colors shrink-0"
           >
-            First {isPresentation || isPptxMode ? 'Slide' : 'Page'}
+            <ChevronLeft className="h-3.5 w-3.5" />
+            <span>Prev {effectiveIsPres ? 'Slide' : 'Page'}</span>
           </button>
 
-          {/* Quick jump slide pill indicators */}
-          <div className="flex items-center gap-1.5 overflow-x-auto py-1 max-w-[60%] scrollbar-none">
-            {Array.from({ length: totalPages }).map((_, idx) => (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => setCurrentPage(idx + 1)}
-                className={`h-2 rounded-full transition-all cursor-pointer ${
-                  currentPage === idx + 1
-                    ? 'w-6 bg-[#3B82F6]'
-                    : 'w-2 bg-slate-700 hover:bg-slate-500'
-                }`}
-                title={`Jump to page ${idx + 1}`}
-              />
-            ))}
+          {/* Sequential Progress Indicators (already-viewed dots clickable; future dots locked to prevent skipping) */}
+          <div className="flex items-center gap-1.5 overflow-x-auto py-1 max-w-[55%] scrollbar-none">
+            {Array.from({ length: totalPages }).map((_, idx) => {
+              const pageNum = idx + 1;
+              const isCurrent = currentPage === pageNum;
+              const isReached = allowSkip || pageNum <= maxReachedPage;
+
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  disabled={!isReached}
+                  onClick={() => goToPage(pageNum)}
+                  className={`h-2 rounded-full transition-all shrink-0 ${
+                    isCurrent
+                      ? 'w-6 bg-[#3B82F6] cursor-pointer'
+                      : isReached
+                      ? 'w-2 bg-emerald-500/80 hover:bg-emerald-400 cursor-pointer'
+                      : 'w-2 bg-slate-700/70 opacity-50 cursor-not-allowed'
+                  }`}
+                  title={
+                    isReached
+                      ? `${effectiveIsPres ? 'Slide' : 'Page'} ${pageNum}`
+                      : `View ${effectiveIsPres ? 'slide' : 'page'} ${pageNum - 1} first`
+                  }
+                />
+              );
+            })}
           </div>
 
           <button
             type="button"
-            onClick={() => setCurrentPage(totalPages)}
-            disabled={currentPage === totalPages}
-            className="hover:text-white font-medium disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            onClick={goNextPage}
+            disabled={currentPage >= totalPages}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg font-bold transition-colors shrink-0 ${
+              currentPage >= totalPages
+                ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30 cursor-default'
+                : 'bg-[#2563EB] hover:bg-[#1D4ED8] text-white cursor-pointer shadow-xs'
+            }`}
           >
-            Last {isPresentation || isPptxMode ? 'Slide' : 'Page'}
+            <span>{currentPage >= totalPages ? (effectiveIsPres ? 'Last Slide ✓' : 'Last Page ✓') : `Next ${effectiveIsPres ? 'Slide' : 'Page'}`}</span>
+            {currentPage < totalPages && <ChevronRight className="h-3.5 w-3.5" />}
           </button>
         </div>
       )}

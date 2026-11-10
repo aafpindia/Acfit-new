@@ -74,6 +74,11 @@ export const CoursePlayer = () => {
   const [completedTasks, setCompletedTasks] = useState({});
   const [collapsedModules, setCollapsedModules] = useState({});
   const [expandedLessons, setExpandedLessons] = useState({});
+  const [docProgress, setDocProgress] = useState(null);
+
+  useEffect(() => {
+    setDocProgress(null);
+  }, [activeItem?.id, activeItem?.type, selectedLessonMediaTab]);
 
   // Track sub-item completions within lessons: { [lessonId]: { [tabId]: true } }
   const [completedLessonSubItems, setCompletedLessonSubItems] = useState(() => {
@@ -840,6 +845,23 @@ export const CoursePlayer = () => {
   const handleSubItemOrLessonComplete = () => {
     if (!currentLesson) return;
 
+    if (docProgress?.isLoading && !isAdmin) return;
+
+    // Require viewing every slide/page sequentially before completing multi-page docs
+    const currentStepObj = currentStepIndex !== -1 ? learningSteps[currentStepIndex] : null;
+    if (
+      docProgress &&
+      docProgress.totalPages > 1 &&
+      !docProgress.allViewed &&
+      !isAdmin &&
+      !isStepCompleted(currentStepObj)
+    ) {
+      const unitName = docProgress.isPresentation ? 'slide' : 'page';
+      error(`Please step through every ${unitName} without skipping (${docProgress.currentPage}/${docProgress.totalPages}).`);
+      docProgress.nextPage?.();
+      return;
+    }
+
     if (lessonMediaTabs.length <= 1) {
       handleMarkComplete();
       return;
@@ -962,7 +984,14 @@ export const CoursePlayer = () => {
         ...(typeof fullItem === 'object' ? fullItem : {}),
         ...(typeof itemContent === 'object' ? itemContent : {})
       };
-      return <PptPlayer content={pptContent} onComplete={onComplete} />;
+      return (
+        <PptPlayer
+          content={pptContent}
+          onComplete={onComplete}
+          onProgressChange={setDocProgress}
+          allowSkip={isAdmin || Boolean(fullItem?.id && userProgress[fullItem.id])}
+        />
+      );
     }
 
     if (normType === 'pdf' || normType === 'document') {
@@ -977,7 +1006,14 @@ export const CoursePlayer = () => {
         ...(typeof fullItem === 'object' ? fullItem : {}),
         ...(typeof itemContent === 'object' ? itemContent : {})
       };
-      return <PdfPlayer content={pdfContent} onComplete={onComplete} />;
+      return (
+        <PdfPlayer
+          content={pdfContent}
+          onComplete={onComplete}
+          onProgressChange={setDocProgress}
+          allowSkip={isAdmin || Boolean(fullItem?.id && userProgress[fullItem.id])}
+        />
+      );
     }
 
     if (normType === 'live-class') {
@@ -1613,6 +1649,8 @@ export const CoursePlayer = () => {
                             duration: activeItemData?.duration || currentLesson.duration || ''
                           }}
                           onComplete={handleSubItemOrLessonComplete}
+                          onProgressChange={setDocProgress}
+                          allowSkip={isAdmin || isTabCompleted(currentLesson.id, selectedLessonMediaTab)}
                         />
                       ) : activeMediaType === 'pdf' ? (
                         <PdfPlayer
@@ -1624,6 +1662,8 @@ export const CoursePlayer = () => {
                             duration: activeItemData?.duration || currentLesson.duration || ''
                           }}
                           onComplete={handleSubItemOrLessonComplete}
+                          onProgressChange={setDocProgress}
+                          allowSkip={isAdmin || isTabCompleted(currentLesson.id, selectedLessonMediaTab)}
                         />
                       ) : activeMediaType === 'text' ? (
                         <RichTextPlayer
@@ -1751,113 +1791,164 @@ export const CoursePlayer = () => {
             )}
           </main>
 
-          {/* ─── UNIFIED PERSISTENT BOTTOM STEP NAVIGATION BAR ─────────────────── */}
-          {!isFullscreenMode && (
-            <div className="shrink-0 bg-white border-t border-slate-200 px-3 sm:px-6 py-2.5 flex items-center justify-between gap-3 z-20 shadow-2xs">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={currentStepIndex <= 0 && activeItem?.type !== 'complete'}
-                onClick={loadPrevItem}
-                className="h-9 px-3 sm:px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-              >
-                <ChevronLeft className="h-4 w-4" />
-                <span>Previous</span>
-              </Button>
+          {/* ─── UNIFIED PERSISTENT BOTTOM STEP / SLIDE / PAGE NAVIGATION BAR ─── */}
+          {!isFullscreenMode && (() => {
+            const currentStepObj = currentStepIndex !== -1 ? learningSteps[currentStepIndex] : null;
+            const isMultiPageDoc = Boolean(
+              activeItem?.type === 'lesson' &&
+              docProgress &&
+              docProgress.totalPages > 1 &&
+              (currentStepObj?.mediaType === 'ppt' || currentStepObj?.mediaType === 'pdf')
+            );
+            const hasMoreDocPages = isMultiPageDoc && docProgress.currentPage < docProgress.totalPages;
+            const hasPrevDocPage = isMultiPageDoc && docProgress.currentPage > 1;
+            const unitLabel = docProgress?.isPresentation ? 'Slide' : 'Page';
 
-              {/* Step Context Pill */}
-              {currentStepIndex !== -1 && learningSteps[currentStepIndex] && (
-                <div className="hidden md:flex items-center gap-2 text-xs text-slate-500 font-semibold truncate">
-                  <span className="font-mono text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
-                    Step {currentStepIndex + 1} / {learningSteps.length}
-                  </span>
-                  <span className="truncate max-w-xs">
-                    {learningSteps[currentStepIndex].subLabel || learningSteps[currentStepIndex].title}
-                  </span>
-                </div>
-              )}
+            return (
+              <div className="shrink-0 bg-white border-t border-slate-200 px-3 sm:px-6 py-2.5 flex items-center justify-between gap-3 z-20 shadow-2xs">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!hasPrevDocPage && currentStepIndex <= 0 && activeItem?.type !== 'complete'}
+                  onClick={() => {
+                    if (hasPrevDocPage) {
+                      docProgress.prevPage?.();
+                    } else {
+                      loadPrevItem();
+                    }
+                  }}
+                  className="h-9 px-3 sm:px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  <span>{hasPrevDocPage ? `Prev ${unitLabel}` : 'Previous'}</span>
+                </Button>
 
-              {/* Primary Contextual Next / Complete Action */}
-              {(() => {
-                if (activeItem?.type === 'complete') {
-                  return (
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => navigate('/app/dashboard')}
-                      className="h-9 px-4 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-extrabold text-xs gap-1.5 cursor-pointer shadow-xs shrink-0"
-                    >
-                      <span>Done · Go to Dashboard</span>
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
+                {/* Step & Slide/Page Context Pill */}
+                {currentStepObj && (
+                  <div className="hidden md:flex items-center gap-2 text-xs text-slate-500 font-semibold truncate">
+                    <span className="font-mono text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
+                      Step {currentStepIndex + 1} / {learningSteps.length}
+                    </span>
+                    {isMultiPageDoc && (
+                      <span className="font-mono text-[11px] font-bold text-[#2563EB] bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md">
+                        {unitLabel} {docProgress.currentPage} / {docProgress.totalPages}
+                      </span>
+                    )}
+                    <span className="truncate max-w-xs">
+                      {currentStepObj.subLabel || currentStepObj.title}
+                    </span>
+                  </div>
+                )}
+
+                {/* Primary Contextual Next Slide/Page or Complete Action */}
+                {(() => {
+                  if (activeItem?.type === 'complete') {
+                    return (
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => navigate('/app/dashboard')}
+                        className="h-9 px-4 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-extrabold text-xs gap-1.5 cursor-pointer shadow-xs shrink-0"
+                      >
+                        <span>Done · Go to Dashboard</span>
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    );
+                  }
+
+                  const isLastStepInCourse = currentStepIndex !== -1 && currentStepIndex === learningSteps.length - 1;
+                  const isCurrentStepDone = isStepCompleted(currentStepObj);
+
+                  const lessonHasRealQuiz = Boolean(
+                    (currentLesson?.questions && currentLesson.questions.length > 0) ||
+                    (currentLesson?.assessment?.questions && currentLesson.assessment.questions.length > 0) ||
+                    currentLesson?.items?.some((i) => i.type === 'quiz' && Array.isArray(i.questions) && i.questions.length > 0)
                   );
-                }
 
-                const currentStep = currentStepIndex !== -1 ? learningSteps[currentStepIndex] : null;
-                const isLastStepInCourse = currentStepIndex !== -1 && currentStepIndex === learningSteps.length - 1;
-                const isCurrentStepDone = isStepCompleted(currentStep);
+                  // For active unpassed quizzes/exams with questions, prompt taking the quiz
+                  if ((activeItem?.type === 'quiz' || activeItem?.type === 'final' || (activeItem?.type === 'lesson' && currentStepObj?.mediaType === 'quiz' && lessonHasRealQuiz)) && !isCurrentStepDone && !isAdmin) {
+                    return (
+                      <div className="flex items-center gap-2 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl shrink-0">
+                        <span>Pass Quiz Above to Continue</span>
+                      </div>
+                    );
+                  }
 
-                const lessonHasRealQuiz = Boolean(
-                  (currentLesson?.questions && currentLesson.questions.length > 0) ||
-                  (currentLesson?.assessment?.questions && currentLesson.assessment.questions.length > 0) ||
-                  currentLesson?.items?.some((i) => i.type === 'quiz' && Array.isArray(i.questions) && i.questions.length > 0)
-                );
+                  if (activeItem?.type === 'lesson' && currentLesson) {
+                    if (docProgress?.isLoading && (currentStepObj?.mediaType === 'ppt' || currentStepObj?.mediaType === 'pdf')) {
+                      return (
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled
+                          className="h-9 px-4 rounded-xl bg-slate-200 text-slate-500 font-bold text-xs cursor-not-allowed shrink-0"
+                        >
+                          Loading {unitLabel.toLowerCase()}s...
+                        </Button>
+                      );
+                    }
 
-                // For active unpassed quizzes/exams with questions, prompt taking the quiz
-                if ((activeItem?.type === 'quiz' || activeItem?.type === 'final' || (activeItem?.type === 'lesson' && currentStep?.mediaType === 'quiz' && lessonHasRealQuiz)) && !isCurrentStepDone && !isAdmin) {
-                  return (
-                    <div className="flex items-center gap-2 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl shrink-0">
-                      <span>Pass Quiz Above to Continue</span>
-                    </div>
-                  );
-                }
+                    // Navigate slide/page sequentially without skipping before completing
+                    if (hasMoreDocPages) {
+                      return (
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => docProgress.nextPage?.()}
+                          className="h-9 px-4 sm:px-5 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-extrabold text-xs gap-1.5 cursor-pointer shadow-xs shrink-0"
+                        >
+                          <span>Next {unitLabel} ({docProgress.currentPage}/{docProgress.totalPages})</span>
+                          <ChevronRight className="h-4 w-4 shrink-0" />
+                        </Button>
+                      );
+                    }
 
-                if (activeItem?.type === 'lesson' && currentLesson) {
-                  const alreadyCertified = isCertificateUnlocked();
-                  let btnText = 'Complete & Continue';
-                  if (isCurrentStepDone) {
-                    btnText = isLastStepInCourse && !hasRealFinalExam
-                      ? (alreadyCertified ? 'View Completion & Certificate 🎓' : 'Finish Course & Claim Certificate 🎓')
-                      : 'Next Step';
-                  } else if (isLastStepInCourse && !hasRealFinalExam) {
-                    btnText = alreadyCertified ? 'View Completion & Certificate 🎓' : 'Complete Course & Claim Certificate 🎓';
+                    const alreadyCertified = isCertificateUnlocked();
+                    let btnText = 'Complete & Continue';
+                    if (isCurrentStepDone) {
+                      btnText = isLastStepInCourse && !hasRealFinalExam
+                        ? (alreadyCertified ? 'View Completion & Certificate 🎓' : 'Finish Course & Claim Certificate 🎓')
+                        : 'Next Step';
+                    } else if (isLastStepInCourse && !hasRealFinalExam) {
+                      btnText = alreadyCertified ? 'View Completion & Certificate 🎓' : 'Complete Course & Claim Certificate 🎓';
+                    }
+
+                    return (
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={isCurrentStepDone ? loadNextItem : handleSubItemOrLessonComplete}
+                        className={`h-9 px-3.5 sm:px-5 rounded-xl font-extrabold text-xs gap-1.5 cursor-pointer shadow-xs shrink-0 transition-all ${
+                          isLastStepInCourse && !hasRealFinalExam
+                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                            : isCurrentStepDone
+                            ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'
+                            : 'bg-[#2563EB] hover:bg-[#1D4ED8] text-white'
+                        }`}
+                      >
+                        <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                        <span>{btnText}</span>
+                        <ChevronRight className="h-4 w-4 shrink-0" />
+                      </Button>
+                    );
                   }
 
                   return (
                     <Button
                       type="button"
                       size="sm"
-                      onClick={isCurrentStepDone ? loadNextItem : handleSubItemOrLessonComplete}
-                      className={`h-9 px-3.5 sm:px-5 rounded-xl font-extrabold text-xs gap-1.5 cursor-pointer shadow-xs shrink-0 transition-all ${
-                        isLastStepInCourse && !hasRealFinalExam
-                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                          : isCurrentStepDone
-                          ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'
-                          : 'bg-[#2563EB] hover:bg-[#1D4ED8] text-white'
-                      }`}
+                      onClick={loadNextItem}
+                      className="h-9 px-4 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-extrabold text-xs gap-1 cursor-pointer shadow-xs shrink-0"
                     >
-                      <CheckCircle className="h-3.5 w-3.5 shrink-0" />
-                      <span>{btnText}</span>
-                      <ChevronRight className="h-4 w-4 shrink-0" />
+                      <span>Next Step</span>
+                      <ChevronRight className="h-4 w-4" />
                     </Button>
                   );
-                }
-
-                return (
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={loadNextItem}
-                    className="h-9 px-4 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-extrabold text-xs gap-1 cursor-pointer shadow-xs shrink-0"
-                  >
-                    <span>Next Step</span>
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                );
-              })()}
-            </div>
-          )}
+                })()}
+              </div>
+            );
+          })()}
         </div>
       </div>
 

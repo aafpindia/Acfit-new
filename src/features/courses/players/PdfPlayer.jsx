@@ -3,7 +3,7 @@ import { DocumentCanvasViewbox } from './DocumentCanvasViewbox';
 import { Card, CardContent } from '../../../components/ui/card';
 import { FileText } from 'lucide-react';
 
-export const PdfPlayer = ({ content = {}, onComplete }) => {
+export const PdfPlayer = ({ content = {}, onComplete, onProgressChange, allowSkip = false }) => {
   const fileUrl = content.fileUrl || content.url || content.pdfUrl || '';
   const lessonTitle = content.title || 'Course Document';
   const textBody = content.body || content.instructions || content.textContent || '';
@@ -17,6 +17,8 @@ export const PdfPlayer = ({ content = {}, onComplete }) => {
         fallbackContent={textBody}
         isPresentation={false}
         onComplete={onComplete}
+        onProgressChange={onProgressChange}
+        allowSkip={allowSkip}
       />
     );
   }
